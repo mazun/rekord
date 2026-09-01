@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build*)",
+      "Bash(./target/release/chord_engine.exe*)",
+      "Bash(netstat -ano*)",
+      "Bash(tasklist*)",
+      "Bash(nvidia-smi*)",
+      "Bash(wsl --status)",
+      "Bash(wsl -l -v)",
+      "PowerShell(npm run tauri dev*)",
+      "PowerShell(npx tsc --noEmit*)",
+      "PowerShell(npm run dev*)"
+    ]
+  }
+}
