@@ -1,5 +1,6 @@
 mod audio_io;
 mod chord_templates;
+mod live_capture;
 mod note_creation;
 mod note_stitcher;
 mod onnx_model;
@@ -129,10 +130,46 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
     Ok(())
 }
 
+fn run_live(hop_seconds: f32, duration_s: Option<f32>) -> Result<()> {
+    println!("Listening to default speaker output via loopback capture ...");
+    match duration_s {
+        Some(d) => println!("Will stop after {d:.1}s (Ctrl+C to stop earlier)\n"),
+        None => println!("Press Ctrl+C to stop.\n"),
+    }
+
+    let mut model = OnnxNoteModel::load("models/nmp.onnx").context("loading ONNX model")?;
+    let mut stitcher = NoteStitcher::new();
+    let mut last_chord_label: Option<String> = None;
+    let mut last_covered = 0.0f32;
+    let mut elapsed = 0.0f32;
+
+    let (_stream, rx) = live_capture::spawn_loopback_capture(hop_seconds)?;
+    let mut extractor = StreamingNoteExtractor::new(&mut model);
+    while let Ok(chunk) = rx.recv() {
+        let completed = extractor.push(&chunk)?;
+        elapsed += hop_seconds;
+        if completed > 0 {
+            let note_events = extractor.note_events();
+            let covered = extractor.covered_seconds();
+            print_confirmed_notes(&mut stitcher, covered, &note_events);
+            report_new_chords(&note_events, last_covered, covered, &mut last_chord_label);
+            last_covered = covered;
+        }
+        if let Some(d) = duration_s {
+            if elapsed >= d {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut audio_file: Option<String> = None;
     let mut hop = 0.5f32;
+    let mut live = false;
+    let mut duration: Option<f32> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -140,10 +177,20 @@ fn main() -> Result<()> {
                 i += 1;
                 hop = args[i].parse().context("--hop expects a number")?;
             }
+            "--live" => live = true,
+            "--duration" => {
+                i += 1;
+                duration = Some(args[i].parse().context("--duration expects a number")?);
+            }
             other => audio_file = Some(other.to_string()),
         }
         i += 1;
     }
-    let audio_file = audio_file.context("usage: chord_engine <audio_file> [--hop 0.25]")?;
-    run_file(&audio_file, hop)
+
+    if live {
+        run_live(hop, duration)
+    } else {
+        let audio_file = audio_file.context("usage: chord_engine <audio_file> [--hop 0.25]")?;
+        run_file(&audio_file, hop)
+    }
 }
