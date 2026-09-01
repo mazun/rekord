@@ -17,7 +17,9 @@
 //! way), but keeping capture on cpal means the resampling/buffering code
 //! below doesn't have to change if that support lands later.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -52,12 +54,23 @@ pub fn spawn_loopback_capture(hop_seconds: f32) -> Result<(cpal::Stream, Receive
     let sample_format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
 
+    // The real-time audio callback must never block on I/O, so a dropped
+    // chunk (raw_tx full -- the consumer has fallen behind) is only
+    // recorded as a lock-free counter here; the resampling thread below
+    // polls it and prints a warning on the non-real-time side instead of
+    // this failure being completely silent.
+    let dropped_chunks = Arc::new(AtomicUsize::new(0));
+    let dropped_chunks_cb = Arc::clone(&dropped_chunks);
+    let dropped_chunks_cb2 = Arc::clone(&dropped_chunks);
+
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device.build_input_stream(
             stream_config.clone(),
             move |data: &[f32], _| {
                 let mono = downmix(data, channels);
-                let _ = raw_tx.try_send(mono);
+                if raw_tx.try_send(mono).is_err() {
+                    dropped_chunks_cb.fetch_add(1, Ordering::Relaxed);
+                }
             },
             err_fn,
             None,
@@ -67,7 +80,9 @@ pub fn spawn_loopback_capture(hop_seconds: f32) -> Result<(cpal::Stream, Receive
             move |data: &[i16], _| {
                 let floats: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                 let mono = downmix(&floats, channels);
-                let _ = raw_tx.try_send(mono);
+                if raw_tx.try_send(mono).is_err() {
+                    dropped_chunks_cb2.fetch_add(1, Ordering::Relaxed);
+                }
             },
             err_fn,
             None,
@@ -81,14 +96,29 @@ pub fn spawn_loopback_capture(hop_seconds: f32) -> Result<(cpal::Stream, Receive
     std::thread::spawn(move || {
         let mut resampler = make_resampler(source_rate, AUDIO_SAMPLE_RATE, hop_frames_target);
         let mut pending: Vec<f32> = Vec::new();
+        let mut last_reported_drops = 0usize;
         while let Ok(mono_chunk) = raw_rx.recv() {
+            let total_drops = dropped_chunks.load(Ordering::Relaxed);
+            if total_drops != last_reported_drops {
+                eprintln!(
+                    "warning: {} audio chunk(s) dropped (consumer falling behind)",
+                    total_drops - last_reported_drops
+                );
+                last_reported_drops = total_drops;
+            }
+
             pending.extend(mono_chunk);
             while pending.len() >= hop_frames_target {
                 let chunk: Vec<f32> = pending.drain(..hop_frames_target).collect();
-                if let Some(resampled) = resampler.process(&[chunk], None).ok().and_then(|mut out| out.pop()) {
-                    if tx.send(resampled).is_err() {
-                        return; // consumer gone
+                match resampler.process(&[chunk], None) {
+                    Ok(mut out) => {
+                        if let Some(resampled) = out.pop() {
+                            if tx.send(resampled).is_err() {
+                                return; // consumer gone
+                            }
+                        }
                     }
+                    Err(e) => eprintln!("warning: resampler error, dropping this chunk: {e}"),
                 }
             }
         }
