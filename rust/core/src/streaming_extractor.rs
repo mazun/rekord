@@ -33,11 +33,22 @@ pub const MAX_FRESH_EXTRACTOR_REAL_SAMPLES: usize = AUDIO_N_SAMPLES - OVERLAP_LE
 // entire session and every note_events() call re-runs the full
 // note-formation algorithm (onset inference, peak-picking, the
 // melodia-trick loop) over the ever-growing history -- cost per call grows
-// with total elapsed time, and in `--live` mode that eventually exceeds
-// the ~1.64s window cadence and starts backing up/dropping live audio
-// upstream. 64 windows is ~105s of retained context, far more than
-// CONFIRM_MARGIN_S (0.5s) needs for correctness.
-const MAX_RETAINED_WINDOWS: usize = 64;
+// with total elapsed time (measured: ~0.2ms at session start growing past
+// 150ms by 90s with continuous playing, and still climbing -- not yet
+// plateaued), and in `--live` mode that shows up as a steadily growing
+// delay between when a note/chord is confirmed and when it's reported.
+//
+// The only reason to retain more than the single newest window at all is
+// that a note sustained across a window boundary needs the *next*
+// window's data before its true end can be determined (its own window
+// runs out of data before the algorithm sees the energy actually drop) --
+// get_infered_onsets also wants a couple of frames of prior context, far
+// less than a full window. Two windows (current + one of overlap/lookback)
+// covers that, and there's no benefit to retaining more: once a note is
+// resolved it's handed to NoteStitcher and doesn't need its source frames
+// reprocessed again. (64, then 12, windows were both just generous
+// arbitrary margins, not driven by an actual correctness requirement.)
+const MAX_RETAINED_WINDOWS: usize = 2;
 
 fn trim_window_output(raw: &Array2<f32>) -> Result<Array2<f32>> {
     let t = raw.dim().0;

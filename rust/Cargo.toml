@@ -1,18 +1,6 @@
-[package]
-name = "chord_engine"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-ort = { version = "2.0.0-rc.13", features = ["directml", "ndarray"] }
-ndarray = "0.17"
-hound = "3.5"
-rubato = "0.16"
-anyhow = "1"
-cpal = "0.18"
-
-[build-dependencies]
-ureq = "3"
+[workspace]
+resolver = "2"
+members = ["core", "cli"]
 
 [profile.release]
 opt-level = 3

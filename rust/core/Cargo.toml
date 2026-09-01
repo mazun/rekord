@@ -1,0 +1,20 @@
+[package]
+name = "chord_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "chord_core"
+path = "src/lib.rs"
+
+[dependencies]
+ort = { version = "2.0.0-rc.13", features = ["directml", "ndarray"] }
+ndarray = "0.17"
+hound = "3.5"
+rubato = "0.16"
+anyhow = "1"
+cpal = "0.18"
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+ureq = "3"

@@ -11,6 +11,14 @@ const INPUT_NAME: &str = "serving_default_input_2:0";
 const NOTE_OUTPUT: &str = "StatefulPartitionedCall:1";
 const ONSET_OUTPUT: &str = "StatefulPartitionedCall:2";
 
+// Embed this crate's own build-time location rather than resolving
+// "models/nmp.onnx" relative to the current working directory at
+// runtime -- the model must be found the same way regardless of whether
+// it's launched from rust/, rust/cli/, a Tauri app's own working
+// directory, or anywhere else a binary linking this crate happens to run
+// from. build.rs downloads the model into this same directory.
+const MODEL_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/models/nmp.onnx");
+
 pub struct OnnxNoteModel {
     session: Session,
 }
@@ -21,14 +29,14 @@ pub struct WindowOutput {
 }
 
 impl OnnxNoteModel {
-    pub fn load(model_path: &str) -> Result<Self> {
+    pub fn load() -> Result<Self> {
         let session = Session::builder()
             .map_err(|e| anyhow!("{e}"))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| anyhow!("{e}"))?
             .with_execution_providers([DirectML::default().build(), CPU::default().build()])
             .map_err(|e| anyhow!("{e}"))?
-            .commit_from_file(model_path)
+            .commit_from_file(MODEL_PATH)
             .map_err(|e| anyhow!("{e}"))?;
         Ok(Self { session })
     }
