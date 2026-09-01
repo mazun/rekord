@@ -29,23 +29,16 @@ cargo build --release
 ```
 
 ```powershell
-$env:PATH = "C:\Program Files\nodejs;$env:PATH"
 Set-Location "C:\Users\mazun\Programming\chord\chord-piano-roll"
 npm run tauri dev
 ```
 
-**Node/npm PATH gotcha (Windows)**: `C:\Program Files\nodejs` is in the
-*machine* PATH, but the Claude Code process tree was started before Node
-was installed, so its inherited PATH is stale — every PowerShell command
-that needs `node`/`npm`/`npx` must prepend `$env:PATH = "C:\Program
-Files\nodejs;$env:PATH"` (each PowerShell tool call is a fresh process;
-this doesn't persist between calls). **Restarting Claude Code should
-pick up the current PATH and make this prefix unnecessary** — if starting
-a fresh session, try a bare `npm --version` first; if it resolves, drop
-the prefix everywhere (including in `.claude/settings.json`'s allowlist
-patterns, which currently bake in the exact prefixed command string
-because permission matching is a literal prefix match against the whole
-command sent to the tool, not just the trailing subcommand).
+(A previous Claude Code process tree was started before Node was
+installed, requiring every `npm`/`npx`/`node` PowerShell command to
+prepend `$env:PATH = "C:\Program Files\nodejs;$env:PATH"`. Confirmed
+resolved after restarting Claude Code — a bare `npm --version` now
+resolves without the prefix. If it stops resolving again in some future
+session, that prefix is the fix.)
 
 ## Key design decisions (don't re-litigate without reason)
 
@@ -58,25 +51,34 @@ command sent to the tool, not just the trailing subcommand).
   (the Python prototype's `soundcard` library had a real bug here: it could
   silently bind to the wrong device when a line-input and its loopback
   endpoint shared a display name).
-- **`MAX_RETAINED_WINDOWS = 2`** in `streaming_extractor.rs`. The *only*
-  reason to keep more than the newest window is that a note sustained
-  across a window boundary needs the next window's data to resolve its
-  true end — 2 is necessary and sufficient. Don't raise this to "be safe";
-  it was raised to 64 once by mistake and caused O(T²)-ish per-call cost
-  growth (unbounded reprocessing of retained history), confirmed via
-  direct timing instrumentation. Verified flat at 0.3–0.7ms/call over 90s
-  at 2.
+- **Retained-history cap in `streaming_extractor.rs` is time-based**
+  (`MAX_RETAINED_SECONDS = 3.3`), not a window count — needed once the
+  window-advance stride became configurable (a "window" no longer
+  contributes a fixed amount of new data each time). The *only* reason to
+  retain more than the newest data is that a note sustained across a
+  window boundary needs the next window's data to resolve its true end;
+  3.3s matches what the old `MAX_RETAINED_WINDOWS = 2` retained. Don't
+  raise this to "be safe" — it was raised to the equivalent of 64 windows
+  once by mistake and caused O(T²)-ish per-call cost growth (unbounded
+  reprocessing of retained history), confirmed via direct timing
+  instrumentation. Verified flat at 0.3–0.7ms/call over 90s at the old
+  2-window cap; re-verify if this ever needs to move again.
 - **Piano-roll clock is a pure linear function of wall-clock time, offset
-  by a fixed known constant** (`PIPELINE_LATENCY_S = 2.14` +
-  `LATENCY_SAFETY_MARGIN_S = 0.3` in `pianoroll.ts`) — never estimated or
-  corrected at runtime. The confirm-delay is structural (basic-pitch's
-  ~2s window + streaming-extractor confirm margin), not jitter, so
+  by a fixed known constant** (`total_latency_s`, computed once per
+  session in `pipeline.rs` from the actual stride/hop/confirm-margin in
+  use and sent on the `PipelineEvent::Started` event — `pianoroll.ts`
+  just consumes it, it doesn't compute or hardcode it) — never estimated
+  or corrected at runtime. The confirm-delay is structural (window-advance
+  stride + capture hop + `NoteStitcher`'s confirm margin), not jitter, so
   anchor-and-extrapolate or rate-correction approaches both produce
-  visible warping/acceleration; a fixed offset anchored to the
-  `PipelineEvent::Started` event (fired once the pipeline truly begins,
-  not on button click — model load + WASAPI init add unpredictable delay)
-  is the correct model and was reached only after several rounds of
-  live-app testing.
+  visible warping/acceleration; a fixed offset anchored to the `Started`
+  event (fired once the pipeline truly begins, not on button click —
+  model load + WASAPI init add unpredictable delay) is the correct model
+  and was reached only after several rounds of live-app testing. The
+  window length itself (2s) is a hard-fixed property of the ONNX model's
+  input shape (confirmed by direct experiment: any other length throws an
+  ORT shape-mismatch error immediately) — only how often the window
+  advances is configurable, via `StreamingNoteExtractor::with_stride`.
 - **`directml` ort feature has no Linux prebuilt binary** — the full
   workspace does not link on WSL (the `core` lib alone builds fine). User
   explicitly declined making it `cfg(windows)`-conditional; this is a

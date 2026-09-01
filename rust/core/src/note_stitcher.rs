@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::note_creation::NoteEvent;
 
-const CONFIRM_MARGIN_S: f32 = 0.5;
+pub(crate) const CONFIRM_MARGIN_S: f32 = 0.5;
 
 // Two independently-windowed extractors (e.g. the main stream vs. the
 // file-tail reconciliation pass) can re-detect the same physical note with
