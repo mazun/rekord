@@ -5,13 +5,15 @@ use chord_core::note_stitcher::NoteStitcher;
 use chord_core::onnx_model::OnnxNoteModel;
 use chord_core::pipeline::{self, midi_to_name, PipelineEvent};
 use chord_core::streaming_extractor::{
-    StreamingNoteExtractor, AUDIO_SAMPLE_RATE, MAX_FRESH_EXTRACTOR_REAL_SAMPLES,
+    StreamingNoteExtractor, AUDIO_SAMPLE_RATE, HOP_SIZE, MAX_FRESH_EXTRACTOR_REAL_SAMPLES,
 };
 use chord_core::audio_io;
 
 fn print_event(event: PipelineEvent) {
     match event {
-        PipelineEvent::Started => {}
+        PipelineEvent::Started { total_latency_s } => {
+            println!("(confirm latency: {total_latency_s:.2}s)\n");
+        }
         PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi } => {
             println!("[{start_s:6.2}s -> {end_s:6.2}s] note {}", midi_to_name(pitch_midi));
         }
@@ -102,20 +104,22 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
     Ok(())
 }
 
-fn run_live(hop_seconds: f32, duration_s: Option<f32>) -> Result<()> {
+fn run_live(hop_seconds: f32, stride_seconds: f32, duration_s: Option<f32>) -> Result<()> {
     println!("Listening to default speaker output via loopback capture ...");
     match duration_s {
         Some(d) => println!("Will stop after {d:.1}s (Ctrl+C to stop earlier)\n"),
         None => println!("Press Ctrl+C to stop.\n"),
     }
     let never_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    pipeline::run_live_session(hop_seconds, duration_s, never_stop, print_event)
+    pipeline::run_live_session(hop_seconds, stride_seconds, duration_s, never_stop, print_event)
 }
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut audio_file: Option<String> = None;
     let mut hop = 0.5f32;
+    let mut hop_explicit = false;
+    let mut latency: Option<f32> = None;
     let mut live = false;
     let mut duration: Option<f32> = None;
     let mut i = 1;
@@ -128,6 +132,16 @@ fn main() -> Result<()> {
                 if !(hop > 0.0) {
                     bail!("--hop must be greater than 0, got {hop}");
                 }
+                hop_explicit = true;
+            }
+            "--latency" => {
+                i += 1;
+                let value = args.get(i).context("--latency expects a number")?;
+                let parsed: f32 = value.parse().context("--latency expects a number")?;
+                if !(parsed > 0.0) {
+                    bail!("--latency must be greater than 0, got {parsed}");
+                }
+                latency = Some(parsed);
             }
             "--live" => live = true,
             "--duration" => {
@@ -145,7 +159,17 @@ fn main() -> Result<()> {
     }
 
     if live {
-        run_live(hop, duration)
+        // --latency drives the model window-advance stride (confirm
+        // latency) -- a distinct knob from --hop (capture delivery
+        // granularity). Unless --hop was also given explicitly, --latency
+        // drives both, mirroring the Tauri app's single-slider design.
+        // With no --latency, stride defaults to the legacy HOP_SIZE-derived
+        // behavior (StreamingNoteExtractor::new()'s default).
+        let stride_seconds = latency.unwrap_or(HOP_SIZE as f32 / AUDIO_SAMPLE_RATE as f32);
+        if latency.is_some() && !hop_explicit {
+            hop = stride_seconds;
+        }
+        run_live(hop, stride_seconds, duration)
     } else {
         let audio_file = audio_file.context("usage: chord_engine <audio_file> [--hop 0.25]")?;
         run_file(&audio_file, hop)

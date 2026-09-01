@@ -12,13 +12,19 @@ use anyhow::Result;
 use crate::chord_templates::match_chord;
 use crate::live_capture;
 use crate::note_creation::NoteEvent;
-use crate::note_stitcher::NoteStitcher;
+use crate::note_stitcher::{NoteStitcher, CONFIRM_MARGIN_S};
 use crate::onnx_model::OnnxNoteModel;
-use crate::streaming_extractor::StreamingNoteExtractor;
+use crate::streaming_extractor::{StreamingNoteExtractor, AUDIO_SAMPLE_RATE};
 
 // A note's end_s can be a touch before the true edge of what's been
 // processed (edge effect from limited context there).
 const ACTIVE_EDGE_TOLERANCE_S: f32 = 0.2;
+
+// Extra fudge for IPC/processing overhead and jitter on top of the
+// pipeline's own structural confirm delay, so the reported total_latency_s
+// has a small safety margin baked in (matches the figure the piano-roll UI
+// used to hardcode for this purpose).
+const LATENCY_SAFETY_MARGIN_S: f32 = 0.3;
 
 pub const MIDI_NOTE_NAMES: [&str; 12] =
     ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -38,7 +44,13 @@ pub enum PipelineEvent {
     /// load + WASAPI initialization can add anywhere from tens of ms to a
     /// couple of seconds before the pipeline truly starts, and that delay
     /// isn't part of the pipeline's own fixed per-note confirm latency.
-    Started,
+    ///
+    /// `total_latency_s` is the authoritative, already-computed confirm
+    /// delay for this session (depends on the stride/hop the caller
+    /// requested, clamped to whatever was actually used) -- a frontend
+    /// should anchor its display clock at this event using this figure
+    /// directly, not hardcode or re-derive it.
+    Started { total_latency_s: f32 },
     NoteConfirmed { start_s: f32, end_s: f32, pitch_midi: i32 },
     ChordChange { t: f32, label: String },
 }
@@ -113,6 +125,7 @@ pub fn emit_confirmed_notes(
 /// worth of latency).
 pub fn run_live_session(
     hop_seconds: f32,
+    stride_seconds: f32,
     duration_s: Option<f32>,
     stop: Arc<AtomicBool>,
     mut on_event: impl FnMut(PipelineEvent),
@@ -124,8 +137,13 @@ pub fn run_live_session(
     let mut elapsed = 0.0f32;
 
     let (_stream, rx) = live_capture::spawn_loopback_capture(hop_seconds)?;
-    let mut extractor = StreamingNoteExtractor::new(&mut model);
-    on_event(PipelineEvent::Started);
+    let stride_samples = (stride_seconds * AUDIO_SAMPLE_RATE as f32).round() as usize;
+    let mut extractor = StreamingNoteExtractor::with_stride(&mut model, stride_samples);
+    // Read back the actually-clamped stride so the reported latency is
+    // authoritative even if the caller asked for something out of range.
+    let effective_stride_s = extractor.stride_samples() as f32 / AUDIO_SAMPLE_RATE as f32;
+    let total_latency_s = effective_stride_s + hop_seconds + CONFIRM_MARGIN_S + LATENCY_SAFETY_MARGIN_S;
+    on_event(PipelineEvent::Started { total_latency_s });
     while let Ok(chunk) = rx.recv() {
         let completed = extractor.push(&chunk)?;
         elapsed += hop_seconds;

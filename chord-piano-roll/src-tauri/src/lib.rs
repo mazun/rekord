@@ -4,7 +4,12 @@ use std::thread::JoinHandle;
 
 use tauri::{AppHandle, Emitter, State};
 
-const HOP_SECONDS: f32 = 0.25;
+// Sanity clamp on the frontend-supplied latency setting -- server-side
+// insurance so a malformed value (e.g. 0, which would break live_capture's
+// resampler chunk sizing) can never reach the pipeline, on top of
+// StreamingNoteExtractor::with_stride's own clamp.
+const MIN_LATENCY_SECONDS: f32 = 0.05;
+const MAX_LATENCY_SECONDS: f32 = 2.0;
 
 #[derive(Default)]
 struct CaptureState {
@@ -13,19 +18,28 @@ struct CaptureState {
 }
 
 #[tauri::command]
-fn start_capture(app: AppHandle, state: State<Mutex<CaptureState>>) -> Result<(), String> {
+fn start_capture(
+    app: AppHandle,
+    state: State<Mutex<CaptureState>>,
+    latency_seconds: f32,
+) -> Result<(), String> {
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     if guard.handle.is_some() {
         return Ok(()); // already running
     }
 
+    let latency_seconds = latency_seconds.clamp(MIN_LATENCY_SECONDS, MAX_LATENCY_SECONDS);
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_thread = Arc::clone(&stop_flag);
     let app_for_thread = app.clone();
 
     let handle = std::thread::spawn(move || {
         let result = chord_core::pipeline::run_live_session(
-            HOP_SECONDS,
+            latency_seconds, // hop_seconds (capture delivery granularity)
+            latency_seconds, // stride_seconds (model window-advance) -- one
+            // slider drives both, so lowering it actually shortens the
+            // reported confirm latency instead of being capped by a
+            // separately-fixed hop.
             None,
             stop_flag_thread,
             |event| {

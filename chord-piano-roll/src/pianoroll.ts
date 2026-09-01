@@ -4,19 +4,6 @@ const MIN_PITCH = 21; // A0
 const MAX_PITCH = 108; // C8
 const PIXELS_PER_SECOND = 120;
 const PLAYHEAD_FRACTION = 0.97;
-// The pipeline's confirm delay is a known, fixed design parameter, not
-// something to discover empirically: one analysis window (HOP_SIZE /
-// AUDIO_SAMPLE_RATE = 36164/22050 ~= 1.64s) plus NoteStitcher's confirm
-// margin (0.5s) ~= 2.14s, before a note or chord can be reported at all.
-// Trying to *estimate* this from observed event timestamps (an earlier
-// approach) was fragile -- NoteConfirmed's end_s is capped at
-// (covered - confirm_margin), which is a little behind the freshest data
-// a ChordChange event can report, so "take the smallest observed gap"
-// didn't reliably converge to the true figure. Since we already know the
-// figure, just use it directly, plus a small safety margin for IPC/
-// processing overhead and jitter, rather than estimating it at runtime.
-const PIPELINE_LATENCY_S = 2.14;
-const LATENCY_SAFETY_MARGIN_S = 0.3;
 const NOTE_COLOR = 0x5b8cff;
 const GUIDE_COLOR = 0x262b36;
 
@@ -35,28 +22,31 @@ interface NoteSprite extends ConfirmedNote {
  * reports a note once it's finished, in ~1.6s batches), so this doesn't
  * grow notes in real time; it just positions each one along the time axis.
  *
- * The pipeline's confirm delay (one analysis window + NoteStitcher's
- * confirm margin) is a fixed length, not something that needs continuous
- * correction or runtime estimation -- three earlier approaches all treated
- * it as something to discover/track dynamically and all looked wrong:
- * snapping the displayed clock to each new event read as a visible "warp";
- * continuously adjusting its playback rate to chase the latest event read
- * as a visible, repeating acceleration; and estimating the delay from the
- * smallest observed (wall-clock-since-reset minus event timestamp) gap
- * left the same dead zone the rate-based version had, because
- * NoteConfirmed's end_s is itself capped at (covered - confirm_margin) --
- * a little behind the freshest data a ChordChange event reports -- so
- * "smallest observed gap" doesn't reliably converge on the true figure.
- * Since the delay is a known constant of the pipeline's own design
- * (PIPELINE_LATENCY_S), just use it directly plus a small safety margin,
- * and run the displayed clock at a constant, exact 1x rate offset by that
- * fixed figure -- never sped up, slowed down, or re-anchored again. */
+ * The pipeline's confirm delay (window-advance stride + capture hop +
+ * NoteStitcher's confirm margin) is a fixed length for a given session, not
+ * something that needs continuous correction or runtime estimation --
+ * three earlier approaches all treated it as something to discover/track
+ * dynamically and all looked wrong: snapping the displayed clock to each
+ * new event read as a visible "warp"; continuously adjusting its playback
+ * rate to chase the latest event read as a visible, repeating acceleration;
+ * and estimating the delay from the smallest observed (wall-clock-since-
+ * reset minus event timestamp) gap left the same dead zone the rate-based
+ * version had, because NoteConfirmed's end_s is itself capped at
+ * (covered - confirm_margin) -- a little behind the freshest data a
+ * ChordChange event reports -- so "smallest observed gap" doesn't reliably
+ * converge on the true figure. The backend computes this figure itself
+ * (it's the one side that actually knows the stride/hop it settled on) and
+ * sends it as `total_latency_s` on the pipeline's `Started` event; this
+ * class just uses it directly and runs the displayed clock at a constant,
+ * exact 1x rate offset by that fixed figure -- never sped up, slowed down,
+ * or re-anchored again. */
 export class PianoRoll {
   private app: Application;
   private noteLayer: Container;
   private notes: NoteSprite[] = [];
   private running = false;
   private resetAtMs = 0;
+  private totalLatencyS = 0;
 
   private constructor(app: Application, noteLayer: Container) {
     this.app = app;
@@ -97,10 +87,13 @@ export class PianoRoll {
     return height - t * height;
   }
 
-  /** Clears the view and starts the scroll clock. Call when a session starts. */
-  reset(): void {
+  /** Clears the view and starts the scroll clock. Call when a session
+   * starts, with the backend-computed confirm-delay figure for that
+   * session (from the pipeline's `Started { total_latency_s }` event). */
+  reset(totalLatencyS: number): void {
     this.running = true;
     this.resetAtMs = performance.now();
+    this.totalLatencyS = totalLatencyS;
     for (const n of this.notes) n.graphic.destroy();
     this.notes = [];
   }
@@ -110,7 +103,7 @@ export class PianoRoll {
   }
 
   private displayS(): number {
-    return this.wallClockS() - (PIPELINE_LATENCY_S + LATENCY_SAFETY_MARGIN_S);
+    return this.wallClockS() - this.totalLatencyS;
   }
 
   private xForTime(t: number): number {

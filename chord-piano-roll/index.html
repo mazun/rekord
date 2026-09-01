@@ -14,6 +14,17 @@
         <button id="start-btn">Start</button>
         <button id="stop-btn" disabled>Stop</button>
         <span id="status">stopped</span>
+        <label for="latency-input"
+          >Latency: <span id="latency-value">250</span>ms</label
+        >
+        <input
+          type="range"
+          id="latency-input"
+          min="100"
+          max="1640"
+          step="50"
+          value="250"
+        />
       </div>
       <div id="chord-label">--</div>
       <div id="pianoroll-container"></div>

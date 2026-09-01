@@ -6,12 +6,8 @@
 
 use ndarray::{s, Array2};
 
-use crate::streaming_extractor::{ANNOTATIONS_FPS, AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP};
-
 const MIDI_OFFSET: i32 = 21;
 const MAX_FREQ_IDX: usize = 87;
-const AUDIO_WINDOW_LENGTH: usize = 2;
-const ANNOT_N_FRAMES: usize = ANNOTATIONS_FPS * AUDIO_WINDOW_LENGTH; // 172
 
 /// (start_time_s, end_time_s, midi_pitch, amplitude)
 pub type NoteEvent = (f32, f32, i32, f32);
@@ -210,25 +206,17 @@ fn output_to_notes_polyphonic(
     note_events
 }
 
-fn model_frames_to_time(n_frames: usize) -> Vec<f32> {
-    let window_offset = (FFT_HOP as f32 / AUDIO_SAMPLE_RATE as f32)
-        * (ANNOT_N_FRAMES as f32 - (AUDIO_N_SAMPLES as f32 / FFT_HOP as f32))
-        + 0.0018;
-    (0..n_frames)
-        .map(|i| {
-            let original_time = i as f32 * FFT_HOP as f32 / AUDIO_SAMPLE_RATE as f32;
-            let window_number = (i / ANNOT_N_FRAMES) as f32;
-            original_time - window_offset * window_number
-        })
-        .collect()
-}
-
+/// `times_s[i]` must give the absolute time in seconds of `frames`/`onsets`
+/// row `i` -- the caller (the streaming extractor, which knows each row's
+/// true originating window and sample offset) is responsible for this
+/// mapping; this module only works in frame-index space.
 pub fn model_output_to_notes(
     frames: &Array2<f32>,
     onsets: &Array2<f32>,
     onset_thresh: f32,
     frame_thresh: f32,
     min_note_len_frames: i64,
+    times_s: &[f32],
 ) -> Vec<NoteEvent> {
     let raw = output_to_notes_polyphonic(
         frames,
@@ -240,7 +228,6 @@ pub fn model_output_to_notes(
         true,  // melodia_trick
         11,    // energy_tol
     );
-    let times_s = model_frames_to_time(frames.dim().0);
     raw.into_iter()
         .map(|(start, end, pitch, amp)| (times_s[start as usize], times_s[end as usize], pitch, amp))
         .collect()

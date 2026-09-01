@@ -3,9 +3,11 @@ import { listen } from "@tauri-apps/api/event";
 import { PianoRoll } from "./pianoroll";
 
 type PipelineEvent =
-  | { type: "Started" }
+  | { type: "Started"; total_latency_s: number }
   | { type: "NoteConfirmed"; start_s: number; end_s: number; pitch_midi: number }
   | { type: "ChordChange"; t: number; label: string };
+
+const LATENCY_STORAGE_KEY = "chord.latencyMs";
 
 window.addEventListener("DOMContentLoaded", async () => {
   const container = document.querySelector<HTMLDivElement>("#pianoroll-container");
@@ -13,7 +15,24 @@ window.addEventListener("DOMContentLoaded", async () => {
   const startBtn = document.querySelector<HTMLButtonElement>("#start-btn");
   const stopBtn = document.querySelector<HTMLButtonElement>("#stop-btn");
   const status = document.querySelector<HTMLSpanElement>("#status");
-  if (!container || !chordLabel || !startBtn || !stopBtn || !status) return;
+  const latencyInput = document.querySelector<HTMLInputElement>("#latency-input");
+  const latencyValue = document.querySelector<HTMLSpanElement>("#latency-value");
+  if (!container || !chordLabel || !startBtn || !stopBtn || !status || !latencyInput || !latencyValue) return;
+
+  // Restore a previously-chosen latency, if any -- session-only convenience,
+  // not a correctness-critical value (the backend clamps regardless).
+  const storedMs = localStorage.getItem(LATENCY_STORAGE_KEY);
+  if (storedMs) {
+    latencyInput.value = storedMs;
+  }
+  latencyValue.textContent = latencyInput.value;
+
+  latencyInput.addEventListener("input", () => {
+    latencyValue.textContent = latencyInput.value;
+  });
+  latencyInput.addEventListener("change", () => {
+    localStorage.setItem(LATENCY_STORAGE_KEY, latencyInput.value);
+  });
 
   const roll = await PianoRoll.create(container);
 
@@ -27,7 +46,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       // unaccounted-for delay baked into every note's position, which
       // reappeared as a gap near the playhead no fixed pipeline-latency
       // constant could account for.
-      roll.reset();
+      roll.reset(payload.total_latency_s);
       status.textContent = "listening...";
     } else if (payload.type === "NoteConfirmed") {
       roll.addNote({
@@ -49,14 +68,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     status.textContent = "starting...";
     startBtn.disabled = true;
     stopBtn.disabled = false;
+    latencyInput.disabled = true;
     try {
-      await invoke("start_capture");
+      const latencySeconds = Number(latencyInput.value) / 1000;
+      await invoke("start_capture", { latencySeconds });
       // roll.reset() happens on the "Started" event above, once the
       // pipeline has actually begun, not here.
     } catch (err) {
       status.textContent = `error: ${err}`;
       startBtn.disabled = false;
       stopBtn.disabled = true;
+      latencyInput.disabled = false;
     }
   });
 
@@ -68,6 +90,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     } finally {
       status.textContent = "stopped";
       startBtn.disabled = false;
+      latencyInput.disabled = false;
     }
   });
 });
