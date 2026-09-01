@@ -12,14 +12,13 @@ already does this trick across an entire file offline; see unwrap_output).
 from typing import Dict, List, Tuple
 
 import numpy as np
-from basic_pitch import FilenameSuffix, build_icassp_2022_model_path
-from basic_pitch.inference import Model, get_audio_input, window_audio_file, unwrap_output
+from basic_pitch.inference import window_audio_file, unwrap_output
 from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP
 from basic_pitch import note_creation as infer
 
-NoteEvent = Tuple[float, float, int, float]  # start_s, end_s, pitch_midi, amplitude
+from chord_poc.onnx_model import OnnxNoteModel
 
-ONNX_MODEL_PATH = build_icassp_2022_model_path(FilenameSuffix.onnx)
+NoteEvent = Tuple[float, float, int, float]  # start_s, end_s, pitch_midi, amplitude
 
 # Same overlap basic_pitch's own offline pipeline uses (see inference.run_inference).
 N_OVERLAPPING_FRAMES = 30
@@ -27,11 +26,11 @@ OVERLAP_LEN = N_OVERLAPPING_FRAMES * FFT_HOP
 HOP_SIZE = AUDIO_N_SAMPLES - OVERLAP_LEN
 
 
-def load_model() -> Model:
-    return Model(ONNX_MODEL_PATH)
+def load_model() -> OnnxNoteModel:
+    return OnnxNoteModel()
 
 
-def _run_inference_on_array(audio: np.ndarray, model: Model) -> Dict[str, np.ndarray]:
+def _run_inference_on_array(audio: np.ndarray, model: OnnxNoteModel) -> Dict[str, np.ndarray]:
     """Same windowing/stitching as basic_pitch.inference.run_inference, but
     takes an in-memory array instead of loading a file from disk."""
     original_length = audio.shape[0]
@@ -50,7 +49,7 @@ def _run_inference_on_array(audio: np.ndarray, model: Model) -> Dict[str, np.nda
 
 def extract_notes(
     audio: np.ndarray,
-    model: Model,
+    model: OnnxNoteModel,
     onset_threshold: float = 0.5,
     frame_threshold: float = 0.3,
     minimum_note_length_ms: float = 127.70,

@@ -1,5 +1,5 @@
 """Phase 1 CLI: feed an audio file through basic-pitch as a simulated live
-stream, print newly confirmed notes and the current best-guess chord.
+stream, print newly confirmed notes and chord changes as they're detected.
 
 Usage:
     python -m chord_poc.main <audio_file> [--hop 0.5] [--plot out.png]
@@ -7,30 +7,57 @@ Usage:
 
 import argparse
 import sys
+from typing import List, Optional
 
-from chord_poc.audio_io import load_audio, stream_chunks
+from chord_poc.audio_io import load_audio, stream_new_chunks
 from chord_poc.chord_templates import match_chord, midi_pitches_to_classes
-from chord_poc.note_extractor import extract_notes, load_model
+from chord_poc.note_extractor import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, NoteEvent, extract_notes, load_model
 from chord_poc.note_stitcher import NoteStitcher
+from chord_poc.streaming_extractor import StreamingNoteExtractor
 
 MIDI_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-# Near the live edge of the buffer, basic-pitch tends to report a note's
-# end_s a little before the true buffer boundary (edge effect from lacking
-# future context). Without this tolerance, "currently active" notes at the
-# live edge are missed entirely and the chord estimate never updates.
+# A note's end_s can be a touch before the true edge of what's been
+# processed (edge effect from limited context there). Without this
+# tolerance, notes right at the boundary are missed as "active".
 ACTIVE_EDGE_TOLERANCE_S = 0.2
-
-# A drum hit can momentarily fragment notes so no chord match is found for a
-# single hop, even though the actual chord hasn't changed. Require this many
-# consecutive silent/ambiguous hops before declaring "(silence)", and simply
-# hold the last confident label through brief ambiguous gaps instead of
-# flashing "?".
-SILENCE_HOLD_HOPS = 4
 
 
 def midi_to_name(pitch: int) -> str:
     return f"{MIDI_NOTE_NAMES[pitch % 12]}{pitch // 12 - 1}"
+
+
+def _chord_label_at(note_events: List[NoteEvent], t: float, tolerance: float) -> Optional[str]:
+    """Chord label for whatever's sounding at time t, "(silence)" if
+    nothing is, or None if notes are present but no template matched well
+    enough (ambiguous -- caller should just keep showing the prior label)."""
+    active = [p for s, e, p, _a in note_events if s <= t + 1e-6 and e >= t - tolerance]
+    if not active:
+        return "(silence)"
+    bass_pc = min(active) % 12
+    chord = match_chord(midi_pitches_to_classes(active), bass_pc=bass_pc)
+    return chord.label if chord else None
+
+
+def _report_new_chords(
+    note_events: List[NoteEvent],
+    prev_covered: float,
+    covered: float,
+    last_label: Optional[str],
+) -> Optional[str]:
+    """Windows complete in ~1.6s jumps, so a single "what's active now"
+    check can skip right over a short chord that started and ended inside
+    that jump. Instead, re-evaluate the chord at every note onset that fell
+    within the newly covered span (those are exactly the points where the
+    chord could plausibly have changed), in chronological order."""
+    checkpoints = sorted({s for s, _e, _p, _a in note_events if prev_covered < s <= covered})
+    checkpoints.append(covered)
+    for t in checkpoints:
+        label = _chord_label_at(note_events, t, ACTIVE_EDGE_TOLERANCE_S)
+        if label is not None and label != last_label:
+            print(f"  t={t:6.2f}s  chord: {label}")
+            last_label = label
+    return last_label
 
 
 def run(audio_path: str, hop_seconds: float, plot_path: str = None) -> None:
@@ -40,39 +67,42 @@ def run(audio_path: str, hop_seconds: float, plot_path: str = None) -> None:
     print(f"Duration: {duration:.1f}s, simulating stream with {hop_seconds:.2f}s hops\n")
 
     model = load_model()
+    extractor = StreamingNoteExtractor(model)
     stitcher = NoteStitcher()
     all_notes = []  # for optional plotting: (start_s, end_s, pitch)
-    last_chord_label = None
-    ambiguous_hops = 0
+    last_chord_label: Optional[str] = None
+    last_covered = 0.0
 
-    for now_s, buffer in stream_chunks(audio, hop_seconds):
-        note_events = extract_notes(buffer, model)
-
-        for n in stitcher.update(now_s, note_events):
+    def drain_confirmed_notes() -> None:
+        for n in stitcher.update(extractor.covered_seconds, extractor.note_events()):
             print(f"[{n.start_s:6.2f}s -> {n.end_s:6.2f}s] note {midi_to_name(n.pitch_midi)}")
             all_notes.append((n.start_s, n.end_s, n.pitch_midi))
 
-        active_pitches = [
-            p for s, e, p, _a in note_events if s <= now_s and e >= now_s - ACTIVE_EDGE_TOLERANCE_S
-        ]
-        chord = None
-        if active_pitches:
-            bass_pc = min(active_pitches) % 12
-            chord = match_chord(midi_pitches_to_classes(active_pitches), bass_pc=bass_pc)
+    for _now_s, chunk in stream_new_chunks(audio, hop_seconds):
+        completed = extractor.push(chunk)
+        if completed:
+            drain_confirmed_notes()
+            covered = extractor.covered_seconds
+            last_chord_label = _report_new_chords(
+                extractor.note_events(), last_covered, covered, last_chord_label
+            )
+            last_covered = covered
 
-        if chord is not None:
-            ambiguous_hops = 0
-            if chord.label != last_chord_label:
-                print(f"  t={now_s:6.2f}s  chord: {chord.label}")
-                last_chord_label = chord.label
-        else:
-            # No confident match this hop (e.g. a drum hit fragmented the
-            # notes). Hold the previous label rather than flashing "?", and
-            # only declare silence after it persists for a while.
-            ambiguous_hops += 1
-            if ambiguous_hops >= SILENCE_HOLD_HOPS and last_chord_label != "(silence)":
-                print(f"  t={now_s:6.2f}s  chord: (silence)")
-                last_chord_label = "(silence)"
+    # The tail shorter than one window (~1.6s) never completes on its own.
+    # Rather than zero-pad it (which showed the model a window that's
+    # mostly synthetic silence and suppressed real notes right at the
+    # boundary -- verified empirically), re-run the offline extractor on
+    # the real last AUDIO_N_SAMPLES of audio, which needs no padding at
+    # all as long as the stream is at least one window long.
+    if last_covered < duration and len(audio) > 0:
+        clip_start = max(0, len(audio) - AUDIO_N_SAMPLES)
+        tail_notes = extract_notes(audio[clip_start:], model)
+        clip_start_s = clip_start / AUDIO_SAMPLE_RATE
+        tail_notes = [(s + clip_start_s, e + clip_start_s, p, a) for s, e, p, a in tail_notes]
+        for n in stitcher.update(duration, tail_notes):
+            print(f"[{n.start_s:6.2f}s -> {n.end_s:6.2f}s] note {midi_to_name(n.pitch_midi)}")
+            all_notes.append((n.start_s, n.end_s, n.pitch_midi))
+        last_chord_label = _report_new_chords(tail_notes, last_covered, duration, last_chord_label)
 
     if plot_path:
         _plot_piano_roll(all_notes, duration, plot_path)

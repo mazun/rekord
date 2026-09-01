@@ -25,3 +25,17 @@ def stream_chunks(audio: np.ndarray, hop_seconds: float) -> Iterator[Tuple[float
     for end in range(hop_samples, total + hop_samples, hop_samples):
         end = min(end, total)
         yield end / AUDIO_SAMPLE_RATE, audio[:end]
+
+
+def stream_new_chunks(audio: np.ndarray, hop_seconds: float) -> Iterator[Tuple[float, np.ndarray]]:
+    """Like stream_chunks, but yields only the newly-arrived slice each step
+    (elapsed_seconds, new_samples) instead of the whole buffer-so-far -- for
+    consumers (e.g. StreamingNoteExtractor) that maintain their own state
+    and should only ever see each sample once."""
+    hop_samples = int(round(hop_seconds * AUDIO_SAMPLE_RATE))
+    total = len(audio)
+    start = 0
+    for end in range(hop_samples, total + hop_samples, hop_samples):
+        end = min(end, total)
+        yield end / AUDIO_SAMPLE_RATE, audio[start:end]
+        start = end
