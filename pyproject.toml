@@ -1,0 +1,16 @@
+[project]
+name = "chord-poc"
+version = "0.1.0"
+description = "Phase 1 PoC: basic-pitch streaming note extraction + chord template matching"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "basic-pitch",
+    "onnxruntime",
+    "numpy",
+    "soundfile",
+    "librosa",
+    "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
