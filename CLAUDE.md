@@ -12,12 +12,17 @@ Originally prototyped in Python (deleted once Rust reached parity — see
 
 - `rust/` — Cargo workspace
   - `core/` (`chord_core` lib) — model inference, streaming note extraction,
-    chord matching, WASAPI capture, and the shared live-session driver
-    (`pipeline.rs`) used by both the CLI and the Tauri app.
+    chord matching, key estimation + Roman-numeral labeling
+    (`key_estimator.rs`), WASAPI capture, and the shared live-session
+    driver (`pipeline.rs`) used by both the CLI and the Tauri app.
   - `cli/` (`chord_engine` bin) — file-input and `--live` CLI, thin wrapper
     around `chord_core`.
 - `chord-piano-roll/` — Tauri + Pixi.js piano-roll UI, **live mode only**
   (no file-input UI; use the CLI for that).
+
+See `TODO.md` for the current backlog of planned features — remove an
+item from it once it's actually implemented, rather than leaving it to
+rot as a stale wishlist.
 
 ## Build / run
 
@@ -76,6 +81,52 @@ npm run tauri dev
   workspace does not link on WSL (the `core` lib alone builds fine). User
   explicitly declined making it `cfg(windows)`-conditional; this is a
   known, accepted gap, not a bug to fix opportunistically.
+- **Key estimation (`key_estimator.rs`) is Krumhansl-Schmuckler-style
+  pitch-class-profile correlation**, not ML — same reasoning as chord
+  naming above: this is a well-established method for exactly this
+  problem, and there's no key-labeled corpus in this project to train
+  anything else against. Uses **Bellman-Budge profiles**, not the more
+  commonly-cited Aarden-Essen (its own source casts doubt on its minor
+  weights) or Temperley-Kostka-Payne (highest published accuracy, but
+  documented to bias toward calling minor keys their relative major —
+  exactly the distinction this feature needs right). Only the core
+  scoring (histogram + Pearson correlation against 24 profile rotations)
+  is the textbook algorithm; the rolling window (`WINDOW_S`) and
+  hysteresis (`SWITCH_MARGIN`/`MIN_HOLD_S`) are this project's own
+  real-time adaptations with no canonical prescription, since the
+  original algorithm has no streaming formulation at all — don't treat
+  those as sacred the way the scoring itself should be.
+- **Roman numerals are always spelled against the key's governing major
+  scale** (a minor key's relative major, not its own tonic), and the key
+  name always **shows both readings of the major/minor pair** (e.g.
+  "C Major (A Minor)"), never switching which one displays depending on
+  which the correlator locked onto. Deliberate: relative major/minor
+  share all seven diatonic pitch classes, so that call is the noisiest
+  part of the estimate, and this makes the noise invisible instead of
+  surfacing as a flickering label.
+- **A short-window key misdetection is an expected limitation, not
+  necessarily a bug** — confirmed via live loopback testing (2026-09-03):
+  a real G-major song displayed as "C Major (A Minor)" because within the
+  12s rolling window, the tonic (G) chord simply hadn't sounded yet. K-S
+  correlation's published ~90%+ accuracy figures are measured against
+  whole pieces or large segments, not few-second windows. Deliberately
+  not "fixed" by widening `WINDOW_S` (trades away modulation-tracking
+  speed, and user declined this trade) — a manual key-override UI is the
+  intended mitigation instead (see `TODO.md`), not further tuning of the
+  automatic estimator.
+- **`KeyEstimator` is fed from already-deduplicated `ConfirmedNote`s**,
+  not the raw `note_events()` list, for the same O(T²) reason as the
+  chord-matching path — each note should contribute to the rolling
+  chroma histogram exactly once. Its stale-entry pruning must use
+  `VecDeque::retain` over the whole deque, not a front-only pop loop:
+  `observe()` is called in *confirmation* order (`NoteStitcher` releases
+  a note once its end_s clears the confirm margin), not start_s order, so
+  a long-held bass note routinely arrives (and gets pushed) after a
+  shorter later-starting treble note already at the front — a front-only
+  pop would leave that bass note's stale entry stuck behind the treble
+  note forever, growing `history` without bound for the rest of the
+  session. This was a real bug (not hypothetical) caught via live testing
+  as a session that "worked at first, then gradually became unresponsive".
 
 ## Testing
 
@@ -90,6 +141,14 @@ re-run all three files (and, for UI changes, an actual live session in
 the running Tauri app — this UI's timing bugs are only visible in the
 real app, not from reading the code) before calling it done.
 
+**All three `sample_audio/` files are in C major** — none of them
+exercise `key_estimator.rs`'s minor-key branch or any non-C-major key.
+The G-major misdetection documented above was only caught via an ad hoc
+live loopback session, not the file-based validation flow above. When
+changing key-estimation logic, that gap still needs covering by ear
+against real playing in a non-C key, not just a re-run of these three
+files.
+
 ## Working conventions
 
 - This user reviews UI/timing changes against the **real running app**,
@@ -101,3 +160,12 @@ real app, not from reading the code) before calling it done.
   issues (ort API drift, cpal API drift, the WSL/directml link failure)
   were only resolved by reading source / compiling and observing, not by
   trusting external docs.
+- **WASAPI loopback capture supports multiple simultaneous taps** — a
+  second `chord_engine.exe --live` instance can run concurrently with the
+  Tauri app and listen to the same system audio. Used live (2026-09-03)
+  to diagnose a key-misdetection report while the user was actively
+  playing a song, by adding a temporary env-var-gated `eprintln!` of
+  per-key correlation scores to `key_estimator.rs`, listening in via the
+  CLI, and reading the diagnostic output directly — instead of asking the
+  user to relay live UI behavior secondhand. Remove any such temporary
+  instrumentation once done; don't leave it committed.
