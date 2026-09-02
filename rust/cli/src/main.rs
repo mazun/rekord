@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 
+use chord_core::key_estimator::KeyEstimator;
 use chord_core::note_creation::NoteEvent;
 use chord_core::note_stitcher::NoteStitcher;
 use chord_core::onnx_model::OnnxNoteModel;
@@ -14,26 +15,20 @@ fn print_event(event: PipelineEvent) {
         PipelineEvent::Started { total_latency_s } => {
             println!("(confirm latency: {total_latency_s:.2}s)\n");
         }
-        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi } => {
-            println!("[{start_s:6.2}s -> {end_s:6.2}s] note {}", midi_to_name(pitch_midi));
+        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity } => {
+            println!(
+                "[{start_s:6.2}s -> {end_s:6.2}s] note {} (vel {velocity:.2})",
+                midi_to_name(pitch_midi)
+            );
         }
-        PipelineEvent::ChordChange { t, label } => {
-            println!("  t={t:6.2}s  chord: {label}");
+        PipelineEvent::ChordChange { t, label, roman_numeral } => {
+            let suffix = roman_numeral.map(|r| format!("  ({r})")).unwrap_or_default();
+            println!("  t={t:6.2}s  chord: {label}{suffix}");
+        }
+        PipelineEvent::KeyChange { key_name } => {
+            println!("  key: {key_name}");
         }
     }
-}
-
-fn print_confirmed_notes(stitcher: &mut NoteStitcher, covered: f32, note_events: &[NoteEvent]) {
-    pipeline::emit_confirmed_notes(stitcher, covered, note_events, print_event);
-}
-
-fn report_new_chords(
-    note_events: &[NoteEvent],
-    prev_covered: f32,
-    covered: f32,
-    last_label: &mut Option<String>,
-) {
-    pipeline::report_new_chords(note_events, prev_covered, covered, last_label, print_event);
 }
 
 fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
@@ -44,7 +39,9 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
 
     let mut model = OnnxNoteModel::load().context("loading ONNX model")?;
     let mut stitcher = NoteStitcher::new();
+    let mut key_estimator = KeyEstimator::new();
     let mut last_chord_label: Option<String> = None;
+    let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
 
     let hop_samples = (hop_seconds * AUDIO_SAMPLE_RATE as f32).round() as usize;
@@ -58,8 +55,22 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
             if completed > 0 {
                 let note_events = extractor.note_events();
                 let covered = extractor.covered_seconds();
-                print_confirmed_notes(&mut stitcher, covered, &note_events);
-                report_new_chords(&note_events, last_covered, covered, &mut last_chord_label);
+                pipeline::emit_confirmed_notes(
+                    &mut stitcher,
+                    covered,
+                    &note_events,
+                    &mut key_estimator,
+                    print_event,
+                );
+                pipeline::report_new_chords(
+                    &note_events,
+                    last_covered,
+                    covered,
+                    &mut last_chord_label,
+                    &mut key_estimator,
+                    &mut last_key_name,
+                    print_event,
+                );
                 last_covered = covered;
             }
         }
@@ -97,8 +108,22 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
         let mut combined_notes = main_final_notes;
         combined_notes.extend(tail_notes);
 
-        print_confirmed_notes(&mut stitcher, duration, &combined_notes);
-        report_new_chords(&combined_notes, last_covered, duration, &mut last_chord_label);
+        pipeline::emit_confirmed_notes(
+            &mut stitcher,
+            duration,
+            &combined_notes,
+            &mut key_estimator,
+            print_event,
+        );
+        pipeline::report_new_chords(
+            &combined_notes,
+            last_covered,
+            duration,
+            &mut last_chord_label,
+            &mut key_estimator,
+            &mut last_key_name,
+            print_event,
+        );
     }
 
     Ok(())

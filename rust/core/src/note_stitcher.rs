@@ -25,6 +25,13 @@ pub struct ConfirmedNote {
     pub start_s: f32,
     pub end_s: f32,
     pub pitch_midi: i32,
+    // The model's own per-pitch activation strength, averaged over the
+    // note's frames (see note_creation::output_to_notes_polyphonic) --
+    // already a natural [0, 1]-ish "how strongly did this specific pitch
+    // sound" figure, and (unlike a broadband loudness measure over the
+    // note's time span) correctly distinguishes notes within the same
+    // chord that differ in strength.
+    pub velocity: f32,
 }
 
 pub struct NoteStitcher {
@@ -44,7 +51,7 @@ impl NoteStitcher {
     pub fn update(&mut self, buffer_duration_s: f32, note_events: &[NoteEvent]) -> Vec<ConfirmedNote> {
         let confirm_before = buffer_duration_s - self.confirm_margin_s;
         let mut newly_confirmed = Vec::new();
-        for &(start_s, end_s, pitch_midi, _amplitude) in note_events {
+        for &(start_s, end_s, pitch_midi, amplitude) in note_events {
             if end_s > confirm_before {
                 continue;
             }
@@ -55,7 +62,7 @@ impl NoteStitcher {
                 }
             }
             self.emitted.insert(key, end_s);
-            newly_confirmed.push(ConfirmedNote { start_s, end_s, pitch_midi });
+            newly_confirmed.push(ConfirmedNote { start_s, end_s, pitch_midi, velocity: amplitude });
         }
         newly_confirmed.sort_by(|a, b| a.start_s.partial_cmp(&b.start_s).unwrap());
         newly_confirmed

@@ -6,6 +6,12 @@
 html, body {
   margin: 0;
   height: 100%;
+  /* This is a fixed one-screen app shell (header + canvas that fills the
+     rest via flex:1), never a scrolling document -- a sub-pixel mismatch
+     between 100vh and the real layout height (rounding across several
+     rem-sized rows) can otherwise trip a vertical scrollbar even though
+     nothing is meant to scroll. */
+  overflow: hidden;
   background: #14161c;
   color: #e8e8ec;
 }
@@ -50,13 +56,30 @@ html, body {
   font-size: 0.85rem;
 }
 
+#key-label {
+  text-align: center;
+  font-size: 1rem;
+  color: #8b93a7;
+  letter-spacing: 0.04em;
+  padding-top: 0.3rem;
+}
+
 #chord-label {
   text-align: center;
   font-size: 3rem;
   font-weight: 600;
-  padding: 0.4rem 0;
+  padding: 0.2rem 0 0;
   min-height: 1.2em;
   letter-spacing: 0.02em;
+}
+
+#roman-label {
+  text-align: center;
+  font-size: 1.1rem;
+  color: #8b93a7;
+  min-height: 1em;
+  padding-bottom: 0.2rem;
+  letter-spacing: 0.03em;
 }
 
 #pianoroll-container {

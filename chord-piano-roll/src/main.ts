@@ -4,20 +4,34 @@ import { PianoRoll } from "./pianoroll";
 
 type PipelineEvent =
   | { type: "Started"; total_latency_s: number }
-  | { type: "NoteConfirmed"; start_s: number; end_s: number; pitch_midi: number }
-  | { type: "ChordChange"; t: number; label: string };
+  | { type: "NoteConfirmed"; start_s: number; end_s: number; pitch_midi: number; velocity: number }
+  | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
+  | { type: "KeyChange"; key_name: string };
 
 const LATENCY_STORAGE_KEY = "chord.latencyMs";
 
 window.addEventListener("DOMContentLoaded", async () => {
   const container = document.querySelector<HTMLDivElement>("#pianoroll-container");
+  const keyLabel = document.querySelector<HTMLDivElement>("#key-label");
   const chordLabel = document.querySelector<HTMLDivElement>("#chord-label");
+  const romanLabel = document.querySelector<HTMLDivElement>("#roman-label");
   const startBtn = document.querySelector<HTMLButtonElement>("#start-btn");
   const stopBtn = document.querySelector<HTMLButtonElement>("#stop-btn");
   const status = document.querySelector<HTMLSpanElement>("#status");
   const latencyInput = document.querySelector<HTMLInputElement>("#latency-input");
   const latencyValue = document.querySelector<HTMLSpanElement>("#latency-value");
-  if (!container || !chordLabel || !startBtn || !stopBtn || !status || !latencyInput || !latencyValue) return;
+  if (
+    !container ||
+    !keyLabel ||
+    !chordLabel ||
+    !romanLabel ||
+    !startBtn ||
+    !stopBtn ||
+    !status ||
+    !latencyInput ||
+    !latencyValue
+  )
+    return;
 
   // Restore a previously-chosen latency, if any -- session-only convenience,
   // not a correctness-critical value (the backend clamps regardless).
@@ -53,9 +67,20 @@ window.addEventListener("DOMContentLoaded", async () => {
         start_s: payload.start_s,
         end_s: payload.end_s,
         pitch_midi: payload.pitch_midi,
+        velocity: payload.velocity,
       });
-    } else {
+    } else if (payload.type === "ChordChange") {
       chordLabel.textContent = payload.label;
+      // A non-breaking space, not "" -- an empty element's rendered
+      // height depends on min-height alone, which doesn't exactly match
+      // a real text line's height (governed by line-height/font metrics
+      // instead), so toggling between the two shifted this row's height
+      // by a couple of px every time silence was reported, visibly
+      // jittering the piano roll below it. Real (if invisible) inline
+      // content keeps the row's height identical either way.
+      romanLabel.textContent = payload.roman_numeral ?? " ";
+    } else {
+      keyLabel.textContent = payload.key_name;
     }
   });
 
@@ -65,6 +90,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   startBtn.addEventListener("click", async () => {
     chordLabel.textContent = "--";
+    keyLabel.textContent = "--";
+    romanLabel.textContent = " ";
     status.textContent = "starting...";
     startBtn.disabled = true;
     stopBtn.disabled = false;
