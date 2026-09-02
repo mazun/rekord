@@ -3,7 +3,13 @@ import { Application, Container, Graphics } from "pixi.js";
 const MIN_PITCH = 21; // A0
 const MAX_PITCH = 108; // C8
 const PIXELS_PER_SECOND = 120;
-const NOTE_COLOR = 0x5b8cff;
+// Notes are shaded between these two by velocity (the model's own
+// per-pitch activation strength for that note, in [0, 1]) rather than
+// drawn in one fixed color -- so within a chord, a note that sounded
+// weaker actually reads as dimmer, not just as "a note" with no
+// indication of how hard it was played relative to its neighbors.
+const NOTE_COLOR_MIN = 0x2c3550; // quiet: closer to the guide/background grey-blue
+const NOTE_COLOR_MAX = 0xaecbff; // loud: bright, near-white blue
 const GUIDE_COLOR = 0x262b36;
 
 // Vertical piano keyboard drawn at the playhead (the "now" line notes
@@ -28,10 +34,22 @@ function isBlackKey(pitch: number): boolean {
   return [1, 3, 6, 8, 10].includes(pitch % 12);
 }
 
+/** Linearly blends two 0xRRGGBB colors by `t` in [0, 1]. */
+function lerpColor(from: number, to: number, t: number): number {
+  const clamped = Math.min(1, Math.max(0, t));
+  const channel = (shift: number) => {
+    const a = (from >> shift) & 0xff;
+    const b = (to >> shift) & 0xff;
+    return Math.round(a + (b - a) * clamped);
+  };
+  return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+}
+
 export interface ConfirmedNote {
   start_s: number;
   end_s: number;
   pitch_midi: number;
+  velocity: number;
 }
 
 interface NoteSprite extends ConfirmedNote {
@@ -216,8 +234,9 @@ export class PianoRoll {
     const noteHeightPx = Math.max(3, height / (MAX_PITCH - MIN_PITCH) - 1);
     const widthPx = Math.max(2, (note.end_s - note.start_s) * PIXELS_PER_SECOND);
 
+    const color = lerpColor(NOTE_COLOR_MIN, NOTE_COLOR_MAX, note.velocity);
     const graphic = new Graphics();
-    graphic.roundRect(0, 0, widthPx, noteHeightPx, 2).fill({ color: NOTE_COLOR });
+    graphic.roundRect(0, 0, widthPx, noteHeightPx, 2).fill({ color });
     // Position it correctly right away -- left at the Graphics default
     // (x=0, the far-left edge where the oldest, about-to-be-pruned notes
     // sit) until the next tick, a newly-added note would flash there for

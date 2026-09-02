@@ -52,13 +52,16 @@ pub struct ChordMatch {
 }
 
 impl ChordMatch {
+    /// The suffix `label()` appends after the root name -- empty for a
+    /// plain major triad, the quality string otherwise. Also used by
+    /// `key_estimator::roman_numeral()` so a Roman-numeral label carries
+    /// exactly the same quality suffix a normal chord label would show.
+    pub fn quality_suffix(&self) -> &'static str {
+        if self.quality == "maj" { "" } else { self.quality }
+    }
+
     pub fn label(&self) -> String {
-        let root = NOTE_NAMES[self.root_pc as usize];
-        let mut name = if self.quality == "maj" {
-            root.to_string()
-        } else {
-            format!("{root}{}", self.quality)
-        };
+        let mut name = format!("{}{}", NOTE_NAMES[self.root_pc as usize], self.quality_suffix());
         if let Some(bass_pc) = self.bass_pc {
             if bass_pc != self.root_pc {
                 name.push('/');
