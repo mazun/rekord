@@ -4,7 +4,7 @@ use chord_core::key_estimator::KeyEstimator;
 use chord_core::note_creation::NoteEvent;
 use chord_core::note_stitcher::NoteStitcher;
 use chord_core::onnx_model::OnnxNoteModel;
-use chord_core::pipeline::{self, midi_to_name, PipelineEvent};
+use chord_core::pipeline::{self, midi_to_name, ChordStabilizer, PipelineEvent};
 use chord_core::streaming_extractor::{
     StreamingNoteExtractor, AUDIO_SAMPLE_RATE, HOP_SIZE, MAX_FRESH_EXTRACTOR_REAL_SAMPLES,
 };
@@ -25,6 +25,11 @@ fn print_event(event: PipelineEvent) {
             let suffix = roman_numeral.map(|r| format!("  ({r})")).unwrap_or_default();
             println!("  t={t:6.2}s  chord: {label}{suffix}");
         }
+        PipelineEvent::TensionsChanged { tensions } => {
+            if !tensions.is_empty() {
+                println!("    tensions: {}", tensions.join(", "));
+            }
+        }
         PipelineEvent::KeyChange { key_name } => {
             println!("  key: {key_name}");
         }
@@ -40,7 +45,7 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
     let mut model = OnnxNoteModel::load().context("loading ONNX model")?;
     let mut stitcher = NoteStitcher::new();
     let mut key_estimator = KeyEstimator::new();
-    let mut last_chord_label: Option<String> = None;
+    let mut chord_display = ChordStabilizer::new();
     let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
 
@@ -66,7 +71,7 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
                     &note_events,
                     last_covered,
                     covered,
-                    &mut last_chord_label,
+                    &mut chord_display,
                     &mut key_estimator,
                     &mut last_key_name,
                     print_event,
@@ -119,7 +124,7 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
             &combined_notes,
             last_covered,
             duration,
-            &mut last_chord_label,
+            &mut chord_display,
             &mut key_estimator,
             &mut last_key_name,
             print_event,

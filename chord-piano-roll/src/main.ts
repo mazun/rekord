@@ -6,6 +6,7 @@ type PipelineEvent =
   | { type: "Started"; total_latency_s: number }
   | { type: "NoteConfirmed"; start_s: number; end_s: number; pitch_midi: number; velocity: number }
   | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
+  | { type: "TensionsChanged"; tensions: string[] }
   | { type: "KeyChange"; key_name: string };
 
 const LATENCY_STORAGE_KEY = "chord.latencyMs";
@@ -50,6 +51,12 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   const roll = await PianoRoll.create(container);
 
+  const tensionChips = new Map<string, HTMLElement>();
+  document.querySelectorAll<HTMLElement>(".chip[data-tension]").forEach((chip) => {
+    const key = chip.dataset.tension;
+    if (key) tensionChips.set(key, chip);
+  });
+
   await listen<PipelineEvent>("pipeline-event", (event) => {
     const payload = event.payload;
     if (payload.type === "Started") {
@@ -79,6 +86,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       // jittering the piano roll below it. Real (if invisible) inline
       // content keeps the row's height identical either way.
       romanLabel.textContent = payload.roman_numeral ?? " ";
+    } else if (payload.type === "TensionsChanged") {
+      const active = new Set(payload.tensions);
+      tensionChips.forEach((chip, key) => {
+        chip.classList.toggle("lit", active.has(key));
+      });
     } else {
       keyLabel.textContent = payload.key_name;
     }
@@ -92,6 +104,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     chordLabel.textContent = "--";
     keyLabel.textContent = "--";
     romanLabel.textContent = " ";
+    tensionChips.forEach((chip) => chip.classList.remove("lit"));
     status.textContent = "starting...";
     startBtn.disabled = true;
     stopBtn.disabled = false;
