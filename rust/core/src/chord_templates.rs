@@ -12,6 +12,18 @@ pub struct ChordTemplate {
 }
 
 pub const CHORD_TEMPLATES: &[ChordTemplate] = &[
+    // Root + perfect 5th only, no 3rd -- a "power chord" (or a bare
+    // 4th/5th dyad read from its other end). Every other template here
+    // has at least 3 tones, so against a genuine 2-pitch-class active set
+    // they all tie at the same "missing one tone" score regardless of
+    // which 3rd they guess -- this scores strictly higher (a perfect,
+    // 0-missing/0-extra fit) whenever exactly this dyad is what's
+    // sounding, without ever being able to win when a 3rd is actually
+    // present too (see chord_templates tests / CLAUDE.md). Confirmed via
+    // real-world testing (2026-09-03): without this, a distorted electric
+    // guitar power chord was always mislabeled as a full major chord
+    // (the array-order tie-break happened to fall on "maj").
+    ChordTemplate { quality: "5", intervals: &[0, 7] },
     ChordTemplate { quality: "maj", intervals: &[0, 4, 7] },
     ChordTemplate { quality: "m", intervals: &[0, 3, 7] },
     ChordTemplate { quality: "dim", intervals: &[0, 3, 6] },
@@ -45,6 +57,7 @@ const SIZE_PENALTY: f32 = 0.05;
 // matches the bass note, since that's what a listener would actually call it.
 const BASS_IS_ROOT_BONUS: f32 = 0.5;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChordMatch {
     pub root_pc: i32,
     pub quality: &'static str,
@@ -117,4 +130,42 @@ pub fn match_chord(active_pitch_classes: &[i32], bass_pc: Option<i32>) -> Option
         }
     }
     best.map(|(m, _)| m)
+}
+
+// Canonical upper-structure tension names by semitone offset from the
+// chord root -- exactly the 7 slots the piano-roll UI always shows (in
+// this fixed order, so a diffed/re-rendered tension list never needs
+// sorting). Offsets that coincide with a triad/7th tone (0, 3, 4, 7, 10,
+// 11) are deliberately absent: a note there is either already part of
+// the stabilized chord label or was penalized/matched by `match_chord`
+// itself, not something this display is meant to call out.
+const TENSION_NAMES: [(i32, &str); 7] =
+    [(1, "b9"), (2, "9"), (3, "#9"), (5, "11"), (6, "#11"), (8, "b13"), (9, "13")];
+
+/// Pitch classes in `active_pitch_classes` that fall outside `chord`'s own
+/// template -- e.g. a melodic passing tone sounding over an already-
+/// stabilized chord. Returns tension names in `TENSION_NAMES` order
+/// (independent of note order/onset order), so callers can compare two
+/// results with plain `==` to detect a real change. Any active pitch
+/// class that doesn't land on one of the 7 named offsets (e.g. it's
+/// already part of `chord`'s own template) is silently omitted, not an
+/// error -- this only ever reports the offsets the UI has a slot for.
+pub fn extra_tensions(active_pitch_classes: &[i32], chord: &ChordMatch) -> Vec<&'static str> {
+    let template = CHORD_TEMPLATES
+        .iter()
+        .find(|tpl| tpl.quality == chord.quality)
+        .expect("ChordMatch::quality always names an existing CHORD_TEMPLATES entry");
+    let mut template_mask = 0u16;
+    for &i in template.intervals {
+        template_mask |= 1 << (chord.root_pc + i).rem_euclid(12);
+    }
+    let extra_mask = pitch_class_set(active_pitch_classes) & !template_mask;
+    TENSION_NAMES
+        .iter()
+        .filter(|&&(interval, _)| {
+            let pc = (chord.root_pc + interval).rem_euclid(12);
+            extra_mask & (1 << pc) != 0
+        })
+        .map(|&(_, name)| name)
+        .collect()
 }

@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::chord_templates::{match_chord, ChordMatch};
-use crate::key_estimator::{roman_numeral, KeyEstimator};
+use crate::chord_templates::{extra_tensions, match_chord, ChordMatch};
+use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
 use crate::live_capture;
 use crate::note_creation::NoteEvent;
 use crate::note_stitcher::{ConfirmedNote, NoteStitcher, CONFIRM_MARGIN_S};
@@ -61,6 +61,17 @@ pub enum PipelineEvent {
     /// recently estimated key (see `key_estimator`), or `None` if no key
     /// estimate is confident yet (e.g. near session start).
     ChordChange { t: f32, label: String, roman_numeral: Option<String> },
+    /// Notes currently sounding that fall outside the chord named by the
+    /// last `ChordChange` -- e.g. a melodic passing tone over a held
+    /// chord. Unlike `ChordChange` (gated by `CHORD_MIN_HOLD_S`'s hold-time
+    /// hysteresis so melody notes can't pull the label around), this
+    /// reacts immediately to the raw active-note set: flagging a
+    /// transient extension *as* transient, rather than either hiding it
+    /// or letting it hijack the main label, is the whole point. Always
+    /// the full current set (not a delta) in `extra_tensions`'s fixed
+    /// canonical order (b9, 9, #9, 11, #11, b13, 13), so the frontend can
+    /// diff/render directly without re-sorting.
+    TensionsChanged { tensions: Vec<String> },
     /// Fired independently of `ChordChange`: a key estimate can update
     /// mid-chord, and the display needs to track a modulation even across
     /// a single held chord's duration, not just at the next chord
@@ -78,6 +89,7 @@ const SILENCE_HOLD_S: f32 = 0.5;
 /// the matched `ChordMatch` (not just its formatted label) so a caller can
 /// also derive a Roman-numeral degree from `root_pc`/`quality` without
 /// reparsing a display string.
+#[derive(Clone, Copy, PartialEq)]
 pub enum ChordAt {
     Silence,
     Match(ChordMatch),
@@ -92,11 +104,16 @@ impl ChordAt {
     }
 }
 
-/// Chord at time t: Some(Silence) if nothing has sounded recently,
-/// None if notes are present (or sounded within SILENCE_HOLD_S) but
-/// nothing matched well enough / it's just a brief gap (ambiguous --
-/// caller should just keep showing the prior label).
-pub fn chord_at(note_events: &[NoteEvent], t: f32, tolerance: f32) -> Option<ChordAt> {
+/// One checkpoint's raw reading: every currently-active pitch class (used
+/// for tension detection regardless of whether a chord could be named),
+/// plus the chord signal itself (`None` for the ambiguous-gap case --see
+/// `chord_at`'s doc comment).
+struct ActiveNow {
+    active_pitch_classes: Vec<i32>,
+    chord: Option<ChordAt>,
+}
+
+fn evaluate_active(note_events: &[NoteEvent], t: f32, tolerance: f32) -> ActiveNow {
     let active: Vec<i32> = note_events
         .iter()
         .filter(|&&(s, e, _p, _a)| s <= t + 1e-6 && e >= t - tolerance)
@@ -106,24 +123,163 @@ pub fn chord_at(note_events: &[NoteEvent], t: f32, tolerance: f32) -> Option<Cho
         let recently_sounding = note_events
             .iter()
             .any(|&(s, e, _p, _a)| s <= t + 1e-6 && e >= t - SILENCE_HOLD_S);
-        if recently_sounding {
-            return None;
-        }
-        return Some(ChordAt::Silence);
+        return ActiveNow {
+            active_pitch_classes: Vec::new(),
+            chord: if recently_sounding { None } else { Some(ChordAt::Silence) },
+        };
     }
     let bass_pc = active.iter().min().map(|p| p.rem_euclid(12));
     let pitch_classes: Vec<i32> = active.iter().map(|p| p.rem_euclid(12)).collect();
-    match_chord(&pitch_classes, bass_pc).map(ChordAt::Match)
+    let chord = match_chord(&pitch_classes, bass_pc).map(ChordAt::Match);
+    ActiveNow { active_pitch_classes: pitch_classes, chord }
 }
 
-/// Windows complete in ~1.6s jumps, so a single "what's active now" check
-/// can skip right over a chord shorter than that. Re-evaluate the chord at
-/// every note onset within the newly covered span instead.
+/// Chord at time t: Some(Silence) if nothing has sounded recently,
+/// None if notes are present (or sounded within SILENCE_HOLD_S) but
+/// nothing matched well enough / it's just a brief gap (ambiguous --
+/// caller should just keep showing the prior label).
+pub fn chord_at(note_events: &[NoteEvent], t: f32, tolerance: f32) -> Option<ChordAt> {
+    evaluate_active(note_events, t, tolerance).chord
+}
+
+// A candidate chord must be the best match continuously for this long
+// before it actually replaces the displayed one -- otherwise a fast
+// melodic passing tone (typically shorter than this: roughly a 16th note
+// at a brisk tempo) would flip the label to whatever it briefly forms
+// with the held chord, then flip back, for every such note. Deliberately
+// far shorter than KeyEstimator's MIN_HOLD_S (2.0s): a real chord change
+// legitimately happens every beat or faster, so this only needs to
+// outlast a single passing note, not a phrase. No published source
+// prescribes this for real-time chord tracking (the classic template-
+// matching literature scores fixed, already-segmented chords, not a live
+// stream) -- start here and tune empirically against sample_audio and
+// live playing, same as WINDOW_S/SWITCH_MARGIN in key_estimator.rs.
+const CHORD_MIN_HOLD_S: f32 = 0.15;
+
+/// Stabilizes the displayed chord against brief melodic interference
+/// (`CHORD_MIN_HOLD_S` hold-time hysteresis, mirroring the proven
+/// margin/hold pattern in `KeyEstimator`) while separately surfacing
+/// whatever's sounding outside that stabilized chord as `TensionsChanged`
+/// events -- so a melody note doesn't just get silently absorbed or
+/// briefly hijack the label, it shows up as what it is.
+pub struct ChordStabilizer {
+    displayed: Option<ChordAt>,
+    // The best-scoring challenger to `displayed`, and when it first took
+    // the lead -- reset whenever the leader changes, so a switch only
+    // commits once the *same* candidate has led continuously for
+    // CHORD_MIN_HOLD_S, not just cumulatively (same reasoning as
+    // KeyEstimator::pending).
+    pending: Option<(ChordAt, f32)>,
+    tensions: Vec<&'static str>,
+}
+
+impl ChordStabilizer {
+    pub fn new() -> Self {
+        Self { displayed: None, pending: None, tensions: Vec::new() }
+    }
+
+    fn commit(
+        &mut self,
+        candidate: ChordAt,
+        t: f32,
+        current_key: Option<KeyEstimate>,
+        on_event: &mut impl FnMut(PipelineEvent),
+    ) {
+        let roman = match (&candidate, current_key) {
+            (ChordAt::Match(m), Some(key)) => Some(roman_numeral(&key, m)),
+            _ => None,
+        };
+        on_event(PipelineEvent::ChordChange { t, label: candidate.label(), roman_numeral: roman });
+        self.displayed = Some(candidate);
+        self.pending = None;
+    }
+
+    /// Feed one checkpoint's active-pitch-class reading (see
+    /// `evaluate_active`), applying hold-time hysteresis before switching
+    /// the displayed chord and emitting `TensionsChanged` for whatever's
+    /// active outside it. Call once per checkpoint, in timestamp order.
+    fn observe(
+        &mut self,
+        evaluated: ActiveNow,
+        t: f32,
+        current_key: Option<KeyEstimate>,
+        mut on_event: impl FnMut(PipelineEvent),
+    ) {
+        // A chord's notes don't release simultaneously -- confirmed via
+        // real-world testing (2026-09-04): as a chord decays, an inner
+        // voice (the 3rd) commonly fades out first, briefly leaving just
+        // root+5th audible before the rest follows. That bare dyad is
+        // definitionally the tail of the *same* chord, not a new one, so
+        // (unlike an ordinary candidate) no amount of hold-time should
+        // ever let it overwrite the display -- it can legitimately
+        // outlast CHORD_MIN_HOLD_S by persisting for the rest of the
+        // chord's decay. Only guards a same-root downgrade to "5"; a
+        // different root (or an actual power chord struck from silence,
+        // where `self.displayed` is still `None`) is unaffected.
+        let is_decay_to_bare_fifth = matches!(
+            (self.displayed, evaluated.chord),
+            (Some(ChordAt::Match(cur)), Some(ChordAt::Match(cand)))
+                if cand.quality == "5" && cand.root_pc == cur.root_pc && cur.quality != "5"
+        );
+        if let Some(candidate) = evaluated.chord {
+            if !is_decay_to_bare_fifth {
+                match self.displayed {
+                    None => self.commit(candidate, t, current_key, &mut on_event),
+                    Some(cur) if cur == candidate => self.pending = None,
+                    Some(_) => match self.pending {
+                        Some((cand, since)) if cand == candidate => {
+                            if t - since >= CHORD_MIN_HOLD_S {
+                                self.commit(candidate, t, current_key, &mut on_event);
+                            }
+                        }
+                        _ => self.pending = Some((candidate, t)),
+                    },
+                }
+            }
+        }
+
+        // Tensions are judged against whatever's actually displayed right
+        // now -- including mid-hold, before `pending` has won. That's
+        // deliberate: it's exactly what keeps a melody note that's
+        // "losing" the hold-time race visible as a tension instead of
+        // vanishing until (if ever) it wins outright.
+        let new_tensions = match self.displayed {
+            Some(ChordAt::Match(chord)) => extra_tensions(&evaluated.active_pitch_classes, &chord),
+            _ => Vec::new(),
+        };
+        if new_tensions != self.tensions {
+            on_event(PipelineEvent::TensionsChanged {
+                tensions: new_tensions.iter().map(|s| s.to_string()).collect(),
+            });
+            self.tensions = new_tensions;
+        }
+    }
+}
+
+// A held chord needs a *later* checkpoint to exist at all before
+// CHORD_MIN_HOLD_S's hold-time can ever be judged satisfied -- onset-only
+// checkpoints sufficed before that hold-time existed (a genuine change
+// was always self-evidently onset-triggered), but a clean block chord
+// (every note onsetting together, then nothing else until the next
+// chord's onset) generates only one tightly-clustered checkpoint and
+// then silence until whatever triggers the next one. Windows complete in
+// jumps up to ~1.6s (file-mode reprocessing's default extractor; live
+// mode's configurable stride can also run coarser than this), so without
+// this grid such a chord could go unconfirmed for its entire duration --
+// confirmed via file-mode testing against sample_audio, where exactly
+// this (a solid block chord with no follow-up onset before the next
+// chord) silently never committed. The grid step just needs to be
+// smaller than CHORD_MIN_HOLD_S; this has ample margin.
+const CHORD_CHECKPOINT_GRID_S: f32 = 0.05;
+
+/// Re-evaluate the chord at every note onset within the newly covered
+/// span, plus a periodic grid (see `CHORD_CHECKPOINT_GRID_S`) so a held
+/// chord always gets enough checkpoints to clear `CHORD_MIN_HOLD_S`.
 pub fn report_new_chords(
     note_events: &[NoteEvent],
     prev_covered: f32,
     covered: f32,
-    last_label: &mut Option<String>,
+    chord_display: &mut ChordStabilizer,
     key_estimator: &mut KeyEstimator,
     last_key_name: &mut Option<String>,
     mut on_event: impl FnMut(PipelineEvent),
@@ -134,6 +290,16 @@ pub fn report_new_chords(
         .filter(|&s| s > prev_covered && s <= covered)
         .map(|s| (s * 1000.0).round() as i64)
         .collect();
+    let mut grid_t = (prev_covered / CHORD_CHECKPOINT_GRID_S).floor() * CHORD_CHECKPOINT_GRID_S;
+    loop {
+        grid_t += CHORD_CHECKPOINT_GRID_S;
+        if grid_t > covered {
+            break;
+        }
+        if grid_t > prev_covered {
+            checkpoints.insert((grid_t * 1000.0).round() as i64);
+        }
+    }
     checkpoints.insert((covered * 1000.0).round() as i64);
 
     for t_key in checkpoints {
@@ -149,17 +315,8 @@ pub fn report_new_chords(
                 *last_key_name = Some(key_name);
             }
         }
-        if let Some(chord) = chord_at(note_events, t, ACTIVE_EDGE_TOLERANCE_S) {
-            let label = chord.label();
-            if Some(&label) != last_label.as_ref() {
-                let roman = match (&chord, current_key) {
-                    (ChordAt::Match(m), Some(key)) => Some(roman_numeral(&key, m)),
-                    _ => None,
-                };
-                on_event(PipelineEvent::ChordChange { t, label: label.clone(), roman_numeral: roman });
-                *last_label = Some(label);
-            }
-        }
+        let evaluated = evaluate_active(note_events, t, ACTIVE_EDGE_TOLERANCE_S);
+        chord_display.observe(evaluated, t, current_key, &mut on_event);
     }
 }
 
@@ -210,7 +367,7 @@ pub fn run_live_session(
     let mut model = OnnxNoteModel::load()?;
     let mut stitcher = NoteStitcher::new();
     let mut key_estimator = KeyEstimator::new();
-    let mut last_chord_label: Option<String> = None;
+    let mut chord_display = ChordStabilizer::new();
     let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
     let mut elapsed = 0.0f32;
@@ -234,7 +391,7 @@ pub fn run_live_session(
                 &note_events,
                 last_covered,
                 covered,
-                &mut last_chord_label,
+                &mut chord_display,
                 &mut key_estimator,
                 &mut last_key_name,
                 &mut on_event,
@@ -261,7 +418,7 @@ pub fn run_live_session(
         &final_notes,
         last_covered,
         extractor.covered_seconds(),
-        &mut last_chord_label,
+        &mut chord_display,
         &mut key_estimator,
         &mut last_key_name,
         &mut on_event,
