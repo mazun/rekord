@@ -73,6 +73,7 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
                     covered,
                     &mut chord_display,
                     &mut key_estimator,
+                    &pipeline::KeyMode::Auto,
                     &mut last_key_name,
                     print_event,
                 );
@@ -126,6 +127,7 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
             duration,
             &mut chord_display,
             &mut key_estimator,
+            &pipeline::KeyMode::Auto,
             &mut last_key_name,
             print_event,
         );
@@ -141,7 +143,8 @@ fn run_live(hop_seconds: f32, stride_seconds: f32, duration_s: Option<f32>) -> R
         None => println!("Press Ctrl+C to stop.\n"),
     }
     let never_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    pipeline::run_live_session(hop_seconds, stride_seconds, duration_s, never_stop, print_event)
+    let key_mode = std::sync::Arc::new(std::sync::Mutex::new(pipeline::KeyMode::Auto));
+    pipeline::run_live_session(hop_seconds, stride_seconds, duration_s, never_stop, key_mode, print_event)
 }
 
 fn main() -> Result<()> {

@@ -56,12 +56,28 @@ html, body {
   font-size: 0.85rem;
 }
 
+.key-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding-top: 0.3rem;
+}
+
 #key-label {
   text-align: center;
   font-size: 1rem;
   color: #8b93a7;
   letter-spacing: 0.04em;
-  padding-top: 0.3rem;
+}
+
+#key-select {
+  font-size: 0.8rem;
+  color: #8b93a7;
+  background: #1b1e27;
+  border: 1px solid #2a2e3a;
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
 }
 
 .chord-row {
