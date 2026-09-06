@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
@@ -26,6 +26,28 @@ const ACTIVE_EDGE_TOLERANCE_S: f32 = 0.2;
 // has a small safety margin baked in (matches the figure the piano-roll UI
 // used to hardcode for this purpose).
 const LATENCY_SAFETY_MARGIN_S: f32 = 0.3;
+
+/// Whether the key shown to the user comes from `KeyEstimator`'s own
+/// rolling correlation, or has been pinned by the user to work around a
+/// misdetection (K-S-style correlation is only reliable over whole
+/// pieces/large segments -- a short rolling window can legitimately lock
+/// onto the wrong member of a relative major/minor pair before the true
+/// tonic has even sounded; see key_estimator.rs and TODO.md). `Manual`
+/// always carries `Mode::Major` -- `KeyEstimate::name()` and
+/// `roman_numeral()` only ever consult `relative_major_pc()`, so a manual
+/// pick just needs the target relative-major pitch class, not a real
+/// major/minor judgment call.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum KeyMode {
+    Auto,
+    Manual(KeyEstimate),
+}
+
+impl Default for KeyMode {
+    fn default() -> Self {
+        KeyMode::Auto
+    }
+}
 
 pub const MIDI_NOTE_NAMES: [&str; 12] =
     ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -281,6 +303,7 @@ pub fn report_new_chords(
     covered: f32,
     chord_display: &mut ChordStabilizer,
     key_estimator: &mut KeyEstimator,
+    key_mode: &KeyMode,
     last_key_name: &mut Option<String>,
     mut on_event: impl FnMut(PipelineEvent),
 ) {
@@ -307,7 +330,15 @@ pub fn report_new_chords(
         // Re-evaluate the key first: it can update mid-chord, and doing
         // this before the chord check lets a just-updated key inform this
         // same checkpoint's Roman-numeral label instead of lagging a step.
-        let current_key = key_estimator.estimate(t);
+        // The estimator is still fed/advanced in Manual mode (its history
+        // and hysteresis stay warm for whenever the user switches back to
+        // Auto) -- only its output is ignored while a manual pick is in
+        // effect.
+        let auto_key = key_estimator.estimate(t);
+        let current_key = match key_mode {
+            KeyMode::Auto => auto_key,
+            KeyMode::Manual(key) => Some(*key),
+        };
         if let Some(key) = current_key {
             let key_name = key.name();
             if Some(&key_name) != last_key_name.as_ref() {
@@ -362,6 +393,7 @@ pub fn run_live_session(
     stride_seconds: f32,
     duration_s: Option<f32>,
     stop: Arc<AtomicBool>,
+    key_mode: Arc<Mutex<KeyMode>>,
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
     let mut model = OnnxNoteModel::load()?;
@@ -387,12 +419,14 @@ pub fn run_live_session(
             let note_events = extractor.note_events();
             let covered = extractor.covered_seconds();
             emit_confirmed_notes(&mut stitcher, covered, &note_events, &mut key_estimator, &mut on_event);
+            let current_key_mode = *key_mode.lock().unwrap();
             report_new_chords(
                 &note_events,
                 last_covered,
                 covered,
                 &mut chord_display,
                 &mut key_estimator,
+                &current_key_mode,
                 &mut last_key_name,
                 &mut on_event,
             );
@@ -414,12 +448,14 @@ pub fn run_live_session(
     // left so it isn't silently lost.
     let final_notes = extractor.note_events();
     emit_notes(stitcher.flush(&final_notes), &mut key_estimator, &mut on_event);
+    let current_key_mode = *key_mode.lock().unwrap();
     report_new_chords(
         &final_notes,
         last_covered,
         extractor.covered_seconds(),
         &mut chord_display,
         &mut key_estimator,
+        &current_key_mode,
         &mut last_key_name,
         &mut on_event,
     );

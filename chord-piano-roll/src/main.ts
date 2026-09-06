@@ -11,6 +11,17 @@ type PipelineEvent =
 
 const LATENCY_STORAGE_KEY = "chord.latencyMs";
 
+// Mirrors chord_core::chord_templates::NOTE_NAMES and
+// KeyEstimate::name()'s "X Major (Y Minor)" formatting -- the manual-key
+// dropdown offers the same 12 relative major/minor pairs the automatic
+// estimator can ever display, so switching to a manual pick never shows a
+// label the Auto mode couldn't have shown itself.
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+function keyPairLabel(relativeMajorPc: number): string {
+  const minorPc = (relativeMajorPc + 9) % 12; // -3 semitones, wrapped
+  return `${NOTE_NAMES[relativeMajorPc]} Major (${NOTE_NAMES[minorPc]} Minor)`;
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   const container = document.querySelector<HTMLDivElement>("#pianoroll-container");
   const keyLabel = document.querySelector<HTMLDivElement>("#key-label");
@@ -21,6 +32,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   const status = document.querySelector<HTMLSpanElement>("#status");
   const latencyInput = document.querySelector<HTMLInputElement>("#latency-input");
   const latencyValue = document.querySelector<HTMLSpanElement>("#latency-value");
+  const keySelect = document.querySelector<HTMLSelectElement>("#key-select");
   if (
     !container ||
     !keyLabel ||
@@ -30,9 +42,33 @@ window.addEventListener("DOMContentLoaded", async () => {
     !stopBtn ||
     !status ||
     !latencyInput ||
-    !latencyValue
+    !latencyValue ||
+    !keySelect
   )
     return;
+
+  for (let pc = 0; pc < 12; pc++) {
+    const opt = document.createElement("option");
+    opt.value = String(pc);
+    opt.textContent = keyPairLabel(pc);
+    keySelect.appendChild(opt);
+  }
+
+  keySelect.addEventListener("change", async () => {
+    const tonicPc = keySelect.value === "auto" ? null : Number(keySelect.value);
+    // Auto mode's label only refreshes on the next KeyChange event (i.e.
+    // once capture is running and a checkpoint fires); a manual pick's
+    // label is already fully known, so show it immediately instead of
+    // waiting on that same round-trip.
+    if (tonicPc !== null) {
+      keyLabel.textContent = keyPairLabel(tonicPc);
+    }
+    try {
+      await invoke("set_key_mode", { tonicPc });
+    } catch (err) {
+      status.textContent = `error: ${err}`;
+    }
+  });
 
   // Restore a previously-chosen latency, if any -- session-only convenience,
   // not a correctness-critical value (the backend clamps regardless).
