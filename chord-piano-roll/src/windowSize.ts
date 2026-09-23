@@ -39,11 +39,18 @@ function measureCollapsedSize(
 
 // Shared by the toggle button's click and its startup replay, so
 // opening the app in whichever state it was last left in resizes the
-// window the same way an actual click would.
+// window the same way an actual click would -- except that the replay
+// passes rememberSize=false. On a real launch the window is at the
+// tauri.conf.json default anyway (which the fallback above already
+// covers), but a webview reload (Ctrl+R, Vite full-reload) keeps the OS
+// window at whatever size it had -- already collapsed, if the roll was
+// hidden -- and remembering that as the "expanded" size left "show"
+// restoring the window to a collapsed-height sliver.
 export async function setPianorollVisible(
   visible: boolean,
   appShell: HTMLElement,
   toggleBtn: HTMLElement,
+  rememberSize = true,
 ): Promise<void> {
   settings.pianorollVisible = visible;
   savePianorollVisible();
@@ -58,8 +65,10 @@ export async function setPianorollVisible(
     const currentLogicalHeight = currentSize.height / scaleFactor;
 
     if (!visible) {
-      widthBeforeCollapse = currentLogicalWidth;
-      heightBeforeCollapse = currentLogicalHeight;
+      if (rememberSize) {
+        widthBeforeCollapse = currentLogicalWidth;
+        heightBeforeCollapse = currentLogicalHeight;
+      }
       const collapsed = measureCollapsedSize(appShell, toggleBtn);
       await win.setSize(new LogicalSize(collapsed.width, collapsed.height));
     } else {
