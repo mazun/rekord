@@ -2,6 +2,7 @@ pub mod audio_io;
 pub mod chord_templates;
 pub mod key_estimator;
 pub mod live_capture;
+pub mod melody_bass;
 pub mod note_creation;
 pub mod note_stitcher;
 pub mod onnx_model;

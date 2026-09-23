@@ -127,6 +127,29 @@ npm run tauri dev
   note forever, growing `history` without bound for the rest of the
   session. This was a real bug (not hypothetical) caught via live testing
   as a session that "worked at first, then gradually became unresponsive".
+- **Melody/bass line labeling (`melody_bass.rs`) is a symbolic skyline rule
+  over the live `NoteConfirmed` stream, not a source-separation model.** An
+  earlier attempt used Demucs (source separation) for this and was kept on
+  a branch, not merged — see `git log` for
+  `feature/on-demand-analysis`: separating audio into stems and running
+  basic-pitch on each just relabels notes basic-pitch would already
+  detect, it doesn't recover any new ones, so the added complexity (a
+  Python subprocess, since htdemucs has no working ONNX export) wasn't
+  worth it for what's ultimately a labeling problem over an already-known
+  note set. The skyline rule (highest/lowest sounding note) is the classic
+  symbolic-music melody-extraction baseline (Uitdenbogerd & Zobel); the
+  register cutoffs (`BASS_MAX_PITCH`/`MELODY_MIN_PITCH`), the relative-
+  velocity filter, and the voice-leading jump gate are this project's own
+  additions with no canonical prescription — tune those empirically, but
+  don't casually swap out the core extreme-note rule itself without reason.
+  Measured against Demucs-stem notes as pseudo ground truth on one real
+  recording (2026-09-21): bass ~84% precision/68% recall, melody ~55%
+  precision/26% recall (vs. a ~35% any-note baseline) — one song, method
+  not re-verified since, worth re-running before trusting further tuning.
+  `melody`/`bass` on `PipelineEvent::NoteConfirmed` aren't mutually
+  exclusive in the backend (a lone low note can trivially satisfy both);
+  the piano-roll frontend resolves that by always preferring melody when
+  both are set, rather than the backend picking one.
 
 ## Testing
 
