@@ -156,6 +156,12 @@ export class PianoRoll {
     return roll;
   }
 
+  // Tears down the renderer and removes its canvas -- only needed so a
+  // Svelte HMR remount doesn't leave a second canvas/ticker running.
+  destroy(): void {
+    this.app.destroy(true, { children: true });
+  }
+
   private playheadX(): number {
     return this.app.screen.width - KEYBOARD_WIDTH;
   }
