@@ -83,6 +83,8 @@
     display: flex;
     align-items: center;
     padding: 0.4rem 0.8rem;
+    border: none;
+    background: none;
     /* Record icon is red (the universal "record" cue); the stop icon
        takes the regular text color. */
     color: #e5484d;
