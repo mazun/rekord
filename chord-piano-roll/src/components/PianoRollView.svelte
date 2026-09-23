@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { PianoRoll } from "../pianoroll";
-  import { connectPipeline } from "../pipeline.svelte";
+  import { connectPipeline, startCapture, stopCapture } from "../pipeline.svelte";
   import { settings } from "../settings.svelte";
 
   let container: HTMLElement;
@@ -30,8 +30,18 @@
         onStarted: (totalLatencyS) => roll?.reset(totalLatencyS),
         onNote: (note) => roll?.addNote(note),
       });
-      if (disposed) off();
-      else unlisten = off;
+      if (disposed) {
+        off();
+        return;
+      }
+      unlisten = off;
+
+      // Capture starts on launch rather than waiting for a click. Stop
+      // first: if the webview reloaded while capture kept running on the
+      // backend, start_capture alone is a no-op there and would never emit
+      // a fresh Started event to anchor this new roll's clock.
+      await stopCapture();
+      if (!disposed) await startCapture(settings.latencyMs);
     })();
 
     return () => {

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { pipeline, stopCapture } from "./pipeline.svelte";
+  import { pipeline, startCapture, stopCapture } from "./pipeline.svelte";
+  import { settings } from "./settings.svelte";
   import Toolbar from "./components/Toolbar.svelte";
   import KeyPicker from "./components/KeyPicker.svelte";
   import ChordDisplay from "./components/ChordDisplay.svelte";
@@ -13,12 +14,24 @@
   // Stopping capture (if running) before navigating away keeps the piano
   // roll's clock/state consistent with what "Start" will set up fresh next
   // time -- the settings page is a separate view, not an overlay on top of
-  // a still-running session.
+  // a still-running session. Recording is the app's resting state (it
+  // starts on launch), so coming back resumes it -- picking up any latency
+  // change made in between -- if it was running when settings opened.
+  let resumeOnClose = false;
+
   async function openSettings() {
-    if (pipeline.status === "running") {
+    resumeOnClose = pipeline.status === "running";
+    if (resumeOnClose) {
       await stopCapture();
     }
     view = "settings";
+  }
+
+  function closeSettings() {
+    view = "main";
+    if (resumeOnClose && pipeline.status === "idle") {
+      startCapture(settings.latencyMs);
+    }
   }
 </script>
 
@@ -33,7 +46,7 @@
     </div>
     <PianoRollView />
   </div>
-  <SettingsView hidden={view !== "settings"} onClose={() => (view = "main")} />
+  <SettingsView hidden={view !== "settings"} onClose={closeSettings} />
 </main>
 
 <style>

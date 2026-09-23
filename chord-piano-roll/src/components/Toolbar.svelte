@@ -3,15 +3,38 @@
   import { settings } from "../settings.svelte";
 
   let { onOpenSettings }: { onOpenSettings: () => void } = $props();
+
+  // One toggle instead of separate Start/Stop buttons: the icon shows what
+  // clicking will do (record while stopped, stop while recording), and
+  // "stopping" keeps the stop icon (disabled) until stop_capture returns.
+  const recording = $derived(pipeline.status === "running" || pipeline.status === "stopping");
+  const label = $derived(recording ? "停止" : "録音開始");
+
+  function toggleCapture() {
+    if (pipeline.status === "running") stopCapture();
+    else if (pipeline.status === "idle") startCapture(settings.latencyMs);
+  }
 </script>
 
 <div class="toolbar">
   <button
-    id="start-btn"
-    disabled={pipeline.status !== "idle"}
-    onclick={() => startCapture(settings.latencyMs)}>Start</button
+    id="capture-btn"
+    class="capture-btn"
+    class:recording
+    type="button"
+    title={label}
+    aria-label={label}
+    disabled={pipeline.status === "loading" || pipeline.status === "stopping"}
+    onclick={toggleCapture}
   >
-  <button id="stop-btn" disabled={pipeline.status !== "running"} onclick={stopCapture}>Stop</button>
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      {#if recording}
+        <rect x="3" y="3" width="10" height="10" rx="1.5" />
+      {:else}
+        <circle cx="8" cy="8" r="5.5" />
+      {/if}
+    </svg>
+  </button>
   <button
     id="settings-btn"
     class="icon-btn"
@@ -51,6 +74,26 @@
   button:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+
+  .capture-btn {
+    display: flex;
+    align-items: center;
+    padding: 0.4rem 0.8rem;
+    /* Record icon is red (the universal "record" cue); the stop icon
+       takes the regular text color. */
+    color: #e5484d;
+  }
+
+  .capture-btn.recording {
+    color: var(--text);
+  }
+
+  .capture-btn svg {
+    display: block;
+    width: 1.1rem;
+    height: 1.1rem;
+    fill: currentColor;
   }
 
   #settings-btn {
