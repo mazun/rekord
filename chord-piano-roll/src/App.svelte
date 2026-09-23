@@ -66,6 +66,6 @@
     align-items: center;
     justify-content: center;
     gap: 2.2rem;
-    padding: 0.2rem 1rem 1rem;
+    padding: 1rem;
   }
 </style>
