@@ -1,102 +1,106 @@
 <script lang="ts">
-  import { Select } from "bits-ui";
   import { pipeline, keyPairLabel, setKeyMode } from "../pipeline.svelte";
 
-  // Auto + the 12 relative major/minor pairs. The trigger always shows the
-  // pipeline's current key label (the detected key in Auto mode), not the
-  // selected item's label -- "Auto" itself is never what's displayed.
-  const ITEMS = [
-    { value: "auto", label: "Auto" },
-    ...Array.from({ length: 12 }, (_, pc) => ({ value: String(pc), label: keyPairLabel(pc) })),
-  ];
+  // A toggle plus up/down steppers instead of a dropdown: the collapsed
+  // window is only a few rows tall, so a 13-item menu opened from here
+  // always ran off the bottom of it.
+  const KEY_LABELS = Array.from({ length: 12 }, (_, pc) => keyPairLabel(pc));
 
-  let mode = $state("auto");
+  let auto = $state(true);
+
+  // The key currently displayed -- the detected one in Auto mode, the picked
+  // one otherwise (setKeyMode updates the label immediately). Stepping from
+  // Auto starts from what's on screen, falling back to C before the first
+  // estimate arrives ("--").
+  const currentPc = $derived(Math.max(0, KEY_LABELS.indexOf(pipeline.keyName)));
+
+  function toggleAuto() {
+    auto = !auto;
+    // Leaving Auto pins the key that's currently displayed; entering it
+    // hands control back to the estimator.
+    setKeyMode(auto ? null : currentPc);
+  }
+
+  // Stepping while in Auto switches to manual mode -- there's nothing to
+  // step through otherwise, so this saves a separate "turn Auto off" click.
+  function step(semitones: number) {
+    auto = false;
+    setKeyMode((currentPc + semitones + 12) % 12);
+  }
 </script>
 
 <div class="key-row">
-  <Select.Root
-    type="single"
-    bind:value={mode}
-    onValueChange={(v) => setKeyMode(v === "auto" ? null : Number(v))}
+  <button
+    class="auto-btn"
+    class:active={auto}
+    type="button"
+    aria-pressed={auto}
+    title="キーの自動検出"
+    onclick={toggleAuto}
   >
-    <Select.Trigger id="key-label">{pipeline.keyName}</Select.Trigger>
-    <Select.Content class="key-menu" side="bottom" align="center" sideOffset={3}>
-      {#each ITEMS as item (item.value)}
-        <Select.Item class="key-menu-item" value={item.value} label={item.label}>
-          {item.label}
-        </Select.Item>
-      {/each}
-    </Select.Content>
-  </Select.Root>
+    Auto
+  </button>
+  <span id="key-label">{pipeline.keyName}</span>
+  <div class="steppers">
+    <button type="button" title="半音上げる" aria-label="半音上げる" onclick={() => step(1)}>▲</button>
+    <button type="button" title="半音下げる" aria-label="半音下げる" onclick={() => step(-1)}>▼</button>
+  </div>
 </div>
 
 <style>
+  /* 1fr / auto / 1fr keeps the label itself centered on the row, the same
+     place it was when it was the row's only content, regardless of how wide
+     the Auto button or the steppers are. */
   .key-row {
     position: relative;
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: center;
+    column-gap: 0.5rem;
     padding-top: 0.3rem;
   }
 
-  /* Everything below is rendered by Bits UI components, not this one's own
-     markup, so Svelte's scoping can't reach it -- hence :global(), kept
-     under .key-row so it still only applies here (Select.Content isn't
-     portaled, so the menu stays inside .key-row in the DOM). */
-
-  /* A Select.Trigger, so a real <button> -- reset its native chrome so it
-     still reads as the plain text label it used to be. */
-  .key-row :global(#key-label) {
-    background: none;
-    border: none;
-    font-family: inherit;
-    text-align: center;
+  #key-label {
     font-size: 1rem;
     color: var(--text-dim);
     letter-spacing: 0.04em;
-    cursor: pointer;
-    border-radius: 4px;
     padding: 0.1rem 0.4rem;
   }
 
-  .key-row :global(#key-label:hover) {
-    background: var(--surface);
-  }
-
-  /* Positioned by Bits UI's floating wrapper (side/align/sideOffset on
-     Select.Content above), not by this rule. */
-  .key-row :global(.key-menu) {
-    z-index: 10;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.25rem 0;
-    max-height: 260px;
-    overflow-y: auto;
-    min-width: 180px;
-  }
-
-  .key-row :global(.key-menu:focus) {
-    outline: none;
-  }
-
-  .key-row :global(.key-menu-item) {
-    font-size: 0.8rem;
+  button {
+    font-family: inherit;
     color: var(--text-dim);
     background: none;
     border: none;
-    text-align: left;
-    padding: 0.3rem 0.7rem;
+    border-radius: 4px;
     cursor: pointer;
   }
 
-  .key-row :global(.key-menu-item[data-highlighted]) {
+  button:hover {
+    background: var(--surface);
+  }
+
+  .auto-btn {
+    justify-self: end;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+  }
+
+  .auto-btn.active {
+    color: #e4e7ef;
     background: #262a36;
   }
 
-  .key-row :global(.key-menu-item[data-selected]) {
-    color: #e4e7ef;
+  .steppers {
+    justify-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .steppers button {
+    font-size: 0.5rem;
+    line-height: 1;
+    padding: 0.12rem 0.4rem;
   }
 </style>
