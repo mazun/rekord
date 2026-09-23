@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { PianoRoll } from "./pianoroll";
+import pianorollToggleIconSvg from "./assets/pianoroll-toggle-icon.svg?raw";
 
 type PipelineEvent =
   | { type: "Started"; total_latency_s: number }
@@ -45,6 +47,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   const settingsView = document.querySelector<HTMLDivElement>("#settings-view");
   const settingsBtn = document.querySelector<HTMLButtonElement>("#settings-btn");
   const settingsBackBtn = document.querySelector<HTMLButtonElement>("#settings-back-btn");
+  const pianorollToggleBtn = document.querySelector<HTMLButtonElement>("#pianoroll-toggle-btn");
+  const appShell = document.querySelector<HTMLDivElement>(".app");
   if (
     !container ||
     !keyLabel ||
@@ -59,9 +63,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     !mainView ||
     !settingsView ||
     !settingsBtn ||
-    !settingsBackBtn
+    !settingsBackBtn ||
+    !pianorollToggleBtn ||
+    !appShell
   )
     return;
+
+  // Injected as raw markup (via Vite's ?raw import) rather than an <img> --
+  // an <img> can't be recolored with currentColor, and this icon needs to
+  // dim/brighten on hover and turn active-blue when the piano roll is
+  // hidden, same as every other icon button in this toolbar.
+  pianorollToggleBtn.innerHTML = pianorollToggleIconSvg;
 
   // Stopping capture (if running) before navigating away keeps the piano
   // roll's clock/state consistent with what "Start" will set up fresh next
@@ -88,6 +100,89 @@ window.addEventListener("DOMContentLoaded", async () => {
     settingsView.classList.add("hidden");
     mainView.classList.remove("hidden");
   });
+
+  // The piano roll is the only reason this window needs to be wide or
+  // tall -- the toolbar/key/chord rows above it are happy at their
+  // natural content size, and #main-view's flex:1 would otherwise just
+  // stretch to fill whatever leftover height the window still has once
+  // the piano roll itself is display:none, leaving a pointless blank
+  // strip. Hiding it shrinks the OS window down to that natural size
+  // (measured live via a temporary shrink-to-fit layout pass, not a
+  // hardcoded guess, since it depends on font metrics and the current
+  // chord/tension labels); showing it again restores whatever size the
+  // window was at before it was hidden, falling back to the
+  // tauri.conf.json defaults only on the very first collapse.
+  const DEFAULT_EXPANDED_WIDTH = 800;
+  const DEFAULT_EXPANDED_HEIGHT = 600;
+  const PIANOROLL_VISIBLE_STORAGE_KEY = "chord.pianorollVisible";
+  // Persisted like the latency slider above -- session-only convenience,
+  // not correctness-critical, so a missing/garbled value just falls back
+  // to the shipped default (visible) rather than needing validation.
+  const storedPianorollVisible = localStorage.getItem(PIANOROLL_VISIBLE_STORAGE_KEY);
+  let pianorollVisible = storedPianorollVisible !== "false";
+  let widthBeforeCollapse: number | null = null;
+  let heightBeforeCollapse: number | null = null;
+
+  const measureCollapsedSize = (): { width: number; height: number } => {
+    appShell.classList.add("measuring");
+    const rect = appShell.getBoundingClientRect();
+    // The toggle button is position:absolute (so it can hang off the
+    // keyboard strip's would-be position even once that strip is gone),
+    // which means it's out-of-flow and never counted in this shrink-to-fit
+    // measurement -- without adding its own footprint back in, the
+    // collapsed window comes out just wide enough for the tension grid
+    // alone, and the button ends up drawn on top of it instead of past
+    // its right edge.
+    const btnWidth = pianorollToggleBtn.getBoundingClientRect().width;
+    const size = { width: Math.ceil(rect.width + btnWidth), height: Math.ceil(rect.height) };
+    appShell.classList.remove("measuring");
+    return size;
+  };
+
+  // Shared by the click handler and the startup replay below, so opening
+  // the app in whichever state it was last left in resizes the window the
+  // same way an actual click would, rather than duplicating this logic.
+  const setPianorollVisible = async (visible: boolean) => {
+    pianorollVisible = visible;
+    container.classList.toggle("hidden", !visible);
+    pianorollToggleBtn.classList.toggle("active", !visible);
+    pianorollToggleBtn.setAttribute("aria-pressed", String(!visible));
+    localStorage.setItem(PIANOROLL_VISIBLE_STORAGE_KEY, String(visible));
+
+    try {
+      const win = getCurrentWindow();
+      const scaleFactor = await win.scaleFactor();
+      const currentSize = await win.innerSize();
+      const currentLogicalWidth = currentSize.width / scaleFactor;
+      const currentLogicalHeight = currentSize.height / scaleFactor;
+
+      if (!visible) {
+        widthBeforeCollapse = currentLogicalWidth;
+        heightBeforeCollapse = currentLogicalHeight;
+        const collapsed = measureCollapsedSize();
+        await win.setSize(new LogicalSize(collapsed.width, collapsed.height));
+      } else {
+        const restoredWidth = widthBeforeCollapse ?? DEFAULT_EXPANDED_WIDTH;
+        const restoredHeight = heightBeforeCollapse ?? DEFAULT_EXPANDED_HEIGHT;
+        await win.setSize(new LogicalSize(restoredWidth, restoredHeight));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  pianorollToggleBtn.addEventListener("click", () => {
+    setPianorollVisible(!pianorollVisible);
+  });
+
+  // Reproduce a collapsed state from a previous session -- the window
+  // itself always starts at tauri.conf.json's expanded default (800x600),
+  // so this both shrinks it down to match and captures that starting size
+  // as what "show" should restore to later, exactly like a real collapse
+  // click would from here.
+  if (!pianorollVisible) {
+    setPianorollVisible(false);
+  }
 
   // Clicking the key label opens a small popup menu (Auto + the 12
   // relative major/minor pairs) instead of a permanently-visible

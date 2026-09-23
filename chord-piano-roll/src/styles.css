@@ -22,6 +22,28 @@ html, body {
   height: 100vh;
 }
 
+/* Temporary state used only to measure the natural (shrink-to-fit) size
+   of the toolbar/key/chord rows once the piano roll is hidden -- applied
+   just long enough to read getBoundingClientRect(), then removed. Height
+   must shrink too, not just width: #main-view's flex:1 (below) otherwise
+   keeps stretching it to fill 100vh regardless of the piano roll being
+   display:none, which is exactly the dead space this is measuring past. */
+.app.measuring {
+  width: fit-content;
+  max-width: none;
+  height: fit-content;
+  max-height: none;
+}
+
+/* flex:1 only makes sense while the window is actually sized to include
+   room for the piano roll -- during a measuring pass this would instead
+   force #main-view back up to the *current* (pre-shrink) window height,
+   defeating the fit-content measurement above. */
+.app.measuring #main-view,
+.app.measuring #settings-view {
+  flex: none;
+}
+
 #main-view,
 #settings-view {
   display: flex;
@@ -154,14 +176,6 @@ html, body {
   width: 100%;
 }
 
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: #8b93a7;
-  font-size: 0.85rem;
-}
-
 .legend-swatch {
   width: 0.7rem;
   height: 0.7rem;
@@ -177,23 +191,33 @@ html, body {
   background: #ff9f5b;
 }
 
-/* A plain legend row that's also a toggle button -- overrides
-   `.toolbar button`'s chrome (border/background/padding) so it still reads
-   as inline legend text, not another button next to Start/Stop. */
-.toolbar button.roles-toggle {
-  background: none;
+/* Overlaid on the piano roll itself rather than living in the toolbar --
+   the coloring it toggles only means anything while notes are actually
+   scrolling past underneath, so it's pointless (and confusing) to still
+   show it once the roll is collapsed away. Living inside
+   #pianoroll-container means it's naturally hidden along with everything
+   else there once that container is display:none. */
+.roles-toggle {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
   border: none;
-  padding: 0;
+  background: rgba(20, 22, 28, 0.7);
+  color: #8b93a7;
   font: inherit;
+  font-size: 0.85rem;
   cursor: pointer;
   user-select: none;
 }
 
-/* #id beats `.toolbar button:hover` (a class selector) regardless of
-   stylesheet order -- the generic toolbar hover highlight doesn't fit a
-   plain legend row, so this stays background-less on hover too. */
-#roles-toggle:hover {
-  background: none;
+.roles-toggle:hover {
+  background: rgba(20, 22, 28, 0.7);
 }
 
 /* Off reads via dimming alone (no separate checkbox) -- bright means the
@@ -266,11 +290,63 @@ html, body {
 }
 
 .chord-row {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 2.2rem;
   padding: 0.2rem 1rem 1rem;
+}
+
+/* Pinned to the row's own right edge (like the settings gear pins to the
+   toolbar's) rather than flowing next to the tension grid -- flowing with
+   the centered chord-block/tension-grid group would have it drift with
+   the window width instead of staying put at a fixed corner. `bottom`
+   matches chord-row's own padding-bottom exactly: the tension grid is the
+   row's tallest child, so its bottom edge sits flush with the row's
+   content-box bottom (border-box bottom minus that same padding) -- using
+   the same value here lines the two up without measuring anything. */
+.pianoroll-toggle-btn {
+  position: absolute;
+  /* Offset by less than the tension grid's own 1rem inset from the row's
+     edges -- .icon-btn's padding (0.3rem bottom, 0.55rem right, both
+     !important) sits between this box and the svg inside it, so the
+     visible icon needs that padding subtracted back out to land flush
+     with the grid rather than the icon's own border box. */
+  right: 0;
+  bottom: 0.7rem;
+  /* Narrower than .icon-btn's own 0.55rem right padding -- centers the
+     icon on the piano roll's keyboard strip below (KEYBOARD_WIDTH, 34px,
+     in pianoroll.ts) rather than on this button's own box, which sits
+     further left than the keyboard's true center. */
+  padding-right: 4px !important;
+  border: none;
+  background: none;
+  color: #e8e8ec;
+  /* Piano roll shown -- dimmed (same opacity as .roles-toggle.off
+     elsewhere in this toolbar) so the icon reads as "more to reveal here"
+     rather than drawing attention while the roll itself is already
+     visible; full brightness (below, .active) then reads as "this is the
+     only way back to the roll" once it's hidden. */
+  opacity: 0.35;
+}
+
+.pianoroll-toggle-btn:hover {
+  background: none;
+}
+
+.pianoroll-toggle-btn svg {
+  display: block;
+  width: 26px;
+  height: 26px;
+}
+
+.pianoroll-toggle-btn.active {
+  opacity: 1;
+}
+
+#pianoroll-container.hidden {
+  display: none;
 }
 
 .chord-block {
@@ -342,6 +418,7 @@ html, body {
 }
 
 #pianoroll-container {
+  position: relative;
   flex: 1;
   min-height: 0;
 }
