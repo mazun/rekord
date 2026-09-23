@@ -13,6 +13,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "bits-ui": "^2.19.3",
     "pixi.js": "^8.20.1"
   },
   "devDependencies": {
