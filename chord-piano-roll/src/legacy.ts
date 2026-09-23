@@ -1,88 +1,9 @@
 import { tick } from "svelte";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { keyPairLabel, setKeyMode } from "./pipeline.svelte";
 import { settings, savePianorollVisible } from "./settings.svelte";
 
 // What's left of the pre-Svelte imperative wiring, pending its own
-// migration phase: the key popup menu (to be replaced by a Bits UI
-// component) and the piano-roll collapse's OS-window resize.
-
-// Clicking the key label opens a small popup menu (Auto + the 12
-// relative major/minor pairs) instead of a permanently-visible
-// dropdown -- the picker is only on screen while actually choosing.
-export function initKeyMenu(keyLabel: HTMLElement, keyMenu: HTMLElement): () => void {
-  const keyMenuItems = new Map<string, HTMLButtonElement>();
-  const addKeyMenuItem = (value: string, label: string) => {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "key-menu-item";
-    item.role = "option";
-    item.dataset.tonic = value;
-    item.textContent = label;
-    keyMenu.appendChild(item);
-    keyMenuItems.set(value, item);
-  };
-  addKeyMenuItem("auto", "Auto");
-  for (let pc = 0; pc < 12; pc++) {
-    addKeyMenuItem(String(pc), keyPairLabel(pc));
-  }
-
-  const closeKeyMenu = () => {
-    keyMenu.classList.add("hidden");
-    keyLabel.setAttribute("aria-expanded", "false");
-  };
-  const openKeyMenu = () => {
-    keyMenu.classList.remove("hidden");
-    keyLabel.setAttribute("aria-expanded", "true");
-  };
-
-  const onLabelClick = (e: MouseEvent) => {
-    e.stopPropagation();
-    if (keyMenu.classList.contains("hidden")) {
-      openKeyMenu();
-    } else {
-      closeKeyMenu();
-    }
-  };
-  const onLabelKeydown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      openKeyMenu();
-    }
-  };
-  const onDocumentClick = (e: MouseEvent) => {
-    if (!keyMenu.contains(e.target as Node) && e.target !== keyLabel) {
-      closeKeyMenu();
-    }
-  };
-  const onDocumentKeydown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") closeKeyMenu();
-  };
-  const onMenuClick = (e: MouseEvent) => {
-    const item = (e.target as HTMLElement).closest<HTMLButtonElement>(".key-menu-item");
-    if (!item || !item.dataset.tonic) return;
-    const value = item.dataset.tonic;
-    keyMenuItems.forEach((el, key) => el.classList.toggle("selected", key === value));
-    closeKeyMenu();
-    setKeyMode(value === "auto" ? null : Number(value));
-  };
-
-  keyLabel.addEventListener("click", onLabelClick);
-  keyLabel.addEventListener("keydown", onLabelKeydown);
-  document.addEventListener("click", onDocumentClick);
-  document.addEventListener("keydown", onDocumentKeydown);
-  keyMenu.addEventListener("click", onMenuClick);
-  keyMenuItems.get("auto")?.classList.add("selected");
-
-  return () => {
-    keyLabel.removeEventListener("click", onLabelClick);
-    keyLabel.removeEventListener("keydown", onLabelKeydown);
-    document.removeEventListener("click", onDocumentClick);
-    document.removeEventListener("keydown", onDocumentKeydown);
-    keyMenu.removeEventListener("click", onMenuClick);
-    keyMenu.replaceChildren();
-  };
-}
+// migration phase (Phase 3): the piano-roll collapse's OS-window resize.
 
 // The piano roll is the only reason this window needs to be wide or
 // tall -- the toolbar/key/chord rows above it are happy at their

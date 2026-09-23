@@ -235,7 +235,12 @@ html, body {
   padding-top: 0.3rem;
 }
 
+/* A Bits UI Select.Trigger, so a real <button> -- reset its native
+   chrome so it still reads as the plain text label it used to be. */
 #key-label {
+  background: none;
+  border: none;
+  font-family: inherit;
   text-align: center;
   font-size: 1rem;
   color: #8b93a7;
@@ -249,11 +254,9 @@ html, body {
   background: #1b1e27;
 }
 
+/* Positioned by Bits UI's floating wrapper (side/align/sideOffset on
+   Select.Content in KeyPicker.svelte), not by this rule. */
 .key-menu {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -261,14 +264,13 @@ html, body {
   border: 1px solid #2a2e3a;
   border-radius: 4px;
   padding: 0.25rem 0;
-  margin-top: 0.2rem;
   max-height: 260px;
   overflow-y: auto;
   min-width: 180px;
 }
 
-.key-menu.hidden {
-  display: none;
+.key-menu:focus {
+  outline: none;
 }
 
 .key-menu-item {
@@ -281,11 +283,11 @@ html, body {
   cursor: pointer;
 }
 
-.key-menu-item:hover {
+.key-menu-item[data-highlighted] {
   background: #262a36;
 }
 
-.key-menu-item.selected {
+.key-menu-item[data-selected] {
   color: #e4e7ef;
 }
 
