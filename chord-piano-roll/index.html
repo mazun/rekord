@@ -10,54 +10,78 @@
 
   <body>
     <main class="app">
-      <div class="toolbar">
-        <button id="start-btn">Start</button>
-        <button id="stop-btn" disabled>Stop</button>
-        <button id="roles-toggle" class="legend-item roles-toggle" type="button" title="クリックでメロディ/ベースの色分けを切り替え">
-          <span class="legend-swatch melody"></span>Melody
-          <span class="legend-swatch bass"></span>Bass
-        </button>
-        <span id="status">stopped</span>
-        <label for="latency-input"
-          >Latency: <span id="latency-value">250</span>ms</label
-        >
-        <input
-          type="range"
-          id="latency-input"
-          min="100"
-          max="1640"
-          step="50"
-          value="250"
-        />
-      </div>
-      <div class="key-row">
-        <div id="key-label">--</div>
-        <select id="key-select">
-          <option value="auto">Auto</option>
-        </select>
-      </div>
-      <div class="chord-row">
-        <div class="chord-block">
-          <div id="chord-label">--</div>
-          <div id="roman-label"></div>
+      <div id="main-view">
+        <div class="toolbar">
+          <button id="start-btn">Start</button>
+          <button id="stop-btn" disabled>Stop</button>
+          <button id="roles-toggle" class="legend-item roles-toggle" type="button" title="クリックでメロディ/ベースの色分けを切り替え">
+            <span class="legend-swatch melody"></span>Melody
+            <span class="legend-swatch bass"></span>Bass
+          </button>
+          <button
+            id="settings-btn"
+            class="icon-btn"
+            type="button"
+            title="設定"
+            aria-label="設定"
+          >
+            ⚙
+          </button>
         </div>
-        <div class="tension-grid">
-          <div class="tension-group">
-            <div class="chip" data-tension="b9">b9</div>
-            <div class="chip" data-tension="9">9</div>
-            <div class="chip" data-tension="#9">#9</div>
+        <div class="key-row">
+          <div id="key-label">--</div>
+          <select id="key-select">
+            <option value="auto">Auto</option>
+          </select>
+        </div>
+        <div class="chord-row">
+          <div class="chord-block">
+            <div id="chord-label">--</div>
+            <div id="roman-label"></div>
           </div>
-          <div class="tension-group align-right">
-            <div class="chip" data-tension="11">11</div>
-            <div class="chip" data-tension="#11">#11</div>
-          </div>
-          <div class="tension-group">
-            <div class="chip" data-tension="b13">b13</div>
-            <div class="chip" data-tension="13">13</div>
+          <div class="tension-grid">
+            <div class="tension-group">
+              <div class="chip" data-tension="b9">b9</div>
+              <div class="chip" data-tension="9">9</div>
+              <div class="chip" data-tension="#9">#9</div>
+            </div>
+            <div class="tension-group align-right">
+              <div class="chip" data-tension="11">11</div>
+              <div class="chip" data-tension="#11">#11</div>
+            </div>
+            <div class="tension-group">
+              <div class="chip" data-tension="b13">b13</div>
+              <div class="chip" data-tension="13">13</div>
+            </div>
           </div>
         </div>
+        <div id="pianoroll-container"></div>
       </div>
-      <div id="pianoroll-container"></div>
+      <div id="settings-view" class="hidden">
+        <div class="settings-page-header">
+          <button
+            id="settings-back-btn"
+            class="icon-btn close-icon"
+            type="button"
+            title="閉じる"
+            aria-label="閉じる"
+          ></button>
+          <h2>設定</h2>
+        </div>
+        <div class="settings-row">
+          <label for="latency-input"
+            >Latency: <span id="latency-value">250</span>ms</label
+          >
+          <input
+            type="range"
+            id="latency-input"
+            min="100"
+            max="1640"
+            step="50"
+            value="250"
+          />
+        </div>
+      </div>
     </main>
   </body>
 </html>

@@ -22,6 +22,19 @@ html, body {
   height: 100vh;
 }
 
+#main-view,
+#settings-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#main-view.hidden,
+#settings-view.hidden {
+  display: none;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -50,10 +63,95 @@ html, body {
   cursor: default;
 }
 
-#status {
+.icon-btn {
+  padding: 0.3rem 0.55rem !important;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+#settings-btn {
   margin-left: auto;
-  color: #8b93a7;
-  font-size: 0.85rem;
+  border: none;
+  background: none;
+  font-size: 1.7rem;
+}
+
+#settings-btn:hover {
+  background: none;
+}
+
+/* A CSS-drawn X rather than the "x" glyph -- font glyph metrics for
+   symbols like this routinely sit off-center within their own em box
+   (varies by font/renderer), which no amount of flex/line-height
+   centering on the surrounding button can correct. Two rotated bars
+   centered via absolute positioning are exact regardless of font. */
+.close-icon {
+  position: relative;
+  /* +2px nudge -- the bars are drawn dead-center in this box (verified via
+     computed getBoundingClientRect against the <h2>, which matched to
+     <1px), but Segoe UI's Latin line-height metrics center the box itself
+     slightly higher than where the kanji glyphs (drawn from a CJK
+     fallback font with different ascent/descent proportions) visually
+     sit, so a geometrically-centered icon still reads as high next to
+     "設定". */
+  top: 2px;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0 !important;
+  border: none;
+  background: none;
+}
+
+.close-icon:hover {
+  background: none;
+}
+
+.close-icon::before,
+.close-icon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 60%;
+  height: 2px;
+  background: #e8e8ec;
+}
+
+.close-icon::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.close-icon::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.settings-page-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  background: #1b1e27;
+  border-bottom: 1px solid #2a2e3a;
+}
+
+.settings-page-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+#settings-view .settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 24rem;
+  padding: 1.5rem 1.2rem;
+  color: #e8e8ec;
+  font-size: 0.95rem;
+}
+
+.settings-row input[type="range"] {
+  width: 100%;
 }
 
 .legend-item {
