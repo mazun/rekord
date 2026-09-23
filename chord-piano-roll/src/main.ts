@@ -39,7 +39,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   const stopBtn = document.querySelector<HTMLButtonElement>("#stop-btn");
   const latencyInput = document.querySelector<HTMLInputElement>("#latency-input");
   const latencyValue = document.querySelector<HTMLSpanElement>("#latency-value");
-  const keySelect = document.querySelector<HTMLSelectElement>("#key-select");
+  const keyMenu = document.querySelector<HTMLDivElement>("#key-menu");
   const rolesToggle = document.querySelector<HTMLButtonElement>("#roles-toggle");
   const mainView = document.querySelector<HTMLDivElement>("#main-view");
   const settingsView = document.querySelector<HTMLDivElement>("#settings-view");
@@ -54,7 +54,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     !stopBtn ||
     !latencyInput ||
     !latencyValue ||
-    !keySelect ||
+    !keyMenu ||
     !rolesToggle ||
     !mainView ||
     !settingsView ||
@@ -89,15 +89,64 @@ window.addEventListener("DOMContentLoaded", async () => {
     mainView.classList.remove("hidden");
   });
 
+  // Clicking the key label opens a small popup menu (Auto + the 12
+  // relative major/minor pairs) instead of a permanently-visible
+  // dropdown -- the picker is only on screen while actually choosing.
+  const keyMenuItems = new Map<string, HTMLButtonElement>();
+  const addKeyMenuItem = (value: string, label: string) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "key-menu-item";
+    item.role = "option";
+    item.dataset.tonic = value;
+    item.textContent = label;
+    keyMenu.appendChild(item);
+    keyMenuItems.set(value, item);
+  };
+  addKeyMenuItem("auto", "Auto");
   for (let pc = 0; pc < 12; pc++) {
-    const opt = document.createElement("option");
-    opt.value = String(pc);
-    opt.textContent = keyPairLabel(pc);
-    keySelect.appendChild(opt);
+    addKeyMenuItem(String(pc), keyPairLabel(pc));
   }
 
-  keySelect.addEventListener("change", async () => {
-    const tonicPc = keySelect.value === "auto" ? null : Number(keySelect.value);
+  const closeKeyMenu = () => {
+    keyMenu.classList.add("hidden");
+    keyLabel.setAttribute("aria-expanded", "false");
+  };
+  const openKeyMenu = () => {
+    keyMenu.classList.remove("hidden");
+    keyLabel.setAttribute("aria-expanded", "true");
+  };
+
+  keyLabel.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (keyMenu.classList.contains("hidden")) {
+      openKeyMenu();
+    } else {
+      closeKeyMenu();
+    }
+  });
+  keyLabel.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openKeyMenu();
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (!keyMenu.contains(e.target as Node) && e.target !== keyLabel) {
+      closeKeyMenu();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeKeyMenu();
+  });
+
+  keyMenu.addEventListener("click", async (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLButtonElement>(".key-menu-item");
+    if (!item || !item.dataset.tonic) return;
+    const value = item.dataset.tonic;
+    const tonicPc = value === "auto" ? null : Number(value);
+    keyMenuItems.forEach((el, key) => el.classList.toggle("selected", key === value));
+    closeKeyMenu();
     // Auto mode's label only refreshes on the next KeyChange event (i.e.
     // once capture is running and a checkpoint fires); a manual pick's
     // label is already fully known, so show it immediately instead of
@@ -111,6 +160,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       console.error(err);
     }
   });
+  keyMenuItems.get("auto")?.classList.add("selected");
 
   // Restore a previously-chosen latency, if any -- session-only convenience,
   // not a correctness-critical value (the backend clamps regardless).
