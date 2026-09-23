@@ -2,9 +2,6 @@ import { tick } from "svelte";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { settings, savePianorollVisible } from "./settings.svelte";
 
-// What's left of the pre-Svelte imperative wiring, pending its own
-// migration phase (Phase 3): the piano-roll collapse's OS-window resize.
-
 // The piano roll is the only reason this window needs to be wide or
 // tall -- the toolbar/key/chord rows above it are happy at their
 // natural content size, and #main-view's flex:1 would otherwise just
@@ -40,7 +37,7 @@ function measureCollapsedSize(
   return size;
 }
 
-// Shared by the toggle button and the startup replay in App.svelte, so
+// Shared by the toggle button's click and its startup replay, so
 // opening the app in whichever state it was last left in resizes the
 // window the same way an actual click would.
 export async function setPianorollVisible(
