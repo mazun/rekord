@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code session config -- the canonical launch.json is the repo-root
+# .claude/launch.json; a copy here is just auto-generated when a session
+# runs with this directory as its cwd.
+.claude/
