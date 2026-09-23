@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 
 use chord_core::key_estimator::KeyEstimator;
+use chord_core::melody_bass::LineTracker;
 use chord_core::note_creation::NoteEvent;
 use chord_core::note_stitcher::NoteStitcher;
 use chord_core::onnx_model::OnnxNoteModel;
@@ -15,9 +16,15 @@ fn print_event(event: PipelineEvent) {
         PipelineEvent::Started { total_latency_s } => {
             println!("(confirm latency: {total_latency_s:.2}s)\n");
         }
-        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity } => {
+        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity, melody, bass } => {
+            let role = match (melody, bass) {
+                (true, true) => " [melody+bass]",
+                (true, false) => " [melody]",
+                (false, true) => " [bass]",
+                (false, false) => "",
+            };
             println!(
-                "[{start_s:6.2}s -> {end_s:6.2}s] note {} (vel {velocity:.2})",
+                "[{start_s:6.2}s -> {end_s:6.2}s] note {} (vel {velocity:.2}){role}",
                 midi_to_name(pitch_midi)
             );
         }
@@ -45,6 +52,7 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
     let mut model = OnnxNoteModel::load().context("loading ONNX model")?;
     let mut stitcher = NoteStitcher::new();
     let mut key_estimator = KeyEstimator::new();
+    let mut lines = LineTracker::new();
     let mut chord_display = ChordStabilizer::new();
     let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
@@ -65,6 +73,7 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
                     covered,
                     &note_events,
                     &mut key_estimator,
+                    &mut lines,
                     print_event,
                 );
                 pipeline::report_new_chords(
@@ -119,6 +128,7 @@ fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
             duration,
             &combined_notes,
             &mut key_estimator,
+            &mut lines,
             print_event,
         );
         pipeline::report_new_chords(

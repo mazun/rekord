@@ -10,6 +10,19 @@ const PIXELS_PER_SECOND = 120;
 // indication of how hard it was played relative to its neighbors.
 const NOTE_COLOR_MIN = 0x2c3550; // quiet: closer to the guide/background grey-blue
 const NOTE_COLOR_MAX = 0xaecbff; // loud: bright, near-white blue
+// Melody/bass line labels (see chord_core::melody_bass -- a skyline rule
+// over the live note stream, no separation model) get their own color
+// pairs, same velocity-shading treatment as the default. An inner voice
+// (neither) keeps the original blue. The backend's melody/bass flags
+// aren't mutually exclusive (a lone note low enough to be "lowest
+// sounding" but still within melody's register can be both) -- melody
+// wins that case here rather than a third blended color, since live
+// testing (2026-09-23) found those ambiguous notes were disproportionately
+// real melody with no bass actually sounding.
+const MELODY_COLOR_MIN = 0x1f3d2c;
+const MELODY_COLOR_MAX = 0x6be3a0;
+const BASS_COLOR_MIN = 0x3d2c1f;
+const BASS_COLOR_MAX = 0xff9f5b;
 const GUIDE_COLOR = 0x262b36;
 
 // Vertical piano keyboard drawn at the playhead (the "now" line notes
@@ -50,6 +63,8 @@ export interface ConfirmedNote {
   end_s: number;
   pitch_midi: number;
   velocity: number;
+  melody: boolean;
+  bass: boolean;
 }
 
 interface NoteSprite extends ConfirmedNote {
@@ -95,6 +110,12 @@ export class PianoRoll {
   private running = false;
   private resetAtMs = 0;
   private totalLatencyS = 0;
+  // Whether newly-added notes get the melody/bass color treatment (see
+  // addNote) or just the default coloring, as if every note were an inner
+  // voice. Toggling only affects notes added from here on -- notes already
+  // on screen keep whatever color they were drawn with, same as changing
+  // the latency slider mid-session not affecting the running session.
+  private roleColoringEnabled = true;
 
   private constructor(app: Application, noteLayer: Container) {
     this.app = app;
@@ -229,12 +250,22 @@ export class PianoRoll {
     return this.playheadX() + (t - this.displayS()) * PIXELS_PER_SECOND;
   }
 
+  setRoleColoringEnabled(enabled: boolean): void {
+    this.roleColoringEnabled = enabled;
+  }
+
   addNote(note: ConfirmedNote): void {
     const height = this.app.screen.height;
     const noteHeightPx = Math.max(3, height / (MAX_PITCH - MIN_PITCH) - 1);
     const widthPx = Math.max(2, (note.end_s - note.start_s) * PIXELS_PER_SECOND);
 
-    const color = lerpColor(NOTE_COLOR_MIN, NOTE_COLOR_MAX, note.velocity);
+    const [colorMin, colorMax] =
+      this.roleColoringEnabled && note.melody
+        ? [MELODY_COLOR_MIN, MELODY_COLOR_MAX]
+        : this.roleColoringEnabled && note.bass
+          ? [BASS_COLOR_MIN, BASS_COLOR_MAX]
+          : [NOTE_COLOR_MIN, NOTE_COLOR_MAX];
+    const color = lerpColor(colorMin, colorMax, note.velocity);
     const graphic = new Graphics();
     graphic.roundRect(0, 0, widthPx, noteHeightPx, 2).fill({ color });
     // Position it correctly right away -- left at the Graphics default

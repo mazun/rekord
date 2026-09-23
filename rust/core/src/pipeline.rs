@@ -12,6 +12,7 @@ use anyhow::Result;
 use crate::chord_templates::{extra_tensions, match_chord, ChordMatch};
 use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
 use crate::live_capture;
+use crate::melody_bass::LineTracker;
 use crate::note_creation::NoteEvent;
 use crate::note_stitcher::{ConfirmedNote, NoteStitcher, CONFIRM_MARGIN_S};
 use crate::onnx_model::OnnxNoteModel;
@@ -78,7 +79,17 @@ pub enum PipelineEvent {
     /// note (see `ConfirmedNote::velocity`) -- a frontend can use it to
     /// shade/intensify the note by how strongly it sounded, correctly
     /// distinguishing notes within the same chord.
-    NoteConfirmed { start_s: f32, end_s: f32, pitch_midi: i32, velocity: f32 },
+    ///
+    /// `melody`/`bass` say whether the note belongs to the top/bottom voice
+    /// line (see `melody_bass`); both false means an inner voice.
+    NoteConfirmed {
+        start_s: f32,
+        end_s: f32,
+        pitch_midi: i32,
+        velocity: f32,
+        melody: bool,
+        bass: bool,
+    },
     /// `roman_numeral` is the chord's degree name relative to the most
     /// recently estimated key (see `key_estimator`), or `None` if no key
     /// estimate is confident yet (e.g. near session start).
@@ -357,16 +368,21 @@ pub fn report_new_chords(
 /// only ever observed once, from a single place.
 fn emit_notes(
     notes: Vec<ConfirmedNote>,
+    note_events: &[NoteEvent],
     key_estimator: &mut KeyEstimator,
+    lines: &mut LineTracker,
     mut on_event: impl FnMut(PipelineEvent),
 ) {
     for n in notes {
         key_estimator.observe(&n);
+        let roles = lines.classify(&n, note_events);
         on_event(PipelineEvent::NoteConfirmed {
             start_s: n.start_s,
             end_s: n.end_s,
             pitch_midi: n.pitch_midi,
             velocity: n.velocity,
+            melody: roles.melody,
+            bass: roles.bass,
         });
     }
 }
@@ -376,9 +392,10 @@ pub fn emit_confirmed_notes(
     covered: f32,
     note_events: &[NoteEvent],
     key_estimator: &mut KeyEstimator,
+    lines: &mut LineTracker,
     on_event: impl FnMut(PipelineEvent),
 ) {
-    emit_notes(stitcher.update(covered, note_events), key_estimator, on_event);
+    emit_notes(stitcher.update(covered, note_events), note_events, key_estimator, lines, on_event);
 }
 
 /// Runs a live WASAPI-loopback session, invoking `on_event` for every
@@ -399,6 +416,7 @@ pub fn run_live_session(
     let mut model = OnnxNoteModel::load()?;
     let mut stitcher = NoteStitcher::new();
     let mut key_estimator = KeyEstimator::new();
+    let mut lines = LineTracker::new();
     let mut chord_display = ChordStabilizer::new();
     let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
@@ -418,7 +436,14 @@ pub fn run_live_session(
         if completed > 0 {
             let note_events = extractor.note_events();
             let covered = extractor.covered_seconds();
-            emit_confirmed_notes(&mut stitcher, covered, &note_events, &mut key_estimator, &mut on_event);
+            emit_confirmed_notes(
+                &mut stitcher,
+                covered,
+                &note_events,
+                &mut key_estimator,
+                &mut lines,
+                &mut on_event,
+            );
             let current_key_mode = *key_mode.lock().unwrap();
             report_new_chords(
                 &note_events,
@@ -447,7 +472,7 @@ pub fn run_live_session(
     // There's no more audio coming once the loop above exits -- flush what's
     // left so it isn't silently lost.
     let final_notes = extractor.note_events();
-    emit_notes(stitcher.flush(&final_notes), &mut key_estimator, &mut on_event);
+    emit_notes(stitcher.flush(&final_notes), &final_notes, &mut key_estimator, &mut lines, &mut on_event);
     let current_key_mode = *key_mode.lock().unwrap();
     report_new_chords(
         &final_notes,

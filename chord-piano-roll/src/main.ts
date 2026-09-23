@@ -4,7 +4,15 @@ import { PianoRoll } from "./pianoroll";
 
 type PipelineEvent =
   | { type: "Started"; total_latency_s: number }
-  | { type: "NoteConfirmed"; start_s: number; end_s: number; pitch_midi: number; velocity: number }
+  | {
+      type: "NoteConfirmed";
+      start_s: number;
+      end_s: number;
+      pitch_midi: number;
+      velocity: number;
+      melody: boolean;
+      bass: boolean;
+    }
   | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
   | { type: "TensionsChanged"; tensions: string[] }
   | { type: "KeyChange"; key_name: string };
@@ -33,6 +41,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   const latencyInput = document.querySelector<HTMLInputElement>("#latency-input");
   const latencyValue = document.querySelector<HTMLSpanElement>("#latency-value");
   const keySelect = document.querySelector<HTMLSelectElement>("#key-select");
+  const rolesToggle = document.querySelector<HTMLButtonElement>("#roles-toggle");
   if (
     !container ||
     !keyLabel ||
@@ -43,7 +52,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     !status ||
     !latencyInput ||
     !latencyValue ||
-    !keySelect
+    !keySelect ||
+    !rolesToggle
   )
     return;
 
@@ -86,6 +96,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   const roll = await PianoRoll.create(container);
+  // No separate checkbox -- the legend row itself is the button, and its
+  // on/off state reads via dimming alone (see .roles-toggle.off).
+  let rolesEnabled = true;
+  roll.setRoleColoringEnabled(rolesEnabled);
+  rolesToggle.addEventListener("click", () => {
+    rolesEnabled = !rolesEnabled;
+    rolesToggle.classList.toggle("off", !rolesEnabled);
+    roll.setRoleColoringEnabled(rolesEnabled);
+  });
 
   const tensionChips = new Map<string, HTMLElement>();
   document.querySelectorAll<HTMLElement>(".chip[data-tension]").forEach((chip) => {
@@ -111,6 +130,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         end_s: payload.end_s,
         pitch_midi: payload.pitch_midi,
         velocity: payload.velocity,
+        melody: payload.melody,
+        bass: payload.bass,
       });
     } else if (payload.type === "ChordChange") {
       chordLabel.textContent = payload.label;
