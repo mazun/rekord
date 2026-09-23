@@ -33,7 +33,7 @@ export const pipeline = $state({
   tensions: [] as string[],
 });
 
-// Mirrors chord_core::chord_templates::NOTE_NAMES and
+// Mirrors rekord_core::chord_templates::NOTE_NAMES and
 // KeyEstimate::name()'s "X Major (Y Minor)" formatting -- the manual-key
 // menu offers the same 12 relative major/minor pairs the automatic
 // estimator can ever display, so switching to a manual pick never shows a

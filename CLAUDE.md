@@ -1,4 +1,12 @@
-# chord — real-time chord/melody recognition
+# Re:Kord (リコード) — real-time chord/melody recognition
+
+"Re:Kord" is the project's display name (window title, HTML title). Code
+identifiers use `rekord` (crates `rekord_core`/`rekord_engine`, the
+`rekord-piano-roll/` app directory, Tauri `productName` `ReKord` since `:`
+is invalid in Windows filenames, bundle `identifier`
+`com.mazun.rekord-piano-roll`). Musical-domain names (`chord_templates`,
+`ChordDisplay`, …) intentionally stay "chord" — they mean chords, not the
+project. The repo's root folder is still named `chord`.
 
 Real-time PC-audio (WASAPI loopback) chord and note recognition. Pipeline:
 Spotify's pretrained `basic-pitch` (ONNX) for polyphonic pitch/note
@@ -11,13 +19,13 @@ Originally prototyped in Python (deleted once Rust reached parity — see
 `git log` for `59669cf`..`1498f47`). Everything now lives in Rust:
 
 - `rust/` — Cargo workspace
-  - `core/` (`chord_core` lib) — model inference, streaming note extraction,
+  - `core/` (`rekord_core` lib) — model inference, streaming note extraction,
     chord matching, key estimation + Roman-numeral labeling
     (`key_estimator.rs`), WASAPI capture, and the shared live-session
     driver (`pipeline.rs`) used by both the CLI and the Tauri app.
-  - `cli/` (`chord_engine` bin) — file-input and `--live` CLI, thin wrapper
-    around `chord_core`.
-- `chord-piano-roll/` — Tauri + Svelte 5 (Bits UI for headless widgets) +
+  - `cli/` (`rekord_engine` bin) — file-input and `--live` CLI, thin wrapper
+    around `rekord_core`.
+- `rekord-piano-roll/` — Tauri + Svelte 5 (Bits UI for headless widgets) +
   Pixi.js piano-roll UI, **live mode only** (no file-input UI; use the CLI
   for that). UI state lives in runes modules (`pipeline.svelte.ts`,
   `settings.svelte.ts`); `pianoroll.ts` stays a plain imperative Pixi class
@@ -34,12 +42,12 @@ rot as a stale wishlist.
 ```bash
 cd rust
 cargo build --release
-./target/release/chord_engine.exe sample_audio/piano_progression_C_Am_F_G.wav
-./target/release/chord_engine.exe --live
+./target/release/rekord_engine.exe sample_audio/piano_progression_C_Am_F_G.wav
+./target/release/rekord_engine.exe --live
 ```
 
 ```powershell
-Set-Location "C:\Users\mazun\Programming\chord\chord-piano-roll"
+Set-Location rekord-piano-roll   # from the repo root
 npm run tauri dev
 ```
 
@@ -196,7 +204,7 @@ files.
   were only resolved by reading source / compiling and observing, not by
   trusting external docs.
 - **WASAPI loopback capture supports multiple simultaneous taps** — a
-  second `chord_engine.exe --live` instance can run concurrently with the
+  second `rekord_engine.exe --live` instance can run concurrently with the
   Tauri app and listen to the same system audio. Used live (2026-09-03)
   to diagnose a key-misdetection report while the user was actively
   playing a song, by adding a temporary env-var-gated `eprintln!` of

@@ -10,7 +10,7 @@ const PIXELS_PER_SECOND = 120;
 // indication of how hard it was played relative to its neighbors.
 const NOTE_COLOR_MIN = 0x2c3550; // quiet: closer to the guide/background grey-blue
 const NOTE_COLOR_MAX = 0xaecbff; // loud: bright, near-white blue
-// Melody/bass line labels (see chord_core::melody_bass -- a skyline rule
+// Melody/bass line labels (see rekord_core::melody_bass -- a skyline rule
 // over the live note stream, no separation model) get their own color
 // pairs, same velocity-shading treatment as the default. An inner voice
 // (neither) keeps the original blue. The backend's melody/bass flags

@@ -1,15 +1,15 @@
 use anyhow::{bail, Context, Result};
 
-use chord_core::key_estimator::KeyEstimator;
-use chord_core::melody_bass::LineTracker;
-use chord_core::note_creation::NoteEvent;
-use chord_core::note_stitcher::NoteStitcher;
-use chord_core::onnx_model::OnnxNoteModel;
-use chord_core::pipeline::{self, midi_to_name, ChordStabilizer, PipelineEvent};
-use chord_core::streaming_extractor::{
+use rekord_core::key_estimator::KeyEstimator;
+use rekord_core::melody_bass::LineTracker;
+use rekord_core::note_creation::NoteEvent;
+use rekord_core::note_stitcher::NoteStitcher;
+use rekord_core::onnx_model::OnnxNoteModel;
+use rekord_core::pipeline::{self, midi_to_name, ChordStabilizer, PipelineEvent};
+use rekord_core::streaming_extractor::{
     StreamingNoteExtractor, AUDIO_SAMPLE_RATE, HOP_SIZE, MAX_FRESH_EXTRACTOR_REAL_SAMPLES,
 };
-use chord_core::audio_io;
+use rekord_core::audio_io;
 
 fn print_event(event: PipelineEvent) {
     match event {
@@ -214,7 +214,7 @@ fn main() -> Result<()> {
         }
         run_live(hop, stride_seconds, duration)
     } else {
-        let audio_file = audio_file.context("usage: chord_engine <audio_file> [--hop 0.25]")?;
+        let audio_file = audio_file.context("usage: rekord_engine <audio_file> [--hop 0.25]")?;
         run_file(&audio_file, hop)
     }
 }

@@ -104,28 +104,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "chord_core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cpal",
- "hound",
- "ndarray",
- "ort",
- "rubato",
- "serde",
- "ureq",
-]
-
-[[package]]
-name = "chord_engine"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chord_core",
-]
-
-[[package]]
 name = "combine"
 version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -885,6 +863,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f821338fddb99d089116342c46e9f1fbf3828dba077674613e734e01d6ea8677"
 dependencies = [
  "rustfft",
+]
+
+[[package]]
+name = "rekord_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cpal",
+ "hound",
+ "ndarray",
+ "ort",
+ "rubato",
+ "serde",
+ "ureq",
+]
+
+[[package]]
+name = "rekord_engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rekord_core",
 ]
 
 [[package]]
