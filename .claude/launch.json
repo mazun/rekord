@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "chord-piano-roll",
+      "name": "rekord-piano-roll",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "chord-piano-roll"],
+      "runtimeArgs": ["run", "dev", "--prefix", "rekord-piano-roll"],
       "port": 1420
     }
   ]

@@ -1,12 +1,12 @@
 [package]
-name = "chord_engine"
+name = "rekord_engine"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "chord_engine"
+name = "rekord_engine"
 path = "src/main.rs"
 
 [dependencies]
-chord_core = { path = "../core" }
+rekord_core = { path = "../core" }
 anyhow = "1"

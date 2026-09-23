@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use chord_core::key_estimator::{KeyEstimate, Mode};
-use chord_core::pipeline::KeyMode;
+use rekord_core::key_estimator::{KeyEstimate, Mode};
+use rekord_core::pipeline::KeyMode;
 use tauri::{AppHandle, Emitter, State};
 
 // Sanity clamp on the frontend-supplied latency setting -- server-side
@@ -41,7 +41,7 @@ fn start_capture(
     let app_for_thread = app.clone();
 
     let handle = std::thread::spawn(move || {
-        let result = chord_core::pipeline::run_live_session(
+        let result = rekord_core::pipeline::run_live_session(
             latency_seconds, // hop_seconds (capture delivery granularity)
             latency_seconds, // stride_seconds (model window-advance) -- one
             // slider drives both, so lowering it actually shortens the
