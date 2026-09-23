@@ -16,48 +16,50 @@
   }
 </script>
 
-<div class="toolbar">
-  <button
-    id="capture-btn"
-    class="capture-btn"
-    class:recording
-    type="button"
-    title={label}
-    aria-label={label}
-    disabled={pipeline.status === "loading" || pipeline.status === "stopping"}
-    onclick={toggleCapture}
-  >
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      {#if recording}
-        <rect x="3" y="3" width="10" height="10" rx="1.5" />
-      {:else}
-        <circle cx="8" cy="8" r="5.5" />
-      {/if}
-    </svg>
-  </button>
-  <button
-    id="settings-btn"
-    class="icon-btn"
-    type="button"
-    title="設定"
-    aria-label="設定"
-    onclick={onOpenSettings}
-  >
-    ⚙
-  </button>
-</div>
+<button
+  id="capture-btn"
+  class="capture-btn"
+  class:recording
+  type="button"
+  title={label}
+  aria-label={label}
+  disabled={pipeline.status === "loading" || pipeline.status === "stopping"}
+  onclick={toggleCapture}
+>
+  <svg viewBox="0 0 16 16" aria-hidden="true">
+    {#if recording}
+      <rect x="3" y="3" width="10" height="10" rx="1.5" />
+    {:else}
+      <circle cx="8" cy="8" r="5.5" />
+    {/if}
+  </svg>
+</button>
+<button
+  id="settings-btn"
+  class="icon-btn"
+  type="button"
+  title="設定"
+  aria-label="設定"
+  onclick={onOpenSettings}
+>
+  ⚙
+</button>
 
 <style>
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.6rem 1rem;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
-
+  /* Each button pins itself to .key-toolbar-row's left/right edge
+     (App.svelte, position:relative) and centers vertically on whatever
+     height the key label gives that row, the same technique
+     PianorollToggle.svelte uses against .chord-row -- not laid out by a
+     shared flex container, since the two buttons need independent
+     left/right anchors rather than a single shared parent box. */
   button {
+    position: absolute;
+    /* KeyPicker's own .key-row is also position:relative and comes later
+       in the DOM, so without this it paints on top and swallows clicks
+       on these buttons even where .key-row has no visible content. */
+    z-index: 1;
+    top: 50%;
+    transform: translateY(-50%);
     padding: 0.4rem 1.1rem;
     border-radius: 6px;
     border: 1px solid #3a3f4d;
@@ -77,6 +79,7 @@
   }
 
   .capture-btn {
+    left: 0;
     display: flex;
     align-items: center;
     padding: 0.4rem 0.8rem;
@@ -97,7 +100,11 @@
   }
 
   #settings-btn {
-    margin-left: auto;
+    right: 0;
+    /* Matches PianorollToggle.svelte's own right-inset override exactly,
+       so the gear's glyph lines up on the same x as the piano-roll
+       toggle icon below it, not just the two buttons' boxes. */
+    padding-right: 4px !important;
     border: none;
     background: none;
     font-size: 1.7rem;
