@@ -58,3 +58,71 @@
     <span class="legend-swatch bass"></span>Bass
   </button>
 </div>
+
+<style>
+  #pianoroll-container {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+
+  #pianoroll-container.hidden {
+    display: none;
+  }
+
+  /* Created by Pixi at runtime, so outside Svelte's scoping. */
+  #pianoroll-container :global(canvas) {
+    display: block;
+  }
+
+  /* Overlaid on the piano roll itself rather than living in the toolbar --
+     the coloring it toggles only means anything while notes are actually
+     scrolling past underneath, so it's pointless (and confusing) to still
+     show it once the roll is collapsed away. Living inside
+     #pianoroll-container means it's naturally hidden along with everything
+     else there once that container is display:none. */
+  .roles-toggle {
+    position: absolute;
+    top: 0.6rem;
+    left: 0.6rem;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    border: none;
+    background: rgba(20, 22, 28, 0.7);
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .roles-toggle:hover {
+    background: rgba(20, 22, 28, 0.7);
+  }
+
+  /* Off reads via dimming alone (no separate checkbox) -- bright means the
+     coloring is currently applied, dim means notes are drawn in the default
+     color regardless of role. */
+  .roles-toggle.off {
+    opacity: 0.35;
+  }
+
+  .legend-swatch {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 2px;
+  }
+
+  /* Mirrors MELODY_COLOR_MAX/BASS_COLOR_MAX in pianoroll.ts. */
+  .legend-swatch.melody {
+    background: #6be3a0;
+  }
+
+  .legend-swatch.bass {
+    background: #ff9f5b;
+  }
+</style>

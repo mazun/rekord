@@ -35,3 +35,14 @@
   </div>
   <SettingsView hidden={view !== "settings"} onClose={() => (view = "main")} />
 </main>
+
+<style>
+  .chord-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2.2rem;
+    padding: 0.2rem 1rem 1rem;
+  }
+</style>
