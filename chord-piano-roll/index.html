@@ -14,10 +14,6 @@
         <div class="toolbar">
           <button id="start-btn">Start</button>
           <button id="stop-btn" disabled>Stop</button>
-          <button id="roles-toggle" class="legend-item roles-toggle" type="button" title="クリックでメロディ/ベースの色分けを切り替え">
-            <span class="legend-swatch melody"></span>Melody
-            <span class="legend-swatch bass"></span>Bass
-          </button>
           <button
             id="settings-btn"
             class="icon-btn"
@@ -52,8 +48,21 @@
               <div class="chip" data-tension="13">13</div>
             </div>
           </div>
+          <button
+            id="pianoroll-toggle-btn"
+            class="icon-btn pianoroll-toggle-btn"
+            type="button"
+            title="ピアノロールの表示切替"
+            aria-label="ピアノロールの表示切替"
+            aria-pressed="false"
+          ></button>
         </div>
-        <div id="pianoroll-container"></div>
+        <div id="pianoroll-container">
+          <button id="roles-toggle" class="roles-toggle" type="button" title="クリックでメロディ/ベースの色分けを切り替え">
+            <span class="legend-swatch melody"></span>Melody
+            <span class="legend-swatch bass"></span>Bass
+          </button>
+        </div>
       </div>
       <div id="settings-view" class="hidden">
         <div class="settings-page-header">
