@@ -37,8 +37,10 @@
 
 <main class="app">
   <div id="main-view" class:hidden={view !== "main"}>
-    <Toolbar onOpenSettings={openSettings} />
-    <KeyPicker />
+    <div class="key-toolbar-row">
+      <Toolbar onOpenSettings={openSettings} />
+      <KeyPicker />
+    </div>
     <div class="chord-row">
       <ChordDisplay />
       <TensionGrid />
@@ -50,6 +52,14 @@
 </main>
 
 <style>
+  /* No more standalone top bar -- the record/settings buttons are pinned
+     (Toolbar.svelte, position:absolute) to this row's left/right edges,
+     vertically centered on whatever height the key label gives the row,
+     the same way PianorollToggle.svelte pins itself to .chord-row. */
+  .key-toolbar-row {
+    position: relative;
+  }
+
   .chord-row {
     position: relative;
     display: flex;
