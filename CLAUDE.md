@@ -17,8 +17,13 @@ Originally prototyped in Python (deleted once Rust reached parity — see
     driver (`pipeline.rs`) used by both the CLI and the Tauri app.
   - `cli/` (`chord_engine` bin) — file-input and `--live` CLI, thin wrapper
     around `chord_core`.
-- `chord-piano-roll/` — Tauri + Pixi.js piano-roll UI, **live mode only**
-  (no file-input UI; use the CLI for that).
+- `chord-piano-roll/` — Tauri + Svelte 5 (Bits UI for headless widgets) +
+  Pixi.js piano-roll UI, **live mode only** (no file-input UI; use the CLI
+  for that). UI state lives in runes modules (`pipeline.svelte.ts`,
+  `settings.svelte.ts`); `pianoroll.ts` stays a plain imperative Pixi class
+  wrapped by `PianoRollView.svelte`, and note/`Started` events go straight
+  to it rather than through reactive state. Capture starts automatically
+  on launch.
 
 See `TODO.md` for the current backlog of planned features — remove an
 item from it once it's actually implemented, rather than leaving it to
