@@ -9,18 +9,18 @@
   // The collapsed-size measurement runs over the whole app shell, not just
   // this button -- found from here rather than threaded down as a prop,
   // since there's only ever the one.
-  function toggle(visible: boolean) {
+  function toggle(visible: boolean, rememberSize = true) {
     const appShell = button.closest<HTMLElement>(".app");
-    if (appShell) setPianorollVisible(visible, appShell, button);
+    if (appShell) setPianorollVisible(visible, appShell, button, rememberSize);
   }
 
   onMount(() => {
     // Reproduce a collapsed state from a previous session -- the window
-    // itself always starts at tauri.conf.json's expanded default (800x600),
-    // so this both shrinks it down to match and captures that starting
-    // size as what "show" should restore to later, exactly like a real
-    // collapse click would from here.
-    if (!settings.pianorollVisible) toggle(false);
+    // starts at tauri.conf.json's expanded default (800x600) on launch, so
+    // this shrinks it down to match. It deliberately doesn't record the
+    // current size as what "show" restores to (see windowSize.ts) -- after
+    // a webview reload the window is already collapsed.
+    if (!settings.pianorollVisible) toggle(false, false);
   });
 </script>
 
