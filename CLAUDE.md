@@ -42,7 +42,7 @@ rot as a stale wishlist.
 ```bash
 cd rust
 cargo build --release
-./target/release/rekord_engine.exe sample_audio/piano_progression_C_Am_F_G.wav
+./target/release/rekord_engine.exe ../sample_audio/piano_progression_C_Am_F_G.wav
 ./target/release/rekord_engine.exe --live
 ```
 
