@@ -37,11 +37,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   const romanLabel = document.querySelector<HTMLDivElement>("#roman-label");
   const startBtn = document.querySelector<HTMLButtonElement>("#start-btn");
   const stopBtn = document.querySelector<HTMLButtonElement>("#stop-btn");
-  const status = document.querySelector<HTMLSpanElement>("#status");
   const latencyInput = document.querySelector<HTMLInputElement>("#latency-input");
   const latencyValue = document.querySelector<HTMLSpanElement>("#latency-value");
   const keySelect = document.querySelector<HTMLSelectElement>("#key-select");
   const rolesToggle = document.querySelector<HTMLButtonElement>("#roles-toggle");
+  const mainView = document.querySelector<HTMLDivElement>("#main-view");
+  const settingsView = document.querySelector<HTMLDivElement>("#settings-view");
+  const settingsBtn = document.querySelector<HTMLButtonElement>("#settings-btn");
+  const settingsBackBtn = document.querySelector<HTMLButtonElement>("#settings-back-btn");
   if (
     !container ||
     !keyLabel ||
@@ -49,13 +52,42 @@ window.addEventListener("DOMContentLoaded", async () => {
     !romanLabel ||
     !startBtn ||
     !stopBtn ||
-    !status ||
     !latencyInput ||
     !latencyValue ||
     !keySelect ||
-    !rolesToggle
+    !rolesToggle ||
+    !mainView ||
+    !settingsView ||
+    !settingsBtn ||
+    !settingsBackBtn
   )
     return;
+
+  // Stopping capture (if running) before navigating away keeps the piano
+  // roll's clock/state consistent with what "Start" will set up fresh next
+  // time -- the settings page is a separate view, not an overlay on top of
+  // a still-running session.
+  const stopCapture = async () => {
+    stopBtn.disabled = true;
+    try {
+      await invoke("stop_capture");
+    } finally {
+      startBtn.disabled = false;
+      latencyInput.disabled = false;
+    }
+  };
+
+  settingsBtn.addEventListener("click", async () => {
+    if (!stopBtn.disabled) {
+      await stopCapture();
+    }
+    mainView.classList.add("hidden");
+    settingsView.classList.remove("hidden");
+  });
+  settingsBackBtn.addEventListener("click", () => {
+    settingsView.classList.add("hidden");
+    mainView.classList.remove("hidden");
+  });
 
   for (let pc = 0; pc < 12; pc++) {
     const opt = document.createElement("option");
@@ -76,7 +108,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     try {
       await invoke("set_key_mode", { tonicPc });
     } catch (err) {
-      status.textContent = `error: ${err}`;
+      console.error(err);
     }
   });
 
@@ -123,7 +155,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       // reappeared as a gap near the playhead no fixed pipeline-latency
       // constant could account for.
       roll.reset(payload.total_latency_s);
-      status.textContent = "listening...";
     } else if (payload.type === "NoteConfirmed") {
       roll.addNote({
         start_s: payload.start_s,
@@ -154,7 +185,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   await listen<string>("pipeline-error", (event) => {
-    status.textContent = `error: ${event.payload}`;
+    console.error(event.payload);
   });
 
   startBtn.addEventListener("click", async () => {
@@ -162,7 +193,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     keyLabel.textContent = "--";
     romanLabel.textContent = " ";
     tensionChips.forEach((chip) => chip.classList.remove("lit"));
-    status.textContent = "starting...";
     startBtn.disabled = true;
     stopBtn.disabled = false;
     latencyInput.disabled = true;
@@ -172,22 +202,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       // roll.reset() happens on the "Started" event above, once the
       // pipeline has actually begun, not here.
     } catch (err) {
-      status.textContent = `error: ${err}`;
+      console.error(err);
       startBtn.disabled = false;
       stopBtn.disabled = true;
       latencyInput.disabled = false;
     }
   });
 
-  stopBtn.addEventListener("click", async () => {
-    stopBtn.disabled = true;
-    status.textContent = "stopping...";
-    try {
-      await invoke("stop_capture");
-    } finally {
-      status.textContent = "stopped";
-      startBtn.disabled = false;
-      latencyInput.disabled = false;
-    }
-  });
+  stopBtn.addEventListener("click", stopCapture);
 });
