@@ -1,5 +1,6 @@
 <script lang="ts">
   import { pipeline, keyPairLabel, setKeyMode } from "../pipeline.svelte";
+  import { t } from "../i18n.svelte";
 
   // A toggle plus up/down steppers instead of a dropdown: the collapsed
   // window is only a few rows tall, so a 13-item menu opened from here
@@ -35,15 +36,15 @@
     class:active={auto}
     type="button"
     aria-pressed={auto}
-    title="キーの自動検出"
+    title={t("keyPicker.autoDetect")}
     onclick={toggleAuto}
   >
     Auto
   </button>
   <span id="key-label">{pipeline.keyName}</span>
   <div class="steppers">
-    <button type="button" title="半音上げる" aria-label="半音上げる" onclick={() => step(1)}>▲</button>
-    <button type="button" title="半音下げる" aria-label="半音下げる" onclick={() => step(-1)}>▼</button>
+    <button type="button" title={t("keyPicker.semitoneUp")} aria-label={t("keyPicker.semitoneUp")} onclick={() => step(1)}>▲</button>
+    <button type="button" title={t("keyPicker.semitoneDown")} aria-label={t("keyPicker.semitoneDown")} onclick={() => step(-1)}>▼</button>
   </div>
 </div>
 

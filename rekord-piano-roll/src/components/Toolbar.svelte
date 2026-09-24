@@ -2,6 +2,7 @@
   import settingsGearIconSvg from "../assets/settings-gear-icon.svg?raw";
   import { pipeline, startCapture, stopCapture } from "../pipeline.svelte";
   import { settings } from "../settings.svelte";
+  import { t } from "../i18n.svelte";
 
   let { onOpenSettings }: { onOpenSettings: () => void } = $props();
 
@@ -9,7 +10,7 @@
   // clicking will do (record while stopped, stop while recording), and
   // "stopping" keeps the stop icon (disabled) until stop_capture returns.
   const recording = $derived(pipeline.status === "running" || pipeline.status === "stopping");
-  const label = $derived(recording ? "停止" : "録音開始");
+  const label = $derived(recording ? t("toolbar.stop") : t("toolbar.record"));
 
   function toggleCapture() {
     if (pipeline.status === "running") stopCapture();
@@ -39,8 +40,8 @@
   id="settings-btn"
   class="icon-btn"
   type="button"
-  title="設定"
-  aria-label="設定"
+  title={t("toolbar.settings")}
+  aria-label={t("toolbar.settings")}
   onclick={onOpenSettings}
 >
   {@html settingsGearIconSvg}
