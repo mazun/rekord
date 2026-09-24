@@ -65,8 +65,8 @@
     title={t("pianoRollView.rolesToggle")}
     onclick={toggleRoles}
   >
-    <span class="legend-swatch melody"></span>Melody
-    <span class="legend-swatch bass"></span>Bass
+    <span class="legend-swatch melody"></span>{t("pianoRollView.melody")}
+    <span class="legend-swatch bass"></span>{t("pianoRollView.bass")}
   </button>
 </div>
 

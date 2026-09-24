@@ -19,7 +19,7 @@
     <h2>{t("settings.title")}</h2>
   </div>
   <div class="settings-row">
-    <label for="latency-input">Latency: <span id="latency-value">{settings.latencyMs}</span>ms</label>
+    <label for="latency-input">{t("settings.latency")}: <span id="latency-value">{settings.latencyMs}</span>ms</label>
     <input
       type="range"
       id="latency-input"
