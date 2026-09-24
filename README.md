@@ -1,26 +1,35 @@
 # Re:Kord (リコード)
 
-PC で再生中の音声(WASAPI ループバック)から、コードとノートをリアルタイムに認識するツールです。
-認識結果はピアノロールとコード名で表示され、キー(調)とローマ数字表記、メロディ/ベースの判別も行います。
+A tool for real-time chord and note recognition from audio playing on your
+PC (via WASAPI loopback). Recognition results are shown as a piano roll and
+chord names, and the tool also estimates the key and shows Roman-numeral
+labels along with melody/bass classification.
 
-## 仕組み
+## How it works
 
-1. **ノート推定** — Spotify の [basic-pitch](https://github.com/spotify/basic-pitch)(ONNX)でポリフォニックにピッチを推定します。
-2. **コード判定** — 音高クラス集合とコードテンプレート(テンションコード約 300 種)のルールベース照合で、コード名を決めます。
-3. **キー推定** — Krumhansl-Schmuckler 系のピッチクラス相関(Bellman-Budge プロファイル)で調を推定し、コードをローマ数字で表します。
-4. **メロディ/ベース** — 確定したノート列に対する記号的なスカイライン規則(最高音/最低音)で判別します。
+1. **Note estimation** — Spotify's [basic-pitch](https://github.com/spotify/basic-pitch)
+   (ONNX) estimates polyphonic pitch.
+2. **Chord recognition** — chord names are decided by rule-based matching of
+   pitch-class sets against chord templates (roughly 300 tension chords).
+3. **Key estimation** — the key is estimated via Krumhansl-Schmuckler-style
+   pitch-class correlation (Bellman-Budge profiles), and chords are shown as
+   Roman numerals.
+4. **Melody/bass** — determined by a symbolic skyline rule (highest/lowest
+   note) applied to the stream of confirmed notes.
 
-コード名とキーに機械学習モデルは使っていません。設計の理由は [CLAUDE.md](CLAUDE.md) にあります。
+No machine learning model is used for chord names or key estimation. The
+reasoning behind these design decisions is in [CLAUDE.md](CLAUDE.md).
 
-## 動作環境
+## Requirements
 
-- Windows 11(音声取得に WASAPI ループバックを使うため Windows 専用です)
-- ONNX Runtime の DirectML 実行プロバイダが使える GPU(RTX 5070 Ti で動作確認)
-- [Rust](https://rustup.rs/) と [Node.js](https://nodejs.org/)
+- Windows 11 (Windows-only, since audio capture uses WASAPI loopback)
+- A GPU that supports ONNX Runtime's DirectML execution provider (verified
+  working on an RTX 5070 Ti)
+- [Rust](https://rustup.rs/) and [Node.js](https://nodejs.org/)
 
-## 使い方
+## Usage
 
-### デスクトップアプリ(ピアノロール UI)
+### Desktop app (piano-roll UI)
 
 ```powershell
 Set-Location rekord-piano-roll
@@ -28,8 +37,9 @@ npm install
 npm run tauri dev
 ```
 
-起動するとすぐにキャプチャを始めます。システムで再生されている音声がそのまま解析対象です。
-ライブ入力専用で、ファイルを読み込む UI はありません。
+Capture starts immediately on launch. Whatever audio the system is playing
+is what gets analyzed. This is live-input only; there's no UI for loading
+files.
 
 ### CLI
 
@@ -40,38 +50,47 @@ cargo build --release
 ./target/release/rekord_engine.exe --live
 ```
 
-| オプション | 内容 |
+| Option | Description |
 | --- | --- |
-| `--live` | 既定のスピーカー出力をループバックで取得して解析します |
-| `--duration <秒>` | 指定秒数で終了します(`--live` 用) |
-| `--latency <秒>` | 確定までの遅延を指定します(モデルの窓の進め幅に影響します) |
-| `--hop <秒>` | 取得データの受け渡し間隔です |
+| `--live` | Captures the default speaker output via loopback and analyzes it |
+| `--duration <seconds>` | Stops after the given number of seconds (for `--live`) |
+| `--latency <seconds>` | Sets the delay until confirmation (affects the model's window-advance stride) |
+| `--hop <seconds>` | Interval between chunks of captured audio handed off for processing |
 
-初回ビルド時に basic-pitch のモデル(`nmp.onnx`)を GitHub から `rust/core/models/` にダウンロードします。
+On first build, the basic-pitch model (`nmp.onnx`) is downloaded from
+GitHub into `rust/core/models/`.
 
-## 構成
+## Layout
 
 ```
 rust/
-  core/                rekord_core(推論・ノート抽出・コード/キー判定・キャプチャ)
-  cli/                 rekord_engine(CLI)
-rekord-piano-roll/     Tauri + Svelte 5 + Pixi.js のピアノロール UI
-sample_audio/          検証用のピアノ録音
+  core/                rekord_core (inference, note extraction, chord/key detection, capture)
+  cli/                 rekord_engine (CLI)
+rekord-piano-roll/     Tauri + Svelte 5 + Pixi.js piano-roll UI
+sample_audio/          Piano recordings used for validation
 ```
 
-## 制限
+## Limitations
 
-- キー推定は直近の数秒〜十数秒の窓で行うため、主和音がまだ鳴っていない区間では外れることがあります。
-- ドラムなど非ピアノの音が多い音源では、誤検出が増えます。
-- 今後の予定は [TODO.md](TODO.md) にあります。
+- Key estimation runs over a window of the last few to ten-odd seconds, so
+  it can be wrong in sections where the tonic chord hasn't sounded yet.
+- Sources with a lot of non-piano sound (e.g. drums) will see more false
+  detections.
+- Planned future work is tracked in [TODO.md](TODO.md).
 
-## サードパーティ
+## Third party
 
-- [basic-pitch](https://github.com/spotify/basic-pitch) のモデル(Apache License 2.0)は、リポジトリには含めず、ビルド時にダウンロードします。
-- 主な依存: [ort](https://github.com/pykeio/ort)、[cpal](https://github.com/RustAudio/cpal)、[Tauri](https://tauri.app/)、[Svelte](https://svelte.dev/)、[Bits UI](https://bits-ui.com/)、[Pixi.js](https://pixijs.com/)
+- The [basic-pitch](https://github.com/spotify/basic-pitch) model (Apache
+  License 2.0) is not bundled in the repository; it's downloaded at build
+  time.
+- Main dependencies: [ort](https://github.com/pykeio/ort),
+  [cpal](https://github.com/RustAudio/cpal), [Tauri](https://tauri.app/),
+  [Svelte](https://svelte.dev/), [Bits UI](https://bits-ui.com/),
+  [Pixi.js](https://pixijs.com/)
 
-## ライセンス
+## License
 
 [MIT License](LICENSE)
 
-`sample_audio/` の音源はすべて作者自身が制作したもので、同じライセンスで提供します。
+All recordings in `sample_audio/` were produced by the author and are
+provided under the same license.
