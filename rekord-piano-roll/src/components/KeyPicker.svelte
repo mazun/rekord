@@ -39,7 +39,7 @@
     title={t("keyPicker.autoDetect")}
     onclick={toggleAuto}
   >
-    Auto
+    {t("keyPicker.auto")}
   </button>
   <span id="key-label">{pipeline.keyName}</span>
   <div class="steppers">
