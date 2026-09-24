@@ -3,6 +3,7 @@
   import { settings } from "../settings.svelte";
   import { setPianorollVisible } from "../windowSize";
   import pianorollToggleIconSvg from "../assets/pianoroll-toggle-icon.svg?raw";
+  import { t } from "../i18n.svelte";
 
   let button: HTMLButtonElement;
 
@@ -33,8 +34,8 @@
   class="icon-btn pianoroll-toggle-btn"
   class:active={!settings.pianorollVisible}
   type="button"
-  title="ピアノロールの表示切替"
-  aria-label="ピアノロールの表示切替"
+  title={t("pianorollToggle.toggle")}
+  aria-label={t("pianorollToggle.toggle")}
   aria-pressed={!settings.pianorollVisible}
   bind:this={button}
   onclick={() => toggle(!settings.pianorollVisible)}

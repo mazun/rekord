@@ -3,6 +3,7 @@
   import { PianoRoll } from "../pianoroll";
   import { connectPipeline, startCapture, stopCapture } from "../pipeline.svelte";
   import { settings } from "../settings.svelte";
+  import { t } from "../i18n.svelte";
 
   let container: HTMLElement;
   let roll: PianoRoll | null = null;
@@ -61,11 +62,11 @@
     class="roles-toggle"
     class:off={!rolesEnabled}
     type="button"
-    title="クリックでメロディ/ベースの色分けを切り替え"
+    title={t("pianoRollView.rolesToggle")}
     onclick={toggleRoles}
   >
-    <span class="legend-swatch melody"></span>Melody
-    <span class="legend-swatch bass"></span>Bass
+    <span class="legend-swatch melody"></span>{t("pianoRollView.melody")}
+    <span class="legend-swatch bass"></span>{t("pianoRollView.bass")}
   </button>
 </div>
 

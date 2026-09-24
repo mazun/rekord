@@ -1,6 +1,7 @@
 <script lang="ts">
   import { pipeline } from "../pipeline.svelte";
   import { settings, saveLatency } from "../settings.svelte";
+  import { i18n, t, setLocale, type Locale } from "../i18n.svelte";
 
   let { hidden, onClose }: { hidden: boolean; onClose: () => void } = $props();
 </script>
@@ -11,14 +12,14 @@
       id="settings-back-btn"
       class="icon-btn close-icon"
       type="button"
-      title="閉じる"
-      aria-label="閉じる"
+      title={t("settings.close")}
+      aria-label={t("settings.close")}
       onclick={onClose}
     ></button>
-    <h2>設定</h2>
+    <h2>{t("settings.title")}</h2>
   </div>
   <div class="settings-row">
-    <label for="latency-input">Latency: <span id="latency-value">{settings.latencyMs}</span>ms</label>
+    <label for="latency-input">{t("settings.latency")}: <span id="latency-value">{settings.latencyMs}</span>ms</label>
     <input
       type="range"
       id="latency-input"
@@ -29,6 +30,17 @@
       onchange={saveLatency}
       disabled={pipeline.status !== "idle"}
     />
+  </div>
+  <div class="settings-row">
+    <label for="language-select">{t("settings.language")}</label>
+    <select
+      id="language-select"
+      value={i18n.locale}
+      onchange={(e) => setLocale(e.currentTarget.value as Locale)}
+    >
+      <option value="en">English</option>
+      <option value="ja">日本語</option>
+    </select>
   </div>
 </div>
 
@@ -61,7 +73,8 @@
        slightly higher than where the kanji glyphs (drawn from a CJK
        fallback font with different ascent/descent proportions) visually
        sit, so a geometrically-centered icon still reads as high next to
-       "設定". */
+       "設定". Calibrated against the ja heading; re-check by eye if it
+       reads off next to the en "Settings" heading. */
     top: 2px;
     width: 1.6rem;
     height: 1.6rem;
@@ -103,7 +116,22 @@
     font-size: 0.95rem;
   }
 
+  /* Two stacked .settings-row blocks would otherwise double up their own
+     1.5rem top/bottom padding into a 3rem gap between them. */
+  .settings-row + .settings-row {
+    padding-top: 0;
+  }
+
   .settings-row input[type="range"] {
     width: 100%;
+  }
+
+  .settings-row select {
+    font: inherit;
+    padding: 0.3rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid #3a3f4d;
+    background: var(--surface-raised);
+    color: var(--text);
   }
 </style>
