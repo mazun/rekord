@@ -5,10 +5,13 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
+use crate::beat_model::{self, BeatModel};
+use crate::beat_tracker::BeatTracker;
 use crate::chord_templates::{extra_tensions, match_chord, ChordMatch};
 use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
 use crate::live_capture;
@@ -55,6 +58,13 @@ pub const MIDI_NOTE_NAMES: [&str; 12] =
 
 pub fn midi_to_name(pitch: i32) -> String {
     format!("{}{}", MIDI_NOTE_NAMES[pitch.rem_euclid(12) as usize], pitch.div_euclid(12) - 1)
+}
+
+/// A beat line on the same audio timeline as the notes; `bar` marks a downbeat.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct BeatLine {
+    pub t: f32,
+    pub bar: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -110,6 +120,97 @@ pub enum PipelineEvent {
     /// a single held chord's duration, not just at the next chord
     /// boundary.
     KeyChange { key_name: String },
+    /// Every beat line at or after `from_s`, replacing the previous `BeatLines` over that
+    /// range (lines before `from_s` are unchanged and already final). Three layers of the
+    /// same beats at increasing delay and confidence (see beat_tracker.rs):
+    /// `predicted` extrapolates the provisional grid up to the present (no delay),
+    /// `provisional` is the network's own peaks (~0.6s behind the audio), and `committed`
+    /// is the DBN's decision (~4.5s behind), which never changes once sent. A beat moves
+    /// from one layer to the next as the audio catches up; its time can shift slightly
+    /// when it does, which the frontend animates rather than redraws.
+    BeatLines {
+        from_s: f32,
+        committed: Vec<BeatLine>,
+        provisional: Vec<BeatLine>,
+        predicted: Vec<BeatLine>,
+    },
+}
+
+// How far back each BeatLines snapshot reaches. Only needs to cover what's still on screen
+// (the piano roll shows width / PIXELS_PER_SECOND = 16s on a 1920px-wide window, and a
+// line older than that is committed and final anyway); bounds the event size.
+const BEAT_LINES_WINDOW_S: f64 = 30.0;
+
+fn beat_lines(beats: &[f64], downbeats: &[f64]) -> Vec<BeatLine> {
+    // downbeats are always one of the beats' exact values (committed: the DBN's; provisional:
+    // snapped to the nearest beat), except a provisional downbeat with no beat at all yet
+    let mut out: Vec<BeatLine> =
+        beats.iter().map(|&t| BeatLine { t: t as f32, bar: downbeats.contains(&t) }).collect();
+    for &d in downbeats {
+        if !beats.contains(&d) {
+            out.push(BeatLine { t: d as f32, bar: true });
+        }
+    }
+    out.sort_by(|a, b| a.t.total_cmp(&b.t));
+    out
+}
+
+/// The beat tracker's side of a live session: runs on its own thread (Beat This! costs ~40%
+/// of a core in real time, which must not delay the note pipeline) on a copy of every
+/// capture chunk, and emits a `BeatLines` snapshot whenever the lines change. Beat tracking
+/// failing (e.g. a missing model) only disables the lines, not the session. Public for
+/// `examples/beat_replay.rs`, which drives it from a file at real-time pace.
+pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(rx: Receiver<Vec<f32>>, stop: &AtomicBool, on_event: &Mutex<F>) {
+    let model = match BeatModel::load(1) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("beat tracking disabled: {e:#}");
+            return;
+        }
+    };
+    let mut tracker = BeatTracker::bounded(model, true);
+    let mut last: Option<PipelineEvent> = None;
+    let mut emit = |tracker: &BeatTracker| {
+        let now = tracker.now();
+        let from = now - BEAT_LINES_WINDOW_S;
+        let l = tracker.lines_since(now, from);
+        let event = PipelineEvent::BeatLines {
+            from_s: from as f32,
+            committed: beat_lines(&l.committed_beats, &l.committed_downbeats),
+            provisional: beat_lines(&l.provisional_beats, &l.provisional_downbeats),
+            predicted: l.predicted.iter().map(|p| BeatLine { t: p.time as f32, bar: p.is_bar }).collect(),
+        };
+        // from_s alone moves on every chunk; only send when a line changed
+        let changed = match (&last, &event) {
+            (
+                Some(PipelineEvent::BeatLines { committed: c0, provisional: p0, predicted: q0, .. }),
+                PipelineEvent::BeatLines { committed: c1, provisional: p1, predicted: q1, .. },
+            ) => c0 != c1 || p0 != p1 || q0 != q1,
+            _ => true,
+        };
+        if changed {
+            (on_event.lock().unwrap())(event.clone());
+            last = Some(event);
+        }
+    };
+    while let Ok(mut chunk) = rx.recv() {
+        // if it ever falls behind, catch up in one push rather than one event per chunk
+        while let Ok(more) = rx.try_recv() {
+            chunk.extend(more);
+        }
+        if stop.load(Ordering::Relaxed) {
+            return; // stopped by the user: nobody is watching the final lines
+        }
+        if let Err(e) = tracker.push(&chunk) {
+            eprintln!("beat tracking stopped: {e:#}");
+            return;
+        }
+        emit(&tracker);
+    }
+    // the capture ended on its own (e.g. --duration): commit through the end, as NoteStitcher's flush
+    if tracker.flush().is_ok() {
+        emit(&tracker);
+    }
 }
 
 // A brief gap with no active note (both hands lifting between chords, a
@@ -399,7 +500,8 @@ pub fn emit_confirmed_notes(
 }
 
 /// Runs a live WASAPI-loopback session, invoking `on_event` for every
-/// confirmed note and chord change, until `duration_s` elapses (if given),
+/// confirmed note, chord change and beat-line update (the latter from a
+/// second thread, hence `Send`), until `duration_s` elapses (if given),
 /// `stop` is set to true, or the capture stream ends. Shared by the CLI's
 /// `--live` mode and any other frontend driving the same pipeline (e.g. a
 /// GUI, which can flip `stop` from a "Stop" button to end the session
@@ -411,8 +513,34 @@ pub fn run_live_session(
     duration_s: Option<f32>,
     stop: Arc<AtomicBool>,
     key_mode: Arc<Mutex<KeyMode>>,
+    on_event: impl FnMut(PipelineEvent) + Send,
+) -> Result<()> {
+    let on_event = Mutex::new(on_event);
+    let (beat_tx, beat_rx) = channel::<Vec<f32>>();
+    std::thread::scope(|scope| {
+        let beat_stop = &*stop;
+        let on_event_ref = &on_event;
+        scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref));
+        let mut emit = |event| (on_event.lock().unwrap())(event);
+        let result = run_note_pipeline(hop_seconds, stride_seconds, duration_s, &stop, &key_mode, |chunk| {
+            let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
+        }, &mut emit);
+        drop(beat_tx); // lets the beat thread flush and exit; the scope joins it
+        result
+    })
+}
+
+fn run_note_pipeline(
+    hop_seconds: f32,
+    stride_seconds: f32,
+    duration_s: Option<f32>,
+    stop: &AtomicBool,
+    key_mode: &Mutex<KeyMode>,
+    mut on_chunk: impl FnMut(&[f32]),
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
+    // the beat tracker reads the same chunks, so it needs the same rate
+    const _: () = assert!(beat_model::SAMPLE_RATE == AUDIO_SAMPLE_RATE);
     let mut model = OnnxNoteModel::load()?;
     let mut stitcher = NoteStitcher::new();
     let mut key_estimator = KeyEstimator::new();
@@ -431,6 +559,7 @@ pub fn run_live_session(
     let total_latency_s = effective_stride_s + hop_seconds + CONFIRM_MARGIN_S + LATENCY_SAFETY_MARGIN_S;
     on_event(PipelineEvent::Started { total_latency_s });
     while let Ok(chunk) = rx.recv() {
+        on_chunk(&chunk);
         let completed = extractor.push(&chunk)?;
         elapsed += hop_seconds;
         if completed > 0 {

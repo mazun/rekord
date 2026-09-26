@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- Dev-only beat-line replay; see dev/replay-mock.js and CLAUDE.md. Open
+     http://localhost:1420/dev/replay.html?ref=ref-beats.json under `npm run dev`. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Re:Kord (beat replay)</title>
+    <script src="/dev/replay-mock.js"></script>
+    <script type="module">
+      // Debug handles for the browser console / an agent's JS tool:
+      //   window.__roll   the PianoRoll instance (captured on its first beat-line update)
+      //   window.__settle() steps the ticker 1.5s in 100ms frames and renders, then returns
+      //                   the on-screen lines [t, target alpha, bar, x]. A hidden browser
+      //                   pane throttles requestAnimationFrame, so the ticker barely runs
+      //                   there; call this right before each screenshot.
+      import { PianoRoll } from "/src/pianoroll.ts";
+      const orig = PianoRoll.prototype.setBeatLines;
+      PianoRoll.prototype.setBeatLines = function (l) {
+        window.__roll = this;
+        return orig.call(this, l);
+      };
+      window.__settle = () => {
+        const r = window.__roll;
+        let t = performance.now();
+        for (let i = 0; i < 15; i++) r.app.ticker.update((t += 100));
+        r.app.render();
+        return r.beatLines
+          .filter((b) => !b.graphic.destroyed && b.graphic.x > 0)
+          .map((b) => [+b.t.toFixed(2), b.targetAlpha, Math.round(b.bar), Math.round(b.graphic.x)]);
+      };
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body></body>
+</html>

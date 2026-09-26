@@ -1,25 +1,50 @@
-//! Fetches the basic-pitch ONNX model at build time instead of committing
-//! it to the repo (it's Spotify's, not ours -- Apache 2.0 licensed, from
-//! https://github.com/spotify/basic-pitch/tree/main/basic_pitch/saved_models/icassp_2022).
+//! Puts the ONNX models into core/models/ at build time instead of committing
+//! them to the repo:
+//!
+//! - nmp.onnx: Spotify's basic-pitch model (Apache 2.0), downloaded as is from
+//!   https://github.com/spotify/basic-pitch/tree/main/basic_pitch/saved_models/icassp_2022.
+//! - beatthis_small0.onnx + logmel.onnx: Beat This! (MIT, CPJKU) is only
+//!   published as a PyTorch checkpoint, so export_beat_models.py downloads and
+//!   converts it (and generates the log-mel frontend). This needs Python >= 3.10
+//!   on the build machine, only when a file is missing: a throwaway venv under
+//!   models/ gets the pinned CPU-only packages below (~1 GB download on the
+//!   first build) and is deleted afterwards. Set REKORD_PYTHON to pick the
+//!   interpreter.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const MODEL_URL: &str =
     "https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx";
 
+const BEAT_MODELS: [&str; 2] = ["beatthis_small0.onnx", "logmel.onnx"];
+const TORCH_INDEX: &str = "https://download.pytorch.org/whl/cpu";
+const TORCH_REQS: [&str; 2] = ["torch==2.14.0", "torchaudio==2.11.0"];
+const OTHER_REQS: [&str; 6] = [
+    "beat-this==1.1.0",
+    "einops==0.8.2",
+    "rotary-embedding-torch==0.9.1",
+    "soxr==1.1.0",
+    "onnx==1.23.0",
+    "onnxscript==0.7.2",
+];
+
 fn main() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let models_dir = manifest_dir.join("models");
+    std::fs::create_dir_all(&models_dir).expect("creating models/ directory");
+
+    fetch_basic_pitch(&models_dir);
+    export_beat_models(&manifest_dir, &models_dir);
+}
+
+fn fetch_basic_pitch(models_dir: &Path) {
     let model_path = models_dir.join("nmp.onnx");
-
     println!("cargo:rerun-if-changed={}", model_path.display());
-
     if model_path.exists() {
         return;
     }
-
-    std::fs::create_dir_all(&models_dir).expect("creating models/ directory");
 
     eprintln!("Downloading basic-pitch ONNX model from {MODEL_URL} ...");
     let bytes = ureq::get(MODEL_URL)
@@ -36,4 +61,68 @@ fn main() {
     std::fs::rename(&tmp_path, &model_path).expect("finalizing downloaded model file");
 
     eprintln!("Saved {} ({} bytes)", model_path.display(), bytes.len());
+}
+
+fn export_beat_models(manifest_dir: &Path, models_dir: &Path) {
+    let script = manifest_dir.join("export_beat_models.py");
+    println!("cargo:rerun-if-changed={}", script.display());
+    println!("cargo:rerun-if-env-changed=REKORD_PYTHON");
+    for name in BEAT_MODELS {
+        println!("cargo:rerun-if-changed={}", models_dir.join(name).display());
+    }
+    if BEAT_MODELS.iter().all(|n| models_dir.join(n).exists()) {
+        return;
+    }
+
+    let python = find_python().unwrap_or_else(|| {
+        panic!(
+            "Building the beat-tracking models needs Python >= 3.10 (not found as `py -3`, \
+             `python3` or `python`; set REKORD_PYTHON to its path). Alternatively copy \
+             {:?} into {} by hand.",
+            BEAT_MODELS,
+            models_dir.display()
+        )
+    });
+
+    let venv = models_dir.join(".export-venv");
+    let _ = std::fs::remove_dir_all(&venv);
+    run(Command::new(&python[0]).args(&python[1..]).arg("-m").arg("venv").arg(&venv), "creating the export venv");
+    let py = if cfg!(windows) { venv.join("Scripts").join("python.exe") } else { venv.join("bin").join("python") };
+
+    eprintln!("Installing PyTorch (CPU) and beat_this into {} ...", venv.display());
+    let pip = |args: &[&str], what: &str| {
+        run(Command::new(&py).args(["-m", "pip", "install", "--disable-pip-version-check", "-q"]).args(args), what)
+    };
+    // an older bundled pip (e.g. Python 3.11.4's) mis-resolves the PyTorch index's
+    // dependency mirrors (typing_extensions name normalization) and fails
+    pip(&["--upgrade", "pip"], "upgrading pip");
+    pip(&[&["--index-url", TORCH_INDEX][..], &TORCH_REQS[..]].concat(), "installing torch");
+    pip(&OTHER_REQS, "installing beat_this / onnx");
+
+    eprintln!("Exporting Beat This! small0 and the log-mel frontend ...");
+    run(Command::new(&py).arg(&script).arg(models_dir), "running export_beat_models.py");
+
+    let _ = std::fs::remove_dir_all(&venv);
+    for name in BEAT_MODELS {
+        assert!(models_dir.join(name).exists(), "export_beat_models.py did not write {name}");
+    }
+}
+
+fn find_python() -> Option<Vec<String>> {
+    let mut candidates: Vec<Vec<String>> = Vec::new();
+    if let Ok(p) = std::env::var("REKORD_PYTHON") {
+        candidates.push(vec![p]);
+    }
+    candidates.push(vec!["py".into(), "-3".into()]);
+    candidates.push(vec!["python3".into()]);
+    candidates.push(vec!["python".into()]);
+    let check = "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)";
+    candidates.into_iter().find(|c| {
+        Command::new(&c[0]).args(&c[1..]).args(["-c", check]).status().map(|s| s.success()).unwrap_or(false)
+    })
+}
+
+fn run(cmd: &mut Command, what: &str) {
+    let status = cmd.status().unwrap_or_else(|e| panic!("{what}: {e}"));
+    assert!(status.success(), "{what} failed ({status})");
 }

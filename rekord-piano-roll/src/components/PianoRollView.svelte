@@ -30,6 +30,7 @@
       const off = await connectPipeline({
         onStarted: (totalLatencyS) => roll?.reset(totalLatencyS),
         onNote: (note) => roll?.addNote(note),
+        onBeatLines: (lines) => roll?.setBeatLines(lines),
       });
       if (disposed) {
         off();

@@ -40,6 +40,8 @@ fn print_event(event: PipelineEvent) {
         PipelineEvent::KeyChange { key_name } => {
             println!("  key: {key_name}");
         }
+        // snapshots of a moving window; run_live prints each committed line once instead
+        PipelineEvent::BeatLines { .. } => {}
     }
 }
 
@@ -154,7 +156,17 @@ fn run_live(hop_seconds: f32, stride_seconds: f32, duration_s: Option<f32>) -> R
     }
     let never_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let key_mode = std::sync::Arc::new(std::sync::Mutex::new(pipeline::KeyMode::Auto));
-    pipeline::run_live_session(hop_seconds, stride_seconds, duration_s, never_stop, key_mode, print_event)
+    let mut printed_until = f32::NEG_INFINITY;
+    pipeline::run_live_session(hop_seconds, stride_seconds, duration_s, never_stop, key_mode, move |event| {
+        if let PipelineEvent::BeatLines { committed, .. } = &event {
+            let from = printed_until;
+            for line in committed.iter().filter(|l| l.t > from) {
+                println!("  {} {:6.2}s", if line.bar { "|| bar " } else { "|  beat" }, line.t);
+                printed_until = line.t;
+            }
+        }
+        print_event(event)
+    })
 }
 
 fn main() -> Result<()> {

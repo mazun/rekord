@@ -26,3 +26,8 @@ serde_json = "1"
 rekord_core = { path = "../../rust/core" }
 anyhow = "1"
 
+# `npm run tauri dev` builds the debug profile, where the beat tracker's DBN (a float64
+# Viterbi over ~5,800 states, twice a second) runs ~25x slower and can no longer keep up
+# with real time. That decoder is its own crate so only it is optimized here.
+[profile.dev.package.rekord_beat_dbn]
+opt-level = 3
