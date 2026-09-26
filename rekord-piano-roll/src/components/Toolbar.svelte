@@ -36,6 +36,9 @@
     {/if}
   </svg>
 </button>
+{#if pipeline.bpm !== null}
+  <span class="bpm">{pipeline.bpm} BPM</span>
+{/if}
 <button
   id="settings-btn"
   class="icon-btn"
@@ -101,6 +104,20 @@
     width: 1.1rem;
     height: 1.1rem;
     fill: currentColor;
+  }
+
+  /* Just right of the capture button (0.8rem padding + 1.1rem icon + 0.8rem padding). */
+  .bpm {
+    position: absolute;
+    z-index: 1;
+    left: 2.7rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
   }
 
   #settings-btn {
