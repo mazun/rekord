@@ -25,6 +25,24 @@ const BASS_COLOR_MIN = 0x3d2c1f;
 const BASS_COLOR_MAX = 0xff9f5b;
 const GUIDE_COLOR = 0x262b36;
 
+// Beat/bar lines (rekord_core::beat_tracker, via PipelineEvent::BeatLines) come in three
+// layers of the same beats: predicted (extrapolated, no delay), provisional (the network's
+// peaks, ~0.6s behind the audio) and committed (the DBN's final decision, ~4.5s behind). With
+// the display running total_latency_s (~1.3s) behind the audio, predicted and provisional
+// lines are already there when they reach the playhead, and a line turns committed a few
+// seconds after passing it. Each layer is drawn a step stronger than the one before, and a
+// bar line (downbeat) stronger and wider than a beat.
+type BeatLayer = "predicted" | "provisional" | "committed";
+const BEAT_LINE_COLOR = 0x5a6580;
+const BAR_LINE_COLOR = 0x9aaad8;
+const BEAT_LINE_ALPHA: Record<BeatLayer, number> = { predicted: 0.2, provisional: 0.4, committed: 0.65 };
+const BAR_LINE_WIDTH = 2;
+// A new snapshot's line within this of a line already drawn is the same beat moving to its
+// next layer (its time can shift a little when it does); beats are >= 0.28s apart (215 BPM).
+const BEAT_MATCH_TOLERANCE_S = 0.1;
+// Time constant of every beat-line transition (layer, bar/beat, position, fade in/out).
+const BEAT_ANIM_TAU_S = 0.15;
+
 // Vertical piano keyboard drawn at the playhead (the "now" line notes
 // scroll into). Its left edge doubles as the playhead x, replacing the
 // old fixed-fraction-of-width playhead.
@@ -71,6 +89,31 @@ interface NoteSprite extends ConfirmedNote {
   graphic: Graphics;
 }
 
+export interface BeatLine {
+  t: number;
+  bar: boolean;
+}
+
+export interface BeatLines {
+  from_s: number;
+  committed: BeatLine[];
+  provisional: BeatLine[];
+  predicted: BeatLine[];
+}
+
+// Drawn as a 1x1 white rect scaled to (width, screen height) and tinted, so every animated
+// property is a plain field update -- no geometry rebuild per frame.
+interface BeatSprite {
+  graphic: Graphics;
+  t: number;
+  targetT: number;
+  alpha: number;
+  targetAlpha: number;
+  bar: number; // 0 = beat, 1 = bar; animated between for color and width
+  targetBar: number;
+  dying: boolean; // absent from the latest snapshot: fading out, then destroyed
+}
+
 interface KeySprite {
   graphic: Graphics;
   isBlack: boolean;
@@ -103,6 +146,8 @@ interface KeySprite {
 export class PianoRoll {
   private app: Application;
   private noteLayer: Container;
+  private beatLayer = new Container();
+  private beatLines: BeatSprite[] = [];
   private guides = new Graphics();
   private keyboardBacking = new Graphics();
   private keys = new Map<number, KeySprite>();
@@ -135,6 +180,7 @@ export class PianoRoll {
     const roll = new PianoRoll(app, noteLayer);
     const keyboardLayer = new Container();
     app.stage.addChild(roll.guides);
+    app.stage.addChild(roll.beatLayer);
     app.stage.addChild(noteLayer);
     app.stage.addChild(keyboardLayer);
     keyboardLayer.addChild(roll.keyboardBacking);
@@ -241,6 +287,8 @@ export class PianoRoll {
     this.totalLatencyS = totalLatencyS;
     for (const n of this.notes) n.graphic.destroy();
     this.notes = [];
+    for (const b of this.beatLines) b.graphic.destroy();
+    this.beatLines = [];
     for (const pitch of this.keys.keys()) this.setKeyActive(pitch, false);
   }
 
@@ -285,8 +333,70 @@ export class PianoRoll {
     this.notes.push({ ...note, graphic });
   }
 
+  /** Applies a BeatLines snapshot: it replaces every line at or after `from_s`. A line
+   * matching one already drawn animates to its new layer/time; the rest fade in or out. */
+  setBeatLines(lines: BeatLines): void {
+    const incoming: [BeatLine, BeatLayer][] = [
+      ...lines.committed.map((l): [BeatLine, BeatLayer] => [l, "committed"]),
+      ...lines.provisional.map((l): [BeatLine, BeatLayer] => [l, "provisional"]),
+      ...lines.predicted.map((l): [BeatLine, BeatLayer] => [l, "predicted"]),
+    ];
+    const open = this.beatLines.filter((b) => !b.dying && b.targetT >= lines.from_s - BEAT_MATCH_TOLERANCE_S);
+    const matched = new Set<BeatSprite>();
+    for (const [line, layer] of incoming) {
+      let best: BeatSprite | null = null;
+      for (const b of open) {
+        const d = Math.abs(b.targetT - line.t);
+        if (!matched.has(b) && d <= BEAT_MATCH_TOLERANCE_S && (!best || d < Math.abs(best.targetT - line.t))) {
+          best = b;
+        }
+      }
+      if (!best) {
+        const graphic = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
+        graphic.alpha = 0;
+        this.beatLayer.addChild(graphic);
+        best = { graphic, t: line.t, targetT: line.t, alpha: 0, targetAlpha: 0, bar: +line.bar, targetBar: 0, dying: false };
+        this.beatLines.push(best);
+      }
+      matched.add(best);
+      best.targetT = line.t;
+      best.targetAlpha = BEAT_LINE_ALPHA[layer];
+      best.targetBar = +line.bar;
+    }
+    for (const b of open) {
+      if (!matched.has(b) && b.targetT >= lines.from_s) {
+        b.dying = true;
+        b.targetAlpha = 0;
+      }
+    }
+  }
+
+  private tickBeatLines(dtS: number): void {
+    const k = 1 - Math.exp(-dtS / BEAT_ANIM_TAU_S);
+    const height = this.app.screen.height;
+    const kept: BeatSprite[] = [];
+    for (const b of this.beatLines) {
+      b.t += (b.targetT - b.t) * k;
+      b.alpha += (b.targetAlpha - b.alpha) * k;
+      b.bar += (b.targetBar - b.bar) * k;
+      const width = 1 + (BAR_LINE_WIDTH - 1) * b.bar;
+      const x = this.xForTime(b.t) - width / 2;
+      if ((b.dying && b.alpha < 0.01) || x + width < 0) {
+        b.graphic.destroy();
+        continue;
+      }
+      b.graphic.x = x;
+      b.graphic.scale.set(width, height);
+      b.graphic.alpha = b.alpha * (1 + b.bar * 0.4);
+      b.graphic.tint = lerpColor(BEAT_LINE_COLOR, BAR_LINE_COLOR, b.bar);
+      kept.push(b);
+    }
+    this.beatLines = kept;
+  }
+
   private onTick(): void {
     if (!this.running) return;
+    this.tickBeatLines(this.app.ticker.deltaMS / 1000);
     const displayS = this.displayS();
     const activePitches = new Set<number>();
     const stillVisible: NoteSprite[] = [];

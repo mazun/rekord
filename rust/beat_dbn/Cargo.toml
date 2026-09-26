@@ -1,0 +1,12 @@
+[package]
+name = "rekord_beat_dbn"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# The DBN beat decoder, split out of rekord_core only so it can be optimized on its own in
+# debug builds (see the profile override in rekord-piano-roll/src-tauri/Cargo.toml).
+
+[dev-dependencies]
+ndarray = "0.17"
+ndarray-npy = { version = "0.10", default-features = false, features = ["npz"] }

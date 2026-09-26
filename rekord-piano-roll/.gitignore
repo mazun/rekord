@@ -27,3 +27,7 @@ dist-ssr
 # .claude/launch.json; a copy here is just auto-generated when a session
 # runs with this directory as its cwd.
 .claude/
+
+# beat-replay inputs (see dev/replay-mock.js): generated per run
+dev/*.jsonl
+dev/ref-*.json

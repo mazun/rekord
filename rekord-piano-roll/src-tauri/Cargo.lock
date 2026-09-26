@@ -3185,6 +3185,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rekord_beat_dbn"
+version = "0.1.0"
+
+[[package]]
 name = "rekord_core"
 version = "0.1.0"
 dependencies = [
@@ -3193,6 +3197,7 @@ dependencies = [
  "hound",
  "ndarray",
  "ort",
+ "rekord_beat_dbn",
  "rubato",
  "serde",
  "ureq",

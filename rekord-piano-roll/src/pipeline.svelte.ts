@@ -1,13 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ConfirmedNote } from "./pianoroll";
+import type { BeatLines, ConfirmedNote } from "./pianoroll";
 
 type PipelineEvent =
   | { type: "Started"; total_latency_s: number }
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
   | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
   | { type: "TensionsChanged"; tensions: string[] }
-  | { type: "KeyChange"; key_name: string };
+  | { type: "KeyChange"; key_name: string }
+  | ({ type: "BeatLines" } & BeatLines);
 
 // "loading" until the piano roll exists and the event listener is
 // registered -- Start stays disabled until then, since a "Started" event
@@ -47,9 +48,10 @@ export function keyPairLabel(relativeMajorPc: number): string {
 export interface PipelineHandlers {
   onStarted(totalLatencyS: number): void;
   onNote(note: ConfirmedNote): void;
+  onBeatLines(lines: BeatLines): void;
 }
 
-// Note and clock events bypass reactive state entirely and go straight to
+// Note, beat-line and clock events bypass reactive state entirely and go straight to
 // the piano roll -- notes arrive far too often to be worth routing
 // through $state, and nothing else in the UI renders them.
 export async function connectPipeline(handlers: PipelineHandlers): Promise<UnlistenFn> {
@@ -78,6 +80,8 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
       pipeline.roman = payload.roman_numeral ?? EMPTY_ROMAN;
     } else if (payload.type === "TensionsChanged") {
       pipeline.tensions = payload.tensions;
+    } else if (payload.type === "BeatLines") {
+      handlers.onBeatLines(payload);
     } else {
       pipeline.keyName = payload.key_name;
     }
