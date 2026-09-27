@@ -43,7 +43,7 @@
       // backend, start_capture alone is a no-op there and would never emit
       // a fresh Started event to anchor this new roll's clock.
       await stopCapture();
-      if (!disposed) await startCapture(settings.latencyMs);
+      if (!disposed) await startCapture();
     })();
 
     return () => {

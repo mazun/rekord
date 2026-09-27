@@ -9,8 +9,10 @@ is invalid in Windows filenames, bundle `identifier`
 project. The repo's root folder is still named `chord`.
 
 Real-time PC-audio (WASAPI loopback) chord and note recognition. Pipeline:
-Spotify's pretrained `basic-pitch` (ONNX) for polyphonic pitch/note
-transcription, plus rule-based pitch-class-set chord-template matching
+the Harmonica transcription model (ONNX, reimplemented and trained in the
+separate `harmonica-repro` project; replaced Spotify's basic-pitch on
+2026-09-27) for polyphonic note transcription, plus rule-based
+pitch-class-set chord-template matching
 (no ML model for chord names — none exists for the ~300 tension-chord
 vocabulary this needs, so this was a deliberate substitution for the
 original proposal's from-scratch BTC-SL model).
@@ -53,6 +55,49 @@ npm run tauri dev
 
 ## Key design decisions (don't re-litigate without reason)
 
+- **Note transcription is Harmonica (arXiv 2609.04640), reimplemented and
+  trained in the separate `harmonica-repro` project; only its ONNX files come
+  here** (`harmonica_model.rs`, `harmonica_stream.rs`, `harmonica_decode.rs`).
+  Spec, accuracy, speed and every parameter choice: `docs/phase5-report.md`
+  there (reference code `harmonica/infer.py::predict_song_stream`,
+  `harmonica/decode.py`). As with beat tracking, change behavior there
+  first, regenerate its golden vectors (`tools/make_golden.py`), then port.
+  - Streaming: 16 kHz mono, 32 ms frames; every 8 frames (0.256 s) one 5 s
+    window (156 frames) ending `f` frames after the block, audio after "now"
+    zeroed, CQT rows before the stream start zeroed, output rows
+    `[148-f, 156-f)`. No LSTM state is carried (the model normalizes over the
+    whole window). `f` = 8 (0.26 s, default) or 16 (0.51 s) is a user
+    setting; longer doesn't help, 0 loses a lot of accuracy.
+  - Sizes small/medium/large are all shipped and user-selectable (default
+    large). If DirectML can't be used, it runs **small on the CPU** whatever
+    was chosen (medium/large are too slow on CPU). Thresholds are per size,
+    shared by both `f` (small 0.25/0.45, medium and large 0.20/0.45).
+  - The decode (onset local maxima, ended by sustain or the next onset) is
+    exact in streaming form and never revises a note, so there is no confirm
+    margin and no `NoteStitcher`: a note is emitted once, when it ends.
+    `velocity` is the onset probability at the onset frame (mean sustain
+    saturates near 1 and gave no contrast). Chord matching takes note ends
+    as exact: basic-pitch's 0.2 s grace period after a note's end
+    (`ACTIVE_EDGE_TOLERANCE_S`) was removed because with Harmonica it only
+    let the previous chord linger as a mixed chord (Am7 between C and Am).
+  - Display latency is structural: a note's end is known at most
+    `(8 + f) × 32 ms` later, so `total_latency_s = (8 + f)·0.032 + capture
+    hop (64 ms) + 0.3` = 0.88 s at f = 8, 1.13 s at f = 16.
+  - `cargo test -p rekord_core --release harmonica_` checks the Rust port
+    against harmonica-repro's golden vectors (`runs/p5/golden`, override with
+    `HARMONICA_GOLDEN_DIR`; skipped when absent). They match to ~1e-6 except
+    the first 18 blocks of a stream (up to ~1.5e-3), where the window is
+    mostly zeroed rows: `ort` statically links pyke's own ONNX Runtime 1.28
+    build, which differs slightly from Microsoft's (Python onnxruntime 1.24.4
+    and 1.28.0 both reproduce the golden vectors exactly), and such windows
+    amplify the difference. Verified to be the binary, not the windowing
+    (2026-09-27); notes are identical.
+  - The weights are for non-commercial use only (training data include
+    CC BY-NC-SA material; `rust/core/models/harmonica.LICENSE.txt`). The ONNX
+    files are copied by hand from `harmonica-repro/runs/p5/onnx/`
+    (`rust/core/models/` is gitignored); `build.rs` stops with a message if
+    one is missing.
+
 - **Beat/downbeat tracking (`beat_model.rs`, `beat_tracker.rs`, and the DBN
   decoder in its own crate `rust/beat_dbn/`) is Beat This! small0 + madmom's
   DBN, ported from the Python reference in the separate `harmonica-repro` project**
@@ -77,43 +122,36 @@ npm run tauri dev
   on the build machine (or `REKORD_PYTHON`); the first build downloads
   ~1 GB of CPU-only PyTorch (about 1.5 min here), then deletes the venv.
 
-- **DirectML, not CUDA**, for ONNX Runtime GPU inference (`onnx_model.rs`).
+- **DirectML, not CUDA**, for ONNX Runtime GPU inference (`harmonica_model.rs`).
   RTX 5070 Ti (Blackwell) is too new for reliable prebuilt CUDA EP wheel
-  support; DirectML benchmarked ~3.5–3.9x speedup over CPU and just works.
+  support; DirectML just works (Harmonica large: 18 ms per 0.256 s block vs
+  308 ms on the CPU; basic-pitch saw ~3.5–3.9x).
 - **`cpal` for WASAPI loopback**, not a hand-rolled `wasapi` crate binding:
   passing an output device into `build_input_stream` makes cpal set the
   loopback flag internally — no name-based device-matching ambiguity at all
   (the Python prototype's `soundcard` library had a real bug here: it could
   silently bind to the wrong device when a line-input and its loopback
   endpoint shared a display name).
-- **Retained-history cap in `streaming_extractor.rs` is time-based**
-  (`MAX_RETAINED_SECONDS = 3.3`), not a window count — needed once the
-  window-advance stride became configurable (a "window" no longer
-  contributes a fixed amount of new data each time). The *only* reason to
-  retain more than the newest data is that a note sustained across a
-  window boundary needs the next window's data to resolve its true end;
-  3.3s matches what the old `MAX_RETAINED_WINDOWS = 2` retained. Don't
-  raise this to "be safe" — it was raised to the equivalent of 64 windows
-  once by mistake and caused O(T²)-ish per-call cost growth (unbounded
-  reprocessing of retained history), confirmed via direct timing
-  instrumentation. Verified flat at 0.3–0.7ms/call over 90s at the old
-  2-window cap; re-verify if this ever needs to move again.
+- **Recently finished notes are kept for 3.3 s** (`RETAINED_SECONDS` in
+  `harmonica_stream.rs`) as context for chord matching and melody/bass
+  labeling; the decode itself is incremental, so this only bounds the size
+  of `note_events()`, not any reprocessing. (Under basic-pitch this cap
+  bounded re-decoding of retained frames, and raising it caused O(T²)-ish
+  growth; that concern is gone.)
 - **Piano-roll clock is a pure linear function of wall-clock time, offset
   by a fixed known constant** (`total_latency_s`, computed once per
-  session in `pipeline.rs` from the actual stride/hop/confirm-margin in
-  use and sent on the `PipelineEvent::Started` event — `pianoroll.ts`
+  session in `pipeline.rs` from the look-ahead and capture hop in use and
+  sent on the `PipelineEvent::Started` event — `pianoroll.ts`
   just consumes it, it doesn't compute or hardcode it) — never estimated
-  or corrected at runtime. The confirm-delay is structural (window-advance
-  stride + capture hop + `NoteStitcher`'s confirm margin), not jitter, so
+  or corrected at runtime. The confirm-delay is structural (block length +
+  look-ahead + capture hop), not jitter, so
   anchor-and-extrapolate or rate-correction approaches both produce
   visible warping/acceleration; a fixed offset anchored to the `Started`
   event (fired once the pipeline truly begins, not on button click —
   model load + WASAPI init add unpredictable delay) is the correct model
   and was reached only after several rounds of live-app testing. The
-  window length itself (2s) is a hard-fixed property of the ONNX model's
-  input shape (confirmed by direct experiment: any other length throws an
-  ORT shape-mismatch error immediately) — only how often the window
-  advances is configurable, via `StreamingNoteExtractor::with_stride`.
+  window (156 frames, 5 s) and the ONNX input shapes are fixed at export;
+  only the look-ahead `f` is configurable.
 - **`directml` ort feature has no Linux prebuilt binary** — the full
   workspace does not link on WSL (the `core` lib alone builds fine). User
   explicitly declined making it `cfg(windows)`-conditional; this is a
@@ -156,8 +194,8 @@ npm run tauri dev
   chord-matching path — each note should contribute to the rolling
   chroma histogram exactly once. Its stale-entry pruning must use
   `VecDeque::retain` over the whole deque, not a front-only pop loop:
-  `observe()` is called in *confirmation* order (`NoteStitcher` releases
-  a note once its end_s clears the confirm margin), not start_s order, so
+  `observe()` is called in *confirmation* order (`NoteTranscriber` emits
+  a note once its end is decided), not start_s order, so
   a long-held bass note routinely arrives (and gets pushed) after a
   shorter later-starting treble note already at the front — a front-only
   pop would leave that bass note's stale entry stuck behind the treble
@@ -183,6 +221,9 @@ npm run tauri dev
   recording (2026-09-21): bass ~84% precision/68% recall, melody ~55%
   precision/26% recall (vs. a ~35% any-note baseline) — one song, method
   not re-verified since, worth re-running before trusting further tuning.
+  Those numbers, and `MIN_RELATIVE_VELOCITY`, date from basic-pitch notes,
+  whose velocity was mean frame activation; Harmonica's velocity is the
+  onset peak, and nothing here has been re-tuned for it yet.
   `melody`/`bass` on `PipelineEvent::NoteConfirmed` aren't mutually
   exclusive in the backend (a lone low note can trivially satisfy both);
   the piano-roll frontend resolves that by always preferring melody when
@@ -212,7 +253,11 @@ Where things are:
 
 The three layers are the same beats at increasing delay. Measured by
 real-time replay (2026-09-27, stream s00 of harmonica-repro), relative to the
-display lag of 1.3 s at the default 250 ms setting:
+display lag of 1.3 s with 250 ms capture chunks under basic-pitch. Since the
+switch to Harmonica the chunk is 64 ms (lines arrive a little sooner) and the
+display lag is 0.88 s at the default look-ahead, so provisional lines now
+mostly firm up just after passing the playhead (accepted by the user,
+2026-09-27; not re-measured):
 
 | layer | first shown after its time (median) | before the playhead |
 |---|---|---|
@@ -253,9 +298,9 @@ harmonica-repro (`runs/beat/stream/audio/sNN.wav`/`.json`):
 
 To inspect the **real Tauri app** (not the replay): start a second instance
 of the built debug exe with its own WebView2 profile and a debug port --
-`$env:WEBVIEW2_USER_DATA_FOLDER="$env:TEMPekord2-wv2";
+`$env:WEBVIEW2_USER_DATA_FOLDER="$env:TEMP\rekord2-wv2";
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9333";
-Start-Process rekord-piano-roll\src-tauri	arget\debugekord-piano-roll.exe`
+Start-Process rekord-piano-roll\src-tauri\target\debug\rekord-piano-roll.exe`
 (it loads the running `tauri dev` server; without its own profile it shares
 the first instance's browser process and ignores the port). Then
 `http://localhost:9333/json` lists the page; drive it over the DevTools
@@ -269,15 +314,16 @@ instance worked; a restart fixed it, cause unknown.)
 
 ## Testing
 
-The beat-tracking code is the exception: it has golden-vector tests against
-its Python reference (see Key design decisions) and the replay tools above.
+The beat-tracking and note-transcription code are the exceptions: both have
+golden-vector tests against their Python reference in harmonica-repro (see
+Key design decisions), and beat tracking also has the replay tools above.
 Everything else has no unit test suite — validation is empirical, against the real recordings
 in `sample_audio/` (`piano_progression_C_Am_F_G.wav`,
 `piano_progression_ConG_A7sus4_FM7add9_G6.wav`,
 `piano_complex_progression_ConG_A7sus4_FM7add9_G6.wav`). **Never validate
 against synthetic sine-wave test audio** — harmonics produce false
 tension-chord detections (e.g. spurious add9) that don't occur with real
-piano recordings. When changing the extraction/stitching/clock logic,
+piano recordings. When changing the note streaming/decode/clock logic,
 re-run all three files (and, for UI changes, an actual live session in
 the running Tauri app — this UI's timing bugs are only visible in the
 real app, not from reading the code) before calling it done.

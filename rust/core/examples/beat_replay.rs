@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use rekord_core::audio_io::load_audio;
+use rekord_core::beat_model;
 use rekord_core::pipeline::{run_beat_tracker, BeatLine, PipelineEvent};
-use rekord_core::streaming_extractor::AUDIO_SAMPLE_RATE;
 
 fn json(v: &[BeatLine]) -> String {
     let items: Vec<String> = v.iter().map(|l| format!("[{:.4},{}]", l.t, l.bar as u8)).collect();
@@ -42,11 +42,11 @@ fn main() -> Result<()> {
         i += 2;
     }
 
-    let mut audio = load_audio(input)?;
-    audio.truncate(((seconds * AUDIO_SAMPLE_RATE as f64) as usize).min(audio.len()));
+    let mut audio = load_audio(input, beat_model::SAMPLE_RATE)?;
+    audio.truncate(((seconds * beat_model::SAMPLE_RATE as f64) as usize).min(audio.len()));
     let out = Mutex::new(std::fs::File::create(output).with_context(|| format!("creating {output}"))?);
-    let n = (hop * AUDIO_SAMPLE_RATE as f64).round() as usize;
-    eprintln!("replaying {:.1}s of {input} in real time ...", audio.len() as f64 / AUDIO_SAMPLE_RATE as f64);
+    let n = (hop * beat_model::SAMPLE_RATE as f64).round() as usize;
+    eprintln!("replaying {:.1}s of {input} in real time ...", audio.len() as f64 / beat_model::SAMPLE_RATE as f64);
 
     let t0 = Instant::now();
     let on_event = Mutex::new(|event: PipelineEvent| {

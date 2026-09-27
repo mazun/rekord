@@ -1,6 +1,6 @@
 <script lang="ts">
   import { pipeline, startCapture, stopCapture } from "./pipeline.svelte";
-  import { settings } from "./settings.svelte";
+  import { enterSettingsWindowSize, leaveSettingsWindowSize } from "./windowSize";
   import Toolbar from "./components/Toolbar.svelte";
   import KeyPicker from "./components/KeyPicker.svelte";
   import ChordDisplay from "./components/ChordDisplay.svelte";
@@ -15,8 +15,9 @@
   // roll's clock/state consistent with what "Start" will set up fresh next
   // time -- the settings page is a separate view, not an overlay on top of
   // a still-running session. Recording is the app's resting state (it
-  // starts on launch), so coming back resumes it -- picking up any latency
-  // change made in between -- if it was running when settings opened.
+  // starts on launch), so coming back resumes it -- picking up any note-
+  // model setting change made in between -- if it was running when
+  // settings opened.
   let resumeOnClose = false;
 
   async function openSettings() {
@@ -24,13 +25,18 @@
     if (resumeOnClose) {
       await stopCapture();
     }
+    await enterSettingsWindowSize();
     view = "settings";
   }
 
-  function closeSettings() {
+  async function closeSettings() {
+    // Switch views before shrinking the window back down -- restoring a
+    // collapsed size while the settings page is still showing would
+    // briefly cram it into that sliver instead of the main view.
     view = "main";
+    await leaveSettingsWindowSize();
     if (resumeOnClose && pipeline.status === "idle") {
-      startCapture(settings.latencyMs);
+      startCapture();
     }
   }
 </script>

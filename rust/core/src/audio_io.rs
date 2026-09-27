@@ -1,13 +1,11 @@
-//! WAV loading + resampling to basic-pitch's expected sample rate. Mirrors
-//! chord_poc/audio_io.py's load_audio, but for WAV files only (our test
-//! fixtures are all WAV; broader format support can come later).
+//! WAV loading + resampling to a caller-specified target sample rate.
+//! Mirrors chord_poc/audio_io.py's load_audio, but for WAV files only (our
+//! test fixtures are all WAV; broader format support can come later).
 
 use anyhow::{Context, Result};
 use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
-use crate::streaming_extractor::AUDIO_SAMPLE_RATE;
-
-pub fn load_audio(path: &str) -> Result<Vec<f32>> {
+pub fn load_audio(path: &str, target_rate: usize) -> Result<Vec<f32>> {
     let mut reader = hound::WavReader::open(path).with_context(|| format!("opening {path}"))?;
     let spec = reader.spec();
 
@@ -34,10 +32,10 @@ pub fn load_audio(path: &str) -> Result<Vec<f32>> {
             .collect()
     };
 
-    if spec.sample_rate == AUDIO_SAMPLE_RATE as u32 {
+    if spec.sample_rate == target_rate as u32 {
         return Ok(mono);
     }
-    resample(&mono, spec.sample_rate as usize, AUDIO_SAMPLE_RATE)
+    resample(&mono, spec.sample_rate as usize, target_rate)
 }
 
 fn resample(input: &[f32], from_rate: usize, to_rate: usize) -> Result<Vec<f32>> {

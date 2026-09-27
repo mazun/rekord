@@ -7,8 +7,14 @@ labels along with melody/bass classification.
 
 ## How it works
 
-1. **Note estimation** — Spotify's [basic-pitch](https://github.com/spotify/basic-pitch)
-   (ONNX) estimates polyphonic pitch.
+1. **Note estimation** — Harmonica, an instrument-agnostic note-
+   transcription model, estimates polyphonic pitch. Reimplemented, trained
+   from scratch and exported to ONNX in the separate harmonica-repro
+   project (not the original paper's weights). Three model sizes (small/
+   medium/large, default large); runs on ONNX Runtime's DirectML execution
+   provider when available, falling back automatically to the small model
+   on CPU. A configurable look-ahead (8 or 16 frames, ~0.26s/0.51s) trades
+   confirm latency for accuracy.
 2. **Chord recognition** — chord names are decided by rule-based matching of
    pitch-class sets against chord templates (roughly 300 tension chords).
 3. **Key estimation** — the key is estimated via Krumhansl-Schmuckler-style
@@ -54,11 +60,16 @@ cargo build --release
 | --- | --- |
 | `--live` | Captures the default speaker output via loopback and analyzes it |
 | `--duration <seconds>` | Stops after the given number of seconds (for `--live`) |
-| `--latency <seconds>` | Sets the delay until confirmation (affects the model's window-advance stride) |
-| `--hop <seconds>` | Interval between chunks of captured audio handed off for processing |
+| `--size <small\|medium\|large>` | Note-transcription model size (default: `large`) |
+| `--future <8\|16>` | Look-ahead frames the model uses before deciding a note (default: `8`; higher trades latency for accuracy) |
+| `--cpu` | Disables DirectML, forcing the small model onto CPU |
+| `--hop <seconds>` | Interval between chunks of captured (or, in file mode, simulated) audio handed off for processing (default: 0.064s) |
 
-On first build, the basic-pitch model (`nmp.onnx`) is downloaded from
-GitHub into `rust/core/models/`.
+Harmonica's ONNX model files (`cqt156.onnx`, `small_uni_300k.onnx`,
+`medium_uni_300k_urmp.onnx`, `large_uni_300k_urmp.onnx`) must be copied by
+hand into `rust/core/models/` from the separate harmonica-repro project's
+`runs/p5/onnx/` -- `cargo build` doesn't download them (see
+[Third party](#third-party) for why). basic-pitch is no longer used.
 
 ## Layout
 
@@ -80,9 +91,15 @@ sample_audio/          Piano recordings used for validation
 
 ## Third party
 
-- The [basic-pitch](https://github.com/spotify/basic-pitch) model (Apache
-  License 2.0) is not bundled in the repository; it's downloaded at build
-  time.
+- The Harmonica note-transcription models are reimplemented and trained
+  from scratch (not the paper authors' weights) in the separate
+  harmonica-repro project, on data that includes CC BY-NC-SA 4.0 material
+  (MAESTRO, and the GAPS dataset's Zenodo release) -- so, unlike the rest
+  of this repository, they're for non-commercial use only and aren't
+  covered by the MIT license below. See
+  `rust/core/models/harmonica.LICENSE.txt` for the full breakdown. They
+  aren't bundled in the repository; see the CLI section above for where to
+  get them.
 - Main dependencies: [ort](https://github.com/pykeio/ort),
   [cpal](https://github.com/RustAudio/cpal), [Tauri](https://tauri.app/),
   [Svelte](https://svelte.dev/), [Bits UI](https://bits-ui.com/),

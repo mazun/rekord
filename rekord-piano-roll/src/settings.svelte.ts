@@ -1,25 +1,39 @@
 // User preferences persisted to localStorage. Session-only conveniences,
-// not correctness-critical values (the backend clamps latency regardless),
-// so a missing or garbled stored value just falls back to the shipped
-// default rather than needing validation.
+// not correctness-critical values (the backend re-validates the model
+// settings regardless -- see start_capture in lib.rs), so a missing or
+// garbled stored value just falls back to the shipped default.
 
-const LATENCY_STORAGE_KEY = "chord.latencyMs";
+const MODEL_SIZE_STORAGE_KEY = "chord.modelSize";
+const FUTURE_FRAMES_STORAGE_KEY = "chord.futureFrames";
 const PIANOROLL_VISIBLE_STORAGE_KEY = "chord.pianorollVisible";
 
-const DEFAULT_LATENCY_MS = 250;
+export type ModelSize = "small" | "medium" | "large";
 
-function loadLatencyMs(): number {
-  const stored = Number(localStorage.getItem(LATENCY_STORAGE_KEY));
-  return stored > 0 ? stored : DEFAULT_LATENCY_MS;
+const DEFAULT_MODEL_SIZE: ModelSize = "large";
+const DEFAULT_FUTURE_FRAMES = 8;
+
+function loadModelSize(): ModelSize {
+  const stored = localStorage.getItem(MODEL_SIZE_STORAGE_KEY);
+  return stored === "small" || stored === "medium" || stored === "large" ? stored : DEFAULT_MODEL_SIZE;
+}
+
+function loadFutureFrames(): number {
+  const stored = Number(localStorage.getItem(FUTURE_FRAMES_STORAGE_KEY));
+  return stored === 8 || stored === 16 ? stored : DEFAULT_FUTURE_FRAMES;
 }
 
 export const settings = $state({
-  latencyMs: loadLatencyMs(),
+  modelSize: loadModelSize(),
+  futureFrames: loadFutureFrames(),
   pianorollVisible: localStorage.getItem(PIANOROLL_VISIBLE_STORAGE_KEY) !== "false",
 });
 
-export function saveLatency(): void {
-  localStorage.setItem(LATENCY_STORAGE_KEY, String(settings.latencyMs));
+export function saveModelSize(): void {
+  localStorage.setItem(MODEL_SIZE_STORAGE_KEY, settings.modelSize);
+}
+
+export function saveFutureFrames(): void {
+  localStorage.setItem(FUTURE_FRAMES_STORAGE_KEY, String(settings.futureFrames));
 }
 
 export function savePianorollVisible(): void {

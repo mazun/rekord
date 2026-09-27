@@ -1,6 +1,6 @@
 <script lang="ts">
   import { pipeline } from "../pipeline.svelte";
-  import { settings, saveLatency } from "../settings.svelte";
+  import { settings, saveModelSize, saveFutureFrames, type ModelSize } from "../settings.svelte";
   import { i18n, t, setLocale, type Locale } from "../i18n.svelte";
 
   let { hidden, onClose }: { hidden: boolean; onClose: () => void } = $props();
@@ -19,17 +19,38 @@
     <h2>{t("settings.title")}</h2>
   </div>
   <div class="settings-row">
-    <label for="latency-input">{t("settings.latency")}: <span id="latency-value">{settings.latencyMs}</span>ms</label>
-    <input
-      type="range"
-      id="latency-input"
-      min="100"
-      max="1640"
-      step="50"
-      bind:value={settings.latencyMs}
-      onchange={saveLatency}
+    <label for="model-size-select">{t("settings.noteModel")}</label>
+    <select
+      id="model-size-select"
+      value={settings.modelSize}
+      onchange={(e) => {
+        settings.modelSize = e.currentTarget.value as ModelSize;
+        saveModelSize();
+      }}
       disabled={pipeline.status !== "idle"}
-    />
+    >
+      <option value="small">{t("settings.noteModelSmall")}</option>
+      <option value="medium">{t("settings.noteModelMedium")}</option>
+      <option value="large">{t("settings.noteModelLarge")}</option>
+    </select>
+    {#if pipeline.noteModel?.device === "cpu"}
+      <p class="settings-note">{t("settings.cpuFallbackNote")}</p>
+    {/if}
+  </div>
+  <div class="settings-row">
+    <label for="future-frames-select">{t("settings.lookAhead")}</label>
+    <select
+      id="future-frames-select"
+      value={String(settings.futureFrames)}
+      onchange={(e) => {
+        settings.futureFrames = Number(e.currentTarget.value);
+        saveFutureFrames();
+      }}
+      disabled={pipeline.status !== "idle"}
+    >
+      <option value="8">{t("settings.lookAhead8")}</option>
+      <option value="16">{t("settings.lookAhead16")}</option>
+    </select>
   </div>
   <div class="settings-row">
     <label for="language-select">{t("settings.language")}</label>
@@ -122,10 +143,6 @@
     padding-top: 0;
   }
 
-  .settings-row input[type="range"] {
-    width: 100%;
-  }
-
   .settings-row select {
     font: inherit;
     padding: 0.3rem 0.5rem;
@@ -133,5 +150,11 @@
     border: 1px solid #3a3f4d;
     background: var(--surface-raised);
     color: var(--text);
+  }
+
+  .settings-note {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: 0.85rem;
   }
 </style>

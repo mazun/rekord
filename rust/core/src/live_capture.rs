@@ -1,6 +1,6 @@
 //! Loopback capture: stream whatever's currently playing through the
-//! default output device, as mono f32 chunks resampled to basic-pitch's
-//! expected sample rate. Mirrors chord_poc/live_capture.py.
+//! default output device, as mono f32 chunks resampled to whatever rate(s)
+//! a caller needs. Mirrors chord_poc/live_capture.py.
 //!
 //! Uses cpal (the standard RustAudio I/O crate) rather than a WASAPI-only
 //! crate: cpal supports loopback on Windows by simply building an *input*
@@ -25,13 +25,23 @@ use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
-use crate::streaming_extractor::AUDIO_SAMPLE_RATE;
-
-/// Captures loopback audio and returns a receiver of mono f32 chunks
-/// (resampled to AUDIO_SAMPLE_RATE) of approximately `hop_seconds` each.
+/// Captures loopback audio and returns a receiver of `N`-tuples of mono f32
+/// chunks (resampled to each of `rates`, in order), each covering
+/// approximately `hop_seconds` of audio. Every element of a given tuple
+/// covers the same span of source audio -- they're produced together from
+/// one native-rate chunk, so a caller feeding element `i` to a consumer that
+/// expects `rates[i]` never needs to re-derive timing across the two.
+/// Resampling once per target rate from the native rate (rather than, say,
+/// deriving one rate from another) avoids stacking a second resampling
+/// stage's error/latency on top of the first for whichever rate would
+/// otherwise be secondary.
+///
 /// The returned Stream must be kept alive for as long as capture should
 /// continue -- dropping it stops the audio callback.
-pub fn spawn_loopback_capture(hop_seconds: f32) -> Result<(cpal::Stream, Receiver<Vec<f32>>)> {
+pub fn spawn_loopback_capture<const N: usize>(
+    hop_seconds: f32,
+    rates: [usize; N],
+) -> Result<(cpal::Stream, Receiver<[Vec<f32>; N]>)> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -42,7 +52,7 @@ pub fn spawn_loopback_capture(hop_seconds: f32) -> Result<(cpal::Stream, Receive
     let channels = config.channels() as usize;
     let hop_frames_target = (hop_seconds * source_rate as f32).round() as usize;
 
-    let (tx, rx) = sync_channel::<Vec<f32>>(50);
+    let (tx, rx) = sync_channel::<[Vec<f32>; N]>(50);
 
     // The audio callback must never block or do heavy work -- it just
     // downmixes to mono and hands raw native-rate samples off through a
@@ -94,7 +104,8 @@ pub fn spawn_loopback_capture(hop_seconds: f32) -> Result<(cpal::Stream, Receive
     stream.play().map_err(|e| anyhow!("{e}"))?;
 
     std::thread::spawn(move || {
-        let mut resampler = make_resampler(source_rate, AUDIO_SAMPLE_RATE, hop_frames_target);
+        let mut resamplers: [SincFixedIn<f32>; N] =
+            std::array::from_fn(|i| make_resampler(source_rate, rates[i], hop_frames_target));
         let mut pending: Vec<f32> = Vec::new();
         let mut last_reported_drops = 0usize;
         while let Ok(mono_chunk) = raw_rx.recv() {
@@ -110,15 +121,23 @@ pub fn spawn_loopback_capture(hop_seconds: f32) -> Result<(cpal::Stream, Receive
             pending.extend(mono_chunk);
             while pending.len() >= hop_frames_target {
                 let chunk: Vec<f32> = pending.drain(..hop_frames_target).collect();
-                match resampler.process(&[chunk], None) {
-                    Ok(mut out) => {
-                        if let Some(resampled) = out.pop() {
-                            if tx.send(resampled).is_err() {
-                                return; // consumer gone
-                            }
+                // Every resampler consumes the same native-rate chunk, so
+                // they stay in lockstep -- one output tuple per chunk,
+                // never a partial one if a single rate's resampler errors.
+                let mut outputs: [Vec<f32>; N] = std::array::from_fn(|_| Vec::new());
+                let mut ok = true;
+                for (resampler, out) in resamplers.iter_mut().zip(outputs.iter_mut()) {
+                    match resampler.process(&[chunk.as_slice()], None) {
+                        Ok(mut result) => *out = result.pop().unwrap_or_default(),
+                        Err(e) => {
+                            eprintln!("warning: resampler error, dropping this chunk: {e}");
+                            ok = false;
+                            break;
                         }
                     }
-                    Err(e) => eprintln!("warning: resampler error, dropping this chunk: {e}"),
+                }
+                if ok && tx.send(outputs).is_err() {
+                    return; // consumer gone
                 }
             }
         }

@@ -28,10 +28,11 @@ const GUIDE_COLOR = 0x262b36;
 // Beat/bar lines (rekord_core::beat_tracker, via PipelineEvent::BeatLines) come in three
 // layers of the same beats: predicted (extrapolated, no delay), provisional (the network's
 // peaks, ~0.6s behind the audio) and committed (the DBN's final decision, ~4.5s behind). With
-// the display running total_latency_s (~1.3s) behind the audio, predicted and provisional
-// lines are already there when they reach the playhead, and a line turns committed a few
-// seconds after passing it. Each layer is drawn a step stronger than the one before, and a
-// bar line (downbeat) stronger and wider than a beat.
+// the display running total_latency_s (~0.9s at the default 0.26s look-ahead, ~1.1s at the
+// 0.51s look-ahead) behind the audio, predicted lines are still drawn before they reach the
+// playhead, but provisional ones mostly firm up just after passing it, and a line turns
+// committed a few seconds after that. Each layer is drawn a step stronger than the one before,
+// and a bar line (downbeat) stronger and wider than a beat.
 type BeatLayer = "predicted" | "provisional" | "committed";
 const BEAT_LINE_COLOR = 0x5a6580;
 const BAR_LINE_COLOR = 0x9aaad8;
@@ -134,11 +135,12 @@ interface KeySprite {
  * rate to chase the latest event read as a visible, repeating acceleration;
  * and estimating the delay from the smallest observed (wall-clock-since-
  * reset minus event timestamp) gap left the same dead zone the rate-based
- * version had, because NoteConfirmed's end_s is itself capped at
- * (covered - confirm_margin) -- a little behind the freshest data a
- * ChordChange event reports -- so "smallest observed gap" doesn't reliably
- * converge on the true figure. The backend computes this figure itself
- * (it's the one side that actually knows the stride/hop it settled on) and
+ * version had, because NoteConfirmed's end_s was itself capped at
+ * (covered - confirm_margin) under the basic-pitch note model -- a little
+ * behind the freshest data a ChordChange event reports -- so "smallest
+ * observed gap" doesn't reliably converge on the true figure. The backend
+ * computes this figure itself (it's the one side that actually knows the
+ * stride/hop it settled on) and
  * sends it as `total_latency_s` on the pipeline's `Started` event; this
  * class just uses it directly and runs the displayed clock at a constant,
  * exact 1x rate offset by that fixed figure -- never sped up, slowed down,
@@ -159,7 +161,7 @@ export class PianoRoll {
   // addNote) or just the default coloring, as if every note were an inner
   // voice. Toggling only affects notes added from here on -- notes already
   // on screen keep whatever color they were drawn with, same as changing
-  // the latency slider mid-session not affecting the running session.
+  // any setting mid-session not affecting the running session.
   private roleColoringEnabled = true;
 
   private constructor(app: Application, noteLayer: Container) {

@@ -1,7 +1,6 @@
 <script lang="ts">
   import settingsGearIconSvg from "../assets/settings-gear-icon.svg?raw";
   import { pipeline, startCapture, stopCapture } from "../pipeline.svelte";
-  import { settings } from "../settings.svelte";
   import { t } from "../i18n.svelte";
 
   let { onOpenSettings }: { onOpenSettings: () => void } = $props();
@@ -14,7 +13,7 @@
 
   function toggleCapture() {
     if (pipeline.status === "running") stopCapture();
-    else if (pipeline.status === "idle") startCapture(settings.latencyMs);
+    else if (pipeline.status === "idle") startCapture();
   }
 </script>
 

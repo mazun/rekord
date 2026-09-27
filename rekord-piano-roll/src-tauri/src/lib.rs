@@ -2,16 +2,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use rekord_core::harmonica_model::ModelSize;
 use rekord_core::key_estimator::{KeyEstimate, Mode};
-use rekord_core::pipeline::KeyMode;
+use rekord_core::pipeline::{
+    KeyMode, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
+};
 use tauri::{AppHandle, Emitter, State};
-
-// Sanity clamp on the frontend-supplied latency setting -- server-side
-// insurance so a malformed value (e.g. 0, which would break live_capture's
-// resampler chunk sizing) can never reach the pipeline, on top of
-// StreamingNoteExtractor::with_stride's own clamp.
-const MIN_LATENCY_SECONDS: f32 = 0.05;
-const MAX_LATENCY_SECONDS: f32 = 2.0;
 
 #[derive(Default)]
 struct CaptureState {
@@ -27,14 +23,25 @@ struct CaptureState {
 fn start_capture(
     app: AppHandle,
     state: State<Mutex<CaptureState>>,
-    latency_seconds: f32,
+    model_size: String,
+    future_frames: usize,
 ) -> Result<(), String> {
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     if guard.handle.is_some() {
         return Ok(()); // already running
     }
 
-    let latency_seconds = latency_seconds.clamp(MIN_LATENCY_SECONDS, MAX_LATENCY_SECONDS);
+    // Sanity checks on the frontend-supplied model settings -- server-side
+    // insurance so a malformed value can never reach the pipeline, on top
+    // of whatever validation the frontend's settings loaders already do.
+    let size = model_size.parse::<ModelSize>().unwrap_or(ModelSize::Large);
+    let future_frames = if FUTURE_FRAME_CHOICES.contains(&future_frames) {
+        future_frames
+    } else {
+        DEFAULT_FUTURE_FRAMES
+    };
+    let config = NoteModelConfig { size, future_frames, allow_directml: true };
+
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_thread = Arc::clone(&stop_flag);
     let key_mode_thread = Arc::clone(&guard.key_mode);
@@ -42,11 +49,8 @@ fn start_capture(
 
     let handle = std::thread::spawn(move || {
         let result = rekord_core::pipeline::run_live_session(
-            latency_seconds, // hop_seconds (capture delivery granularity)
-            latency_seconds, // stride_seconds (model window-advance) -- one
-            // slider drives both, so lowering it actually shortens the
-            // reported confirm latency instead of being capped by a
-            // separately-fixed hop.
+            config,
+            CAPTURE_HOP_S,
             None,
             stop_flag_thread,
             key_mode_thread,
