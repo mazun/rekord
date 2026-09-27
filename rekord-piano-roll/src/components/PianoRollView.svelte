@@ -31,6 +31,7 @@
         onStarted: (totalLatencyS) => roll?.reset(totalLatencyS),
         onNote: (note) => roll?.addNote(note),
         onBeatLines: (lines) => roll?.setBeatLines(lines),
+        onChordChange: (t, label, romanNumeral) => roll?.addChordChange(t, label, romanNumeral),
       });
       if (disposed) {
         off();
@@ -92,10 +93,12 @@
      scrolling past underneath, so it's pointless (and confusing) to still
      show it once the roll is collapsed away. Living inside
      #pianoroll-container means it's naturally hidden along with everything
-     else there once that container is display:none. */
+     else there once that container is display:none. Pinned to the bottom,
+     not the top -- the chord lane (pianoroll.ts) now occupies the top-left
+     corner, and the two overlapped there. */
   .roles-toggle {
     position: absolute;
-    top: 0.6rem;
+    bottom: 0.6rem;
     left: 0.6rem;
     z-index: 1;
     display: flex;
