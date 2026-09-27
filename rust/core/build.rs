@@ -4,10 +4,12 @@
 //! - cqt156.onnx, small_uni_300k.onnx, medium_uni_300k_urmp.onnx,
 //!   large_uni_300k_urmp.onnx: Harmonica (instrument-agnostic note
 //!   transcription), reimplemented, trained and exported to ONNX in the
-//!   separate harmonica-repro project (`runs/p5/onnx/`). They aren't
-//!   published anywhere to download from, so they're copied into models/ by
-//!   hand; `check_harmonica_models` only checks they're there. The weights
-//!   are for non-commercial use only (models/harmonica.LICENSE.txt).
+//!   separate harmonica-repro project. Downloaded from the Hugging Face
+//!   model repo mazun/rekord at a pinned revision and checked against
+//!   pinned SHA-256s (`fetch_harmonica_models`). That repo is private for
+//!   now, so a read-access token is needed (HF_TOKEN, or huggingface's own
+//!   token file). The weights are for non-commercial use only, see the
+//!   model card at https://huggingface.co/mazun/rekord.
 //! - beatthis_small0.onnx + logmel.onnx: Beat This! (MIT, CPJKU) is only
 //!   published as a PyTorch checkpoint, so export_beat_models.py downloads and
 //!   converts it (and generates the log-mel frontend). This needs Python >= 3.10
@@ -16,11 +18,29 @@
 //!   first build) and is deleted afterwards. Set REKORD_PYTHON to pick the
 //!   interpreter.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const HARMONICA_MODELS: [&str; 4] =
-    ["cqt156.onnx", "small_uni_300k.onnx", "medium_uni_300k_urmp.onnx", "large_uni_300k_urmp.onnx"];
+use sha2::{Digest, Sha256};
+use ureq::config::RedirectAuthHeaders;
+
+const HF_REPO: &str = "mazun/rekord";
+/// A commit hash, not a branch, so an old checkout keeps building the weights
+/// it was tested against. New weights: upload them first, then update this
+/// and the hashes below.
+const HF_REVISION: &str = "b7a26d8cb844429f2b6ecb8ea8a548a44a254b4c";
+
+/// (file name, lowercase hex SHA-256).
+const HARMONICA_MODELS: [(&str, &str); 4] = [
+    ("cqt156.onnx", "ff88505975e9d6c3e3c413aff5748abe711dfe3e9aee1bdf57bb637e28cf1c6f"),
+    ("small_uni_300k.onnx", "780ace3e0e619665b7975f387f7b06016b104b7133eb5734af1704e6377146dc"),
+    ("medium_uni_300k_urmp.onnx", "d408a313c0fdfd6ece7189b7a32b726899efcd0051baf599671b57736bbe1eeb"),
+    ("large_uni_300k_urmp.onnx", "c455139320d69062269f8e0ab723938065e2d56d3539cad6f8f362f35dcca888"),
+];
+
+// ureq's read_to_vec() defaults to a 10MB cap; cqt156.onnx alone is ~17MB.
+const MAX_MODEL_BYTES: u64 = 64 * 1024 * 1024;
 
 const BEAT_MODELS: [&str; 2] = ["beatthis_small0.onnx", "logmel.onnx"];
 const TORCH_INDEX: &str = "https://download.pytorch.org/whl/cpu";
@@ -39,24 +59,97 @@ fn main() {
     let models_dir = manifest_dir.join("models");
     std::fs::create_dir_all(&models_dir).expect("creating models/ directory");
 
-    check_harmonica_models(&models_dir);
+    fetch_harmonica_models(&models_dir);
     export_beat_models(&manifest_dir, &models_dir);
 }
 
-fn check_harmonica_models(models_dir: &Path) {
-    for name in HARMONICA_MODELS {
+fn fetch_harmonica_models(models_dir: &Path) {
+    println!("cargo:rerun-if-env-changed=HF_TOKEN");
+    println!("cargo:rerun-if-env-changed=HF_HOME");
+    let token = hf_token();
+
+    for (name, sha256) in HARMONICA_MODELS {
         let path = models_dir.join(name);
         println!("cargo:rerun-if-changed={}", path.display());
-        if !path.exists() {
+
+        if let Ok(bytes) = std::fs::read(&path) {
+            if sha256_hex(&bytes) == sha256 {
+                continue;
+            }
+            println!("cargo:warning={name} does not match the pinned model; re-downloading");
+        }
+
+        download_model(models_dir, name, sha256, token.as_deref());
+    }
+}
+
+fn download_model(models_dir: &Path, name: &str, sha256: &str, token: Option<&str>) {
+    let url = format!("https://huggingface.co/{HF_REPO}/resolve/{HF_REVISION}/{name}");
+    eprintln!("Downloading {name} from {url} ...");
+
+    let mut req = ureq::get(&url);
+    if let Some(token) = token {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+    // HF's `resolve` redirects big files to a signed CDN URL on another host,
+    // which rejects a second auth mechanism: never forward Authorization on
+    // redirect (this is ureq's own default; pinned explicitly since it matters
+    // here).
+    let req = req.config().redirect_auth_headers(RedirectAuthHeaders::Never).build();
+
+    let bytes = req
+        .call()
+        .and_then(|mut resp| resp.body_mut().with_config().limit(MAX_MODEL_BYTES).read_to_vec())
+        .unwrap_or_else(|e| {
             panic!(
-                "missing {}: copy the Harmonica ONNX files {HARMONICA_MODELS:?} from the \
-                 separate harmonica-repro project's runs/p5/onnx/ into {} (they aren't \
-                 downloaded; the weights are for non-commercial use only).",
-                path.display(),
-                models_dir.display()
-            );
+                "downloading {name} from {url}: {e}\n\
+                 The repo is private for now: set HF_TOKEN to a read-access token for \
+                 {HF_REPO} (or have huggingface's token file), or copy the file from \
+                 harmonica-repro's runs/p5/onnx/ into models/ (it's then checked against \
+                 the pinned SHA-256)."
+            )
+        });
+
+    let actual = sha256_hex(&bytes);
+    assert_eq!(
+        actual, sha256,
+        "downloaded {name} does not match its pinned sha256 (expected {sha256}, got {actual}); not writing it"
+    );
+
+    let path = models_dir.join(name);
+    let tmp_path = models_dir.join(format!("{name}.part"));
+    std::fs::File::create(&tmp_path)
+        .and_then(|mut f| f.write_all(&bytes))
+        .unwrap_or_else(|e| panic!("writing {}: {e}", tmp_path.display()));
+    std::fs::rename(&tmp_path, &path).unwrap_or_else(|e| panic!("finalizing {}: {e}", path.display()));
+
+    eprintln!("Saved {} ({} bytes)", path.display(), bytes.len());
+}
+
+/// Looked up the way huggingface_hub does: HF_TOKEN env var, else
+/// $HF_HOME/token, else ~/.cache/huggingface/token. Never logged.
+fn hf_token() -> Option<String> {
+    if let Ok(t) = std::env::var("HF_TOKEN") {
+        let t = t.trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
         }
     }
+
+    let token_path = match std::env::var("HF_HOME") {
+        Ok(hf_home) => PathBuf::from(hf_home).join("token"),
+        Err(_) => {
+            let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+            PathBuf::from(std::env::var(home_var).ok()?).join(".cache").join("huggingface").join("token")
+        }
+    };
+    let t = std::fs::read_to_string(token_path).ok()?;
+    let t = t.trim();
+    if t.is_empty() { None } else { Some(t.to_string()) }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn export_beat_models(manifest_dir: &Path, models_dir: &Path) {
