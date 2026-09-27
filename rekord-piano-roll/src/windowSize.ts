@@ -17,6 +17,20 @@ const DEFAULT_EXPANDED_WIDTH = 800;
 const DEFAULT_EXPANDED_HEIGHT = 600;
 let widthBeforeCollapse: number | null = null;
 let heightBeforeCollapse: number | null = null;
+let widthBeforeSettings: number | null = null;
+let heightBeforeSettings: number | null = null;
+
+// Shared by setPianorollVisible and the settings enter/leave pair below --
+// both need the window's current size in logical (not physical) pixels to
+// remember/compare against, and both go through the same
+// scaleFactor()+innerSize() dance to get it.
+async function currentLogicalWindowSize(
+  win: ReturnType<typeof getCurrentWindow>,
+): Promise<{ width: number; height: number }> {
+  const scaleFactor = await win.scaleFactor();
+  const size = await win.innerSize();
+  return { width: size.width / scaleFactor, height: size.height / scaleFactor };
+}
 
 function measureCollapsedSize(
   appShell: HTMLElement,
@@ -59,10 +73,8 @@ export async function setPianorollVisible(
 
   try {
     const win = getCurrentWindow();
-    const scaleFactor = await win.scaleFactor();
-    const currentSize = await win.innerSize();
-    const currentLogicalWidth = currentSize.width / scaleFactor;
-    const currentLogicalHeight = currentSize.height / scaleFactor;
+    const { width: currentLogicalWidth, height: currentLogicalHeight } =
+      await currentLogicalWindowSize(win);
 
     if (!visible) {
       if (rememberSize) {
@@ -76,6 +88,45 @@ export async function setPianorollVisible(
       const restoredHeight = heightBeforeCollapse ?? DEFAULT_EXPANDED_HEIGHT;
       await win.setSize(new LogicalSize(restoredWidth, restoredHeight));
     }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// The settings page shares this window with the main view; if the piano
+// roll was hidden when settings opened, the window would otherwise still
+// be sitting at the collapsed size from setPianorollVisible above, and
+// the settings page would render cramped into that sliver. Force the
+// window to the fixed expanded size while settings is open -- skipping
+// the resize when it's already there, which is the case whenever the
+// roll was visible, so nothing visibly changes for that (common) case.
+export async function enterSettingsWindowSize(): Promise<void> {
+  try {
+    const win = getCurrentWindow();
+    const { width, height } = await currentLogicalWindowSize(win);
+    widthBeforeSettings = width;
+    heightBeforeSettings = height;
+    if (Math.round(width) !== DEFAULT_EXPANDED_WIDTH || Math.round(height) !== DEFAULT_EXPANDED_HEIGHT) {
+      await win.setSize(new LogicalSize(DEFAULT_EXPANDED_WIDTH, DEFAULT_EXPANDED_HEIGHT));
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// Restores whatever size the main view actually had before
+// enterSettingsWindowSize forced the expanded size -- collapsed, if the
+// piano roll was hidden at the time.
+export async function leaveSettingsWindowSize(): Promise<void> {
+  const width = widthBeforeSettings;
+  const height = heightBeforeSettings;
+  widthBeforeSettings = null;
+  heightBeforeSettings = null;
+  if (width === null || height === null) {
+    return;
+  }
+  try {
+    await getCurrentWindow().setSize(new LogicalSize(width, height));
   } catch (err) {
     console.error(err);
   }

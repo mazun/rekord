@@ -1,8 +1,13 @@
 //! Puts the ONNX models into core/models/ at build time instead of committing
 //! them to the repo:
 //!
-//! - nmp.onnx: Spotify's basic-pitch model (Apache 2.0), downloaded as is from
-//!   https://github.com/spotify/basic-pitch/tree/main/basic_pitch/saved_models/icassp_2022.
+//! - cqt156.onnx, small_uni_300k.onnx, medium_uni_300k_urmp.onnx,
+//!   large_uni_300k_urmp.onnx: Harmonica (instrument-agnostic note
+//!   transcription), reimplemented, trained and exported to ONNX in the
+//!   separate harmonica-repro project (`runs/p5/onnx/`). They aren't
+//!   published anywhere to download from, so they're copied into models/ by
+//!   hand; `check_harmonica_models` only checks they're there. The weights
+//!   are for non-commercial use only (models/harmonica.LICENSE.txt).
 //! - beatthis_small0.onnx + logmel.onnx: Beat This! (MIT, CPJKU) is only
 //!   published as a PyTorch checkpoint, so export_beat_models.py downloads and
 //!   converts it (and generates the log-mel frontend). This needs Python >= 3.10
@@ -11,12 +16,11 @@
 //!   first build) and is deleted afterwards. Set REKORD_PYTHON to pick the
 //!   interpreter.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const MODEL_URL: &str =
-    "https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx";
+const HARMONICA_MODELS: [&str; 4] =
+    ["cqt156.onnx", "small_uni_300k.onnx", "medium_uni_300k_urmp.onnx", "large_uni_300k_urmp.onnx"];
 
 const BEAT_MODELS: [&str; 2] = ["beatthis_small0.onnx", "logmel.onnx"];
 const TORCH_INDEX: &str = "https://download.pytorch.org/whl/cpu";
@@ -35,32 +39,24 @@ fn main() {
     let models_dir = manifest_dir.join("models");
     std::fs::create_dir_all(&models_dir).expect("creating models/ directory");
 
-    fetch_basic_pitch(&models_dir);
+    check_harmonica_models(&models_dir);
     export_beat_models(&manifest_dir, &models_dir);
 }
 
-fn fetch_basic_pitch(models_dir: &Path) {
-    let model_path = models_dir.join("nmp.onnx");
-    println!("cargo:rerun-if-changed={}", model_path.display());
-    if model_path.exists() {
-        return;
+fn check_harmonica_models(models_dir: &Path) {
+    for name in HARMONICA_MODELS {
+        let path = models_dir.join(name);
+        println!("cargo:rerun-if-changed={}", path.display());
+        if !path.exists() {
+            panic!(
+                "missing {}: copy the Harmonica ONNX files {HARMONICA_MODELS:?} from the \
+                 separate harmonica-repro project's runs/p5/onnx/ into {} (they aren't \
+                 downloaded; the weights are for non-commercial use only).",
+                path.display(),
+                models_dir.display()
+            );
+        }
     }
-
-    eprintln!("Downloading basic-pitch ONNX model from {MODEL_URL} ...");
-    let bytes = ureq::get(MODEL_URL)
-        .call()
-        .expect("downloading nmp.onnx")
-        .body_mut()
-        .read_to_vec()
-        .expect("reading downloaded model bytes");
-
-    let tmp_path = models_dir.join("nmp.onnx.part");
-    std::fs::File::create(&tmp_path)
-        .and_then(|mut f| f.write_all(&bytes))
-        .expect("writing downloaded model");
-    std::fs::rename(&tmp_path, &model_path).expect("finalizing downloaded model file");
-
-    eprintln!("Saved {} ({} bytes)", model_path.display(), bytes.len());
 }
 
 fn export_beat_models(manifest_dir: &Path, models_dir: &Path) {

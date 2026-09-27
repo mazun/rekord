@@ -1,9 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { BeatLines, ConfirmedNote } from "./pianoroll";
+import { settings, type ModelSize } from "./settings.svelte";
+
+// The model actually running, after any DirectML->CPU fallback the backend
+// applies -- see NoteModelConfig/run_live_session in lib.rs. Distinct from
+// `settings.modelSize`, which is just the user's request.
+export interface NoteModel {
+  size: ModelSize;
+  device: "directml" | "cpu";
+  future_frames: number;
+}
 
 type PipelineEvent =
-  | { type: "Started"; total_latency_s: number }
+  | { type: "Started"; total_latency_s: number; note_model: NoteModel }
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
   | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
   | { type: "TensionsChanged"; tensions: string[] }
@@ -33,6 +43,11 @@ export const pipeline = $state({
   roman: EMPTY_ROMAN,
   tensions: [] as string[],
   bpm: null as number | null,
+  // Set on every "Started" event and left alone on stop -- the settings
+  // page (the only place this is read) is only reachable while capture is
+  // stopped, so it needs to keep showing what the last session actually
+  // ran (e.g. a CPU fallback) rather than resetting to null.
+  noteModel: null as NoteModel | null,
 });
 
 // How much of the beat history the tempo is read from: long enough that the beats' 20 ms
@@ -131,6 +146,7 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
       // unaccounted-for delay baked into every note's position, which
       // reappeared as a gap near the playhead no fixed pipeline-latency
       // constant could account for.
+      pipeline.noteModel = payload.note_model;
       handlers.onStarted(payload.total_latency_s);
     } else if (payload.type === "NoteConfirmed") {
       handlers.onNote({
@@ -163,7 +179,7 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
   };
 }
 
-export async function startCapture(latencyMs: number): Promise<void> {
+export async function startCapture(): Promise<void> {
   pipeline.chord = "--";
   pipeline.keyName = "--";
   pipeline.roman = EMPTY_ROMAN;
@@ -175,7 +191,10 @@ export async function startCapture(latencyMs: number): Promise<void> {
   try {
     // The piano roll's reset happens on the "Started" event, once the
     // pipeline has actually begun, not here.
-    await invoke("start_capture", { latencySeconds: latencyMs / 1000 });
+    await invoke("start_capture", {
+      modelSize: settings.modelSize,
+      futureFrames: settings.futureFrames,
+    });
   } catch (err) {
     console.error(err);
     pipeline.status = "idle";

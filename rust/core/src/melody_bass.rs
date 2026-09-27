@@ -13,8 +13,7 @@
 //! separate melody, the chord's top note is labeled melody. The rule can't
 //! tell "melody on top" from "just the highest chord tone".
 
-use crate::note_creation::NoteEvent;
-use crate::note_stitcher::ConfirmedNote;
+use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
 
 // Resolution of the "is this note the top/bottom voice" sweep across a
 // note's duration.
@@ -70,11 +69,12 @@ impl LineTracker {
     }
 
     /// Classify one newly confirmed note against `note_events` (the
-    /// extractor's current retained raw note list). At confirmation time
-    /// every note overlapping `note` is already present there -- confirmation
-    /// only happens once `note` ended a full confirm margin before the live
-    /// edge -- so the top/bottom test sees everything that sounded with it.
-    /// Call in confirmation order.
+    /// transcriber's current retained note list: recently finished notes
+    /// plus still-open ones, each extended to the covered edge -- see
+    /// `NoteTranscriber::note_events`). Every note that overlapped `note`
+    /// while it sounded is present there by construction, whether or not it
+    /// has itself finished yet, so the top/bottom test sees everything that
+    /// sounded with it. Call in confirmation order.
     pub fn classify(&mut self, note: &ConfirmedNote, note_events: &[NoteEvent]) -> NoteRoles {
         let strong = strong_events(note_events);
         let note_is_strong = note.velocity

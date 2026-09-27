@@ -1,20 +1,40 @@
 use anyhow::{bail, Context, Result};
 
+use rekord_core::audio_io;
+use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelSize};
+use rekord_core::harmonica_stream::NoteTranscriber;
 use rekord_core::key_estimator::KeyEstimator;
 use rekord_core::melody_bass::LineTracker;
-use rekord_core::note_creation::NoteEvent;
-use rekord_core::note_stitcher::NoteStitcher;
-use rekord_core::onnx_model::OnnxNoteModel;
-use rekord_core::pipeline::{self, midi_to_name, ChordStabilizer, PipelineEvent};
-use rekord_core::streaming_extractor::{
-    StreamingNoteExtractor, AUDIO_SAMPLE_RATE, HOP_SIZE, MAX_FRESH_EXTRACTOR_REAL_SAMPLES,
+use rekord_core::pipeline::{
+    self, midi_to_name, ChordStabilizer, NoteModelConfig, NoteModelInfo, PipelineEvent, CAPTURE_HOP_S,
+    DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
 };
-use rekord_core::audio_io;
+
+fn device_name(device: Device) -> &'static str {
+    match device {
+        Device::DirectML => "DirectML",
+        Device::Cpu => "CPU",
+    }
+}
+
+fn print_model_info(note_model: NoteModelInfo) {
+    println!(
+        "Using {} on {} (look-ahead {} frames)\n",
+        note_model.size,
+        device_name(note_model.device),
+        note_model.future_frames
+    );
+}
 
 fn print_event(event: PipelineEvent) {
     match event {
-        PipelineEvent::Started { total_latency_s } => {
-            println!("(confirm latency: {total_latency_s:.2}s)\n");
+        PipelineEvent::Started { total_latency_s, note_model } => {
+            println!(
+                "(model: {} on {}, look-ahead {} frames; confirm latency: {total_latency_s:.2}s)\n",
+                note_model.size,
+                device_name(note_model.device),
+                note_model.future_frames
+            );
         }
         PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity, melody, bass } => {
             let role = match (melody, bass) {
@@ -45,110 +65,66 @@ fn print_event(event: PipelineEvent) {
     }
 }
 
-fn run_file(audio_path: &str, hop_seconds: f32) -> Result<()> {
+fn run_file(audio_path: &str, size: ModelSize, future_frames: usize, allow_directml: bool, hop_seconds: f32) -> Result<()> {
     println!("Loading {audio_path} ...");
-    let audio = audio_io::load_audio(audio_path)?;
-    let duration = audio.len() as f32 / AUDIO_SAMPLE_RATE as f32;
+    let audio = audio_io::load_audio(audio_path, harmonica_model::SAMPLE_RATE)?;
+    let duration = audio.len() as f32 / harmonica_model::SAMPLE_RATE as f32;
     println!("Duration: {duration:.1}s, simulating stream with {hop_seconds:.2}s hops\n");
 
-    let mut model = OnnxNoteModel::load().context("loading ONNX model")?;
-    let mut stitcher = NoteStitcher::new();
+    let model = HarmonicaModel::load(size, allow_directml).context("loading Harmonica model")?;
+    print_model_info(NoteModelInfo { size: model.size(), device: model.device(), future_frames });
+    let mut transcriber = NoteTranscriber::new(model, future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut lines = LineTracker::new();
     let mut chord_display = ChordStabilizer::new();
     let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
 
-    let hop_samples = (hop_seconds * AUDIO_SAMPLE_RATE as f32).round() as usize;
-    let main_final_notes = {
-        let mut extractor = StreamingNoteExtractor::new(&mut model);
-        let mut pos = 0usize;
-        while pos < audio.len() {
-            let end = (pos + hop_samples).min(audio.len());
-            let completed = extractor.push(&audio[pos..end])?;
-            pos = end;
-            if completed > 0 {
-                let note_events = extractor.note_events();
-                let covered = extractor.covered_seconds();
-                pipeline::emit_confirmed_notes(
-                    &mut stitcher,
-                    covered,
-                    &note_events,
-                    &mut key_estimator,
-                    &mut lines,
-                    print_event,
-                );
-                pipeline::report_new_chords(
-                    &note_events,
-                    last_covered,
-                    covered,
-                    &mut chord_display,
-                    &mut key_estimator,
-                    &pipeline::KeyMode::Auto,
-                    &mut last_key_name,
-                    print_event,
-                );
-                last_covered = covered;
-            }
+    let hop_samples = (hop_seconds * harmonica_model::SAMPLE_RATE as f32).round() as usize;
+    let mut pos = 0usize;
+    while pos < audio.len() {
+        let end = (pos + hop_samples).min(audio.len());
+        let blocks_before = transcriber.blocks_done();
+        let notes = transcriber.push(&audio[pos..end])?;
+        pos = end;
+        if transcriber.blocks_done() != blocks_before {
+            let note_events = transcriber.note_events();
+            let covered = transcriber.covered_seconds();
+            pipeline::emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, print_event);
+            pipeline::report_new_chords(
+                &note_events,
+                last_covered,
+                covered,
+                &mut chord_display,
+                &mut key_estimator,
+                &pipeline::KeyMode::Auto,
+                &mut last_key_name,
+                print_event,
+            );
+            last_covered = covered;
         }
-        // Kept for the tail-reconciliation chord check below: the tail
-        // pass re-analyzes its own short clip from scratch and otherwise
-        // has no memory of notes the main loop already established.
-        extractor.note_events()
-    };
-
-    // The tail shorter than one window (~1.6s) never completes on its own.
-    // Re-run extraction on the real last bit of audio (no padding needed)
-    // instead of zero-padding, which showed the model a mostly-synthetic-
-    // silence window and suppressed real notes there (verified empirically
-    // in the Python prototype). Cap what's fed in at
-    // MAX_FRESH_EXTRACTOR_REAL_SAMPLES: a fresh extractor's buffer already
-    // starts with some front-padding, so pushing a full window's worth of
-    // real audio on top of that makes `push` complete a window on its own
-    // before `finish` ever runs, leaving `finish` to pad a second, mostly-
-    // synthetic window instead of the small bounded pad it's meant for.
-    if last_covered < duration && !audio.is_empty() {
-        let clip_start = audio.len().saturating_sub(MAX_FRESH_EXTRACTOR_REAL_SAMPLES);
-        let clip_start_s = clip_start as f32 / AUDIO_SAMPLE_RATE as f32;
-        let mut tail_extractor = StreamingNoteExtractor::new(&mut model);
-        tail_extractor.push(&audio[clip_start..])?;
-        tail_extractor.finish()?;
-        let tail_notes: Vec<NoteEvent> = tail_extractor
-            .note_events()
-            .into_iter()
-            .map(|(s, e, p, a)| (s + clip_start_s, e + clip_start_s, p, a))
-            .collect();
-
-        // Combine with what the main loop already knew, so a note the
-        // tail's independent re-analysis fails to re-surface doesn't
-        // silently vanish from the final chord/notes report.
-        let mut combined_notes = main_final_notes;
-        combined_notes.extend(tail_notes);
-
-        pipeline::emit_confirmed_notes(
-            &mut stitcher,
-            duration,
-            &combined_notes,
-            &mut key_estimator,
-            &mut lines,
-            print_event,
-        );
-        pipeline::report_new_chords(
-            &combined_notes,
-            last_covered,
-            duration,
-            &mut chord_display,
-            &mut key_estimator,
-            &pipeline::KeyMode::Auto,
-            &mut last_key_name,
-            print_event,
-        );
     }
+
+    // `finish()` zero-pads the end of the file and closes every still-open
+    // note, exactly as the reference does over a whole file.
+    let final_notes = transcriber.finish()?;
+    let final_note_events = transcriber.note_events();
+    pipeline::emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, print_event);
+    pipeline::report_new_chords(
+        &final_note_events,
+        last_covered,
+        transcriber.covered_seconds(),
+        &mut chord_display,
+        &mut key_estimator,
+        &pipeline::KeyMode::Auto,
+        &mut last_key_name,
+        print_event,
+    );
 
     Ok(())
 }
 
-fn run_live(hop_seconds: f32, stride_seconds: f32, duration_s: Option<f32>) -> Result<()> {
+fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>) -> Result<()> {
     println!("Listening to default speaker output via loopback capture ...");
     match duration_s {
         Some(d) => println!("Will stop after {d:.1}s (Ctrl+C to stop earlier)\n"),
@@ -157,7 +133,7 @@ fn run_live(hop_seconds: f32, stride_seconds: f32, duration_s: Option<f32>) -> R
     let never_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let key_mode = std::sync::Arc::new(std::sync::Mutex::new(pipeline::KeyMode::Auto));
     let mut printed_until = f32::NEG_INFINITY;
-    pipeline::run_live_session(hop_seconds, stride_seconds, duration_s, never_stop, key_mode, move |event| {
+    pipeline::run_live_session(config, hop_seconds, duration_s, never_stop, key_mode, move |event| {
         if let PipelineEvent::BeatLines { committed, .. } = &event {
             let from = printed_until;
             for line in committed.iter().filter(|l| l.t > from) {
@@ -172,9 +148,10 @@ fn run_live(hop_seconds: f32, stride_seconds: f32, duration_s: Option<f32>) -> R
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut audio_file: Option<String> = None;
-    let mut hop = 0.5f32;
-    let mut hop_explicit = false;
-    let mut latency: Option<f32> = None;
+    let mut hop = CAPTURE_HOP_S;
+    let mut size = ModelSize::Large;
+    let mut future_frames = DEFAULT_FUTURE_FRAMES;
+    let mut allow_directml = true;
     let mut live = false;
     let mut duration: Option<f32> = None;
     let mut i = 1;
@@ -187,17 +164,22 @@ fn main() -> Result<()> {
                 if !(hop > 0.0) {
                     bail!("--hop must be greater than 0, got {hop}");
                 }
-                hop_explicit = true;
             }
-            "--latency" => {
+            "--size" => {
                 i += 1;
-                let value = args.get(i).context("--latency expects a number")?;
-                let parsed: f32 = value.parse().context("--latency expects a number")?;
-                if !(parsed > 0.0) {
-                    bail!("--latency must be greater than 0, got {parsed}");
-                }
-                latency = Some(parsed);
+                let value = args.get(i).context("--size expects small, medium or large")?;
+                size = value.parse()?;
             }
+            "--future" => {
+                i += 1;
+                let value = args.get(i).context("--future expects a number")?;
+                let parsed: usize = value.parse().context("--future expects a number")?;
+                if !FUTURE_FRAME_CHOICES.contains(&parsed) {
+                    bail!("--future must be one of {FUTURE_FRAME_CHOICES:?}, got {parsed}");
+                }
+                future_frames = parsed;
+            }
+            "--cpu" => allow_directml = false,
             "--live" => live = true,
             "--duration" => {
                 i += 1;
@@ -214,19 +196,12 @@ fn main() -> Result<()> {
     }
 
     if live {
-        // --latency drives the model window-advance stride (confirm
-        // latency) -- a distinct knob from --hop (capture delivery
-        // granularity). Unless --hop was also given explicitly, --latency
-        // drives both, mirroring the Tauri app's single-slider design.
-        // With no --latency, stride defaults to the legacy HOP_SIZE-derived
-        // behavior (StreamingNoteExtractor::new()'s default).
-        let stride_seconds = latency.unwrap_or(HOP_SIZE as f32 / AUDIO_SAMPLE_RATE as f32);
-        if latency.is_some() && !hop_explicit {
-            hop = stride_seconds;
-        }
-        run_live(hop, stride_seconds, duration)
+        let config = NoteModelConfig { size, future_frames, allow_directml };
+        run_live(config, hop, duration)
     } else {
-        let audio_file = audio_file.context("usage: rekord_engine <audio_file> [--hop 0.25]")?;
-        run_file(&audio_file, hop)
+        let audio_file = audio_file.context(
+            "usage: rekord_engine <audio_file> [--size small|medium|large] [--future 8|16] [--cpu] [--hop 0.064]",
+        )?;
+        run_file(&audio_file, size, future_frames, allow_directml, hop)
     }
 }

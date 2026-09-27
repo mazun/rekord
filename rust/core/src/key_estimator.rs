@@ -1,16 +1,15 @@
 //! Rolling-window musical key estimation: correlate a duration/velocity-
 //! weighted 12-bin chroma histogram against 24 reference key profiles
 //! (Krumhansl-Schmuckler-style), with hysteresis so the displayed key
-//! doesn't flicker chord-to-chord. Fed exclusively from already-
-//! deduplicated `ConfirmedNote`s (see `note_stitcher.rs`) -- each note
-//! contributes to the histogram exactly once, avoiding the O(T^2)-ish
-//! reprocessing-of-retained-history bug documented in
-//! `streaming_extractor.rs`.
+//! doesn't flicker chord-to-chord. Fed exclusively from `ConfirmedNote`s
+//! (see `harmonica_decode.rs`) -- Harmonica's streaming decode emits each
+//! note exactly once (see `harmonica_stream.rs`'s `RETAINED_SECONDS`), so
+//! each note contributes to the histogram exactly once.
 
 use std::collections::VecDeque;
 
 use crate::chord_templates::{ChordMatch, NOTE_NAMES};
-use crate::note_stitcher::ConfirmedNote;
+use crate::harmonica_decode::ConfirmedNote;
 
 // Bellman & Budge (1999) key profiles, via
 // https://extras.humdrum.org/man/keycor/ (also reproduced in music21's
@@ -37,7 +36,7 @@ const BELLMAN_BUDGE_MINOR: [f32; 12] =
 // finished pieces, not a live rolling window); this is a starting point
 // to tune empirically against sample_audio, mirroring the time-based-not-
 // count-based retention convention already established in
-// `streaming_extractor.rs`'s `MAX_RETAINED_SECONDS`.
+// `harmonica_stream.rs`'s `RETAINED_SECONDS`.
 const WINDOW_S: f32 = 12.0;
 
 // Fewer than this many confirmed notes in the window and correlating
@@ -120,7 +119,8 @@ impl KeyEstimator {
     }
 
     /// Feed one just-confirmed note. Intended to be called once per
-    /// `ConfirmedNote` as `NoteStitcher` emits it.
+    /// `ConfirmedNote` as `NoteTranscriber` (via `emit_confirmed_notes`)
+    /// emits it.
     pub fn observe(&mut self, note: &ConfirmedNote) {
         self.history.push_back(WeightedNote {
             pc: note.pitch_midi.rem_euclid(12),
@@ -137,8 +137,9 @@ impl KeyEstimator {
     pub fn estimate(&mut self, now_s: f32) -> Option<KeyEstimate> {
         // Must scan and drop stale entries wherever they sit, not just at
         // the front: `observe()` is called in *confirmation* order
-        // (NoteStitcher releases a note once its end_s clears the confirm
-        // margin), not start_s order. A long-held bass note routinely gets
+        // (`NoteTranscriber` emits each note exactly once, the moment its
+        // end frame is decided -- see harmonica_stream.rs -- which isn't
+        // necessarily start_s order). A long-held bass note routinely gets
         // confirmed, and so pushed, after a shorter later-starting treble
         // note above it -- an everyday case in real piano playing, not an
         // edge case. A front-only pop loop would then leave that bass

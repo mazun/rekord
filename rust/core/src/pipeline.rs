@@ -13,23 +13,55 @@ use anyhow::Result;
 use crate::beat_model::{self, BeatModel};
 use crate::beat_tracker::BeatTracker;
 use crate::chord_templates::{extra_tensions, match_chord, ChordMatch};
+use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
+use crate::harmonica_model::{self, Device, HarmonicaModel, ModelSize};
+use crate::harmonica_stream::NoteTranscriber;
 use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
 use crate::live_capture;
 use crate::melody_bass::LineTracker;
-use crate::note_creation::NoteEvent;
-use crate::note_stitcher::{ConfirmedNote, NoteStitcher, CONFIRM_MARGIN_S};
-use crate::onnx_model::OnnxNoteModel;
-use crate::streaming_extractor::{StreamingNoteExtractor, AUDIO_SAMPLE_RATE};
-
-// A note's end_s can be a touch before the true edge of what's been
-// processed (edge effect from limited context there).
-const ACTIVE_EDGE_TOLERANCE_S: f32 = 0.2;
 
 // Extra fudge for IPC/processing overhead and jitter on top of the
 // pipeline's own structural confirm delay, so the reported total_latency_s
 // has a small safety margin baked in (matches the figure the piano-roll UI
 // used to hardcode for this purpose).
 const LATENCY_SAFETY_MARGIN_S: f32 = 0.3;
+
+/// Which note-transcription model to run and how. `future_frames` trades
+/// confirm latency for accuracy (see `FUTURE_FRAME_CHOICES`); `allow_directml`
+/// lets a caller (e.g. a CLI `--cpu` flag) force the small-on-CPU fallback
+/// path deliberately, for testing it without having to disable DirectML at
+/// the OS/driver level.
+pub struct NoteModelConfig {
+    pub size: ModelSize,
+    pub future_frames: usize,
+    pub allow_directml: bool,
+}
+
+/// Which model/device a session actually ended up running, after any
+/// DirectML->CPU fallback (`HarmonicaModel::load` always falls back to
+/// `Small` on CPU, never the originally requested size) -- reported in the
+/// `Started` event so a frontend can show what's really running rather than
+/// just echoing back the user's request.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct NoteModelInfo {
+    pub size: ModelSize,
+    pub device: Device,
+    pub future_frames: usize,
+}
+
+/// Fixed capture chunk length. A block is processed as soon as the chunk
+/// holding its last sample arrives, so this adds up to one chunk of delay
+/// (it's part of `total_latency_s`); 64 ms is a quarter of a 0.256 s block.
+pub const CAPTURE_HOP_S: f32 = 0.064;
+
+/// The look-ahead choices offered to the user: 0.26 s and 0.51 s of future
+/// audio. In harmonica-repro's streaming evaluation, going from 8 to 16
+/// frames gains under a point of OnPOff (large .754 -> .760) and longer
+/// gains nothing; the thresholds, picked at 8, are used for both.
+pub const FUTURE_FRAME_CHOICES: [usize; 2] = [8, 16];
+
+/// Default look-ahead: 0.26 s.
+pub const DEFAULT_FUTURE_FRAMES: usize = 8;
 
 /// Whether the key shown to the user comes from `KeyEstimator`'s own
 /// rolling correlation, or has been pinned by the user to work around a
@@ -80,14 +112,16 @@ pub enum PipelineEvent {
     /// isn't part of the pipeline's own fixed per-note confirm latency.
     ///
     /// `total_latency_s` is the authoritative, already-computed confirm
-    /// delay for this session (depends on the stride/hop the caller
-    /// requested, clamped to whatever was actually used) -- a frontend
-    /// should anchor its display clock at this event using this figure
-    /// directly, not hardcode or re-derive it.
-    Started { total_latency_s: f32 },
-    /// `velocity` is the model's own per-pitch activation strength for this
-    /// note (see `ConfirmedNote::velocity`) -- a frontend can use it to
-    /// shade/intensify the note by how strongly it sounded, correctly
+    /// delay for this session: the transcriber's own `max_note_delay_s`
+    /// (which depends on the model's look-ahead) plus the capture hop and a
+    /// small safety margin -- see `run_note_pipeline`. A frontend should
+    /// anchor its display clock at this event using this figure directly,
+    /// not hardcode or re-derive it. `note_model` is the model actually
+    /// loaded, after any DirectML->CPU fallback (see `HarmonicaModel::load`).
+    Started { total_latency_s: f32, note_model: NoteModelInfo },
+    /// `velocity` is the onset probability at the note's onset frame (see
+    /// `harmonica_decode::ConfirmedNote::velocity`) -- a frontend can use it
+    /// to shade/intensify the note by how strongly it sounded, correctly
     /// distinguishing notes within the same chord.
     ///
     /// `melody`/`bass` say whether the note belongs to the top/bottom voice
@@ -207,7 +241,7 @@ pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(rx: Receiver<Vec<f32>>, stop: &
         }
         emit(&tracker);
     }
-    // the capture ended on its own (e.g. --duration): commit through the end, as NoteStitcher's flush
+    // the capture ended on its own (e.g. --duration): commit through the end, as the note pipeline's finish()
     if tracker.flush().is_ok() {
         emit(&tracker);
     }
@@ -215,8 +249,10 @@ pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(rx: Receiver<Vec<f32>>, stop: &
 
 // A brief gap with no active note (both hands lifting between chords, a
 // note ending slightly early) shouldn't flash "(silence)" -- only declare
-// real silence once nothing has sounded for this long. Matches the order
-// of magnitude of NoteStitcher's own CONFIRM_MARGIN_S.
+// real silence once nothing has sounded for this long. Chosen independently
+// of Harmonica's own note-emission delay (see
+// `NoteTranscriber::max_note_delay_s`), not derived from it -- just an
+// empirically reasonable gap length.
 const SILENCE_HOLD_S: f32 = 0.5;
 
 /// What's sounding at time t, if anything conclusive can be said. Kept as
@@ -240,17 +276,24 @@ impl ChordAt {
 
 /// One checkpoint's raw reading: every currently-active pitch class (used
 /// for tension detection regardless of whether a chord could be named),
-/// plus the chord signal itself (`None` for the ambiguous-gap case --see
-/// `chord_at`'s doc comment).
+/// plus the chord signal itself: Some(Silence) if nothing has sounded
+/// recently, None if notes are present (or sounded within SILENCE_HOLD_S)
+/// but nothing matched well enough / it's just a brief gap (ambiguous --
+/// the caller should just keep showing the prior label).
 struct ActiveNow {
     active_pitch_classes: Vec<i32>,
     chord: Option<ChordAt>,
 }
 
-fn evaluate_active(note_events: &[NoteEvent], t: f32, tolerance: f32) -> ActiveNow {
+/// Notes sounding at time t. Note ends are taken as exact: Harmonica's
+/// decode closes a note on the frame its sustain drops, so there's no
+/// grace period after it (basic-pitch needed 0.2 s for its ragged ends,
+/// which with Harmonica only let the previous chord linger into the next
+/// as a mixed chord, e.g. Am7 for C -> Am).
+fn evaluate_active(note_events: &[NoteEvent], t: f32) -> ActiveNow {
     let active: Vec<i32> = note_events
         .iter()
-        .filter(|&&(s, e, _p, _a)| s <= t + 1e-6 && e >= t - tolerance)
+        .filter(|&&(s, e, _p, _a)| s <= t + 1e-6 && e >= t)
         .map(|&(_s, _e, p, _a)| p)
         .collect();
     if active.is_empty() {
@@ -266,14 +309,6 @@ fn evaluate_active(note_events: &[NoteEvent], t: f32, tolerance: f32) -> ActiveN
     let pitch_classes: Vec<i32> = active.iter().map(|p| p.rem_euclid(12)).collect();
     let chord = match_chord(&pitch_classes, bass_pc).map(ChordAt::Match);
     ActiveNow { active_pitch_classes: pitch_classes, chord }
-}
-
-/// Chord at time t: Some(Silence) if nothing has sounded recently,
-/// None if notes are present (or sounded within SILENCE_HOLD_S) but
-/// nothing matched well enough / it's just a brief gap (ambiguous --
-/// caller should just keep showing the prior label).
-pub fn chord_at(note_events: &[NoteEvent], t: f32, tolerance: f32) -> Option<ChordAt> {
-    evaluate_active(note_events, t, tolerance).chord
 }
 
 // A candidate chord must be the best match continuously for this long
@@ -396,14 +431,14 @@ impl ChordStabilizer {
 // was always self-evidently onset-triggered), but a clean block chord
 // (every note onsetting together, then nothing else until the next
 // chord's onset) generates only one tightly-clustered checkpoint and
-// then silence until whatever triggers the next one. Windows complete in
-// jumps up to ~1.6s (file-mode reprocessing's default extractor; live
-// mode's configurable stride can also run coarser than this), so without
-// this grid such a chord could go unconfirmed for its entire duration --
-// confirmed via file-mode testing against sample_audio, where exactly
-// this (a solid block chord with no follow-up onset before the next
-// chord) silently never committed. The grid step just needs to be
-// smaller than CHORD_MIN_HOLD_S; this has ample margin.
+// then silence until whatever triggers the next one. Harmonica's streaming
+// blocks complete every 0.256s (BLOCK_FRAMES in harmonica_model.rs) -- far
+// finer than the basic-pitch extractor's old windows (which completed in
+// jumps up to ~1.6s, where this was originally found and fixed) -- but a
+// solid block chord with no follow-up onset before the next chord could
+// still go unconfirmed for the rest of its duration without this grid. The
+// grid step just needs to be smaller than CHORD_MIN_HOLD_S; this has ample
+// margin either way.
 const CHORD_CHECKPOINT_GRID_S: f32 = 0.05;
 
 /// Re-evaluate the chord at every note onset within the newly covered
@@ -458,16 +493,16 @@ pub fn report_new_chords(
                 *last_key_name = Some(key_name);
             }
         }
-        let evaluated = evaluate_active(note_events, t, ACTIVE_EDGE_TOLERANCE_S);
+        let evaluated = evaluate_active(note_events, t);
         chord_display.observe(evaluated, t, current_key, &mut on_event);
     }
 }
 
-/// Emit one `NoteConfirmed` per note, feeding each through `key_estimator`
-/// first -- shared by both call sites that produce a `Vec<ConfirmedNote>`
-/// (the normal per-hop path and the end-of-session flush) so a note is
-/// only ever observed once, from a single place.
-fn emit_notes(
+/// Emit one `NoteConfirmed` per finished note (whatever a `NoteTranscriber`
+/// `push`/`finish` returned -- each note comes out exactly once), feeding
+/// each through `key_estimator` first. Shared by the per-block path and the
+/// end-of-session flush so a note is only ever observed from one place.
+pub fn emit_confirmed_notes(
     notes: Vec<ConfirmedNote>,
     note_events: &[NoteEvent],
     key_estimator: &mut KeyEstimator,
@@ -488,28 +523,19 @@ fn emit_notes(
     }
 }
 
-pub fn emit_confirmed_notes(
-    stitcher: &mut NoteStitcher,
-    covered: f32,
-    note_events: &[NoteEvent],
-    key_estimator: &mut KeyEstimator,
-    lines: &mut LineTracker,
-    on_event: impl FnMut(PipelineEvent),
-) {
-    emit_notes(stitcher.update(covered, note_events), note_events, key_estimator, lines, on_event);
-}
-
 /// Runs a live WASAPI-loopback session, invoking `on_event` for every
 /// confirmed note, chord change and beat-line update (the latter from a
 /// second thread, hence `Send`), until `duration_s` elapses (if given),
-/// `stop` is set to true, or the capture stream ends. Shared by the CLI's
-/// `--live` mode and any other frontend driving the same pipeline (e.g. a
-/// GUI, which can flip `stop` from a "Stop" button to end the session
-/// early -- checked once per hop, so it stops within about one hop's
-/// worth of latency).
+/// `stop` is set to true, or the capture stream ends. `config` selects the
+/// note-transcription model size/look-ahead and whether DirectML may be
+/// used; the model actually loaded (after any fallback) is reported in the
+/// `Started` event. Shared by the CLI's `--live` mode and any other
+/// frontend driving the same pipeline (e.g. a GUI, which can flip `stop`
+/// from a "Stop" button to end the session early -- checked once per hop,
+/// so it stops within about one hop's worth of latency).
 pub fn run_live_session(
+    config: NoteModelConfig,
     hop_seconds: f32,
-    stride_seconds: f32,
     duration_s: Option<f32>,
     stop: Arc<AtomicBool>,
     key_mode: Arc<Mutex<KeyMode>>,
@@ -522,7 +548,7 @@ pub fn run_live_session(
         let on_event_ref = &on_event;
         scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref));
         let mut emit = |event| (on_event.lock().unwrap())(event);
-        let result = run_note_pipeline(hop_seconds, stride_seconds, duration_s, &stop, &key_mode, |chunk| {
+        let result = run_note_pipeline(config, hop_seconds, duration_s, &stop, &key_mode, |chunk| {
             let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
         }, &mut emit);
         drop(beat_tx); // lets the beat thread flush and exit; the scope joins it
@@ -531,18 +557,17 @@ pub fn run_live_session(
 }
 
 fn run_note_pipeline(
+    config: NoteModelConfig,
     hop_seconds: f32,
-    stride_seconds: f32,
     duration_s: Option<f32>,
     stop: &AtomicBool,
     key_mode: &Mutex<KeyMode>,
     mut on_chunk: impl FnMut(&[f32]),
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
-    // the beat tracker reads the same chunks, so it needs the same rate
-    const _: () = assert!(beat_model::SAMPLE_RATE == AUDIO_SAMPLE_RATE);
-    let mut model = OnnxNoteModel::load()?;
-    let mut stitcher = NoteStitcher::new();
+    let model = HarmonicaModel::load(config.size, config.allow_directml)?;
+    let note_model = NoteModelInfo { size: model.size(), device: model.device(), future_frames: config.future_frames };
+    let mut transcriber = NoteTranscriber::new(model, config.future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut lines = LineTracker::new();
     let mut chord_display = ChordStabilizer::new();
@@ -550,29 +575,19 @@ fn run_note_pipeline(
     let mut last_covered = 0.0f32;
     let mut elapsed = 0.0f32;
 
-    let (_stream, rx) = live_capture::spawn_loopback_capture(hop_seconds)?;
-    let stride_samples = (stride_seconds * AUDIO_SAMPLE_RATE as f32).round() as usize;
-    let mut extractor = StreamingNoteExtractor::with_stride(&mut model, stride_samples);
-    // Read back the actually-clamped stride so the reported latency is
-    // authoritative even if the caller asked for something out of range.
-    let effective_stride_s = extractor.stride_samples() as f32 / AUDIO_SAMPLE_RATE as f32;
-    let total_latency_s = effective_stride_s + hop_seconds + CONFIRM_MARGIN_S + LATENCY_SAFETY_MARGIN_S;
-    on_event(PipelineEvent::Started { total_latency_s });
-    while let Ok(chunk) = rx.recv() {
-        on_chunk(&chunk);
-        let completed = extractor.push(&chunk)?;
+    let (_stream, rx) =
+        live_capture::spawn_loopback_capture(hop_seconds, [harmonica_model::SAMPLE_RATE, beat_model::SAMPLE_RATE])?;
+    let total_latency_s = transcriber.max_note_delay_s() + hop_seconds + LATENCY_SAFETY_MARGIN_S;
+    on_event(PipelineEvent::Started { total_latency_s, note_model });
+    while let Ok([note_chunk, beat_chunk]) = rx.recv() {
+        on_chunk(&beat_chunk);
+        let blocks_before = transcriber.blocks_done();
+        let notes = transcriber.push(&note_chunk)?;
         elapsed += hop_seconds;
-        if completed > 0 {
-            let note_events = extractor.note_events();
-            let covered = extractor.covered_seconds();
-            emit_confirmed_notes(
-                &mut stitcher,
-                covered,
-                &note_events,
-                &mut key_estimator,
-                &mut lines,
-                &mut on_event,
-            );
+        if transcriber.blocks_done() != blocks_before {
+            let note_events = transcriber.note_events();
+            let covered = transcriber.covered_seconds();
+            emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, &mut on_event);
             let current_key_mode = *key_mode.lock().unwrap();
             report_new_chords(
                 &note_events,
@@ -596,17 +611,19 @@ fn run_note_pipeline(
         }
     }
 
-    // NoteStitcher deliberately holds back anything within the last
-    // CONFIRM_MARGIN_S of "covered" time, in case more audio revises it.
-    // There's no more audio coming once the loop above exits -- flush what's
-    // left so it isn't silently lost.
-    let final_notes = extractor.note_events();
-    emit_notes(stitcher.flush(&final_notes), &final_notes, &mut key_estimator, &mut lines, &mut on_event);
+    // There's no more audio coming once the loop above exits (stop,
+    // duration_s, or the capture stream itself ending) -- `finish()`
+    // zero-pads and closes every still-open note (see
+    // `NoteTranscriber::finish`) so nothing still sounding at session end
+    // is silently dropped.
+    let final_notes = transcriber.finish()?;
+    let final_note_events = transcriber.note_events();
+    emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, &mut on_event);
     let current_key_mode = *key_mode.lock().unwrap();
     report_new_chords(
-        &final_notes,
+        &final_note_events,
         last_covered,
-        extractor.covered_seconds(),
+        transcriber.covered_seconds(),
         &mut chord_display,
         &mut key_estimator,
         &current_key_mode,
