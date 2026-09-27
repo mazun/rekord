@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 
 use crate::beat_model::{self, BeatModel};
-use crate::beat_tracker::BeatTracker;
+use crate::beat_tracker::{BeatGrid, BeatTracker};
 use crate::chord_templates::{extra_tensions, match_chord, ChordMatch};
 use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
 use crate::harmonica_model::{self, Device, HarmonicaModel, ModelSize};
@@ -137,6 +137,14 @@ pub enum PipelineEvent {
     /// `roman_numeral` is the chord's degree name relative to the most
     /// recently estimated key (see `key_estimator`), or `None` if no key
     /// estimate is confident yet (e.g. near session start).
+    ///
+    /// `t` is backdated to the earliest checkpoint consistent with this
+    /// chord already sounding (see `ChordStabilizer::observe`), not the
+    /// (later) time the hold-time gate actually let it commit, and then
+    /// snapped to the current beat grid if one is known (see
+    /// `snap_to_beat_grid`) -- so the event fires late but the rectangle
+    /// it draws doesn't start late, and lands on a clean subdivision
+    /// instead of visibly floating a few ms off of one.
     ChordChange { t: f32, label: String, roman_numeral: Option<String> },
     /// Notes currently sounding that fall outside the chord named by the
     /// last `ChordChange` -- e.g. a melodic passing tone over a held
@@ -192,9 +200,17 @@ fn beat_lines(beats: &[f64], downbeats: &[f64]) -> Vec<BeatLine> {
 /// The beat tracker's side of a live session: runs on its own thread (Beat This! costs ~40%
 /// of a core in real time, which must not delay the note pipeline) on a copy of every
 /// capture chunk, and emits a `BeatLines` snapshot whenever the lines change. Beat tracking
-/// failing (e.g. a missing model) only disables the lines, not the session. Public for
+/// failing (e.g. a missing model) only disables the lines, not the session. Also publishes
+/// its current `BeatGrid` to `beat_grid` after every chunk (a plain write behind a brief
+/// lock, never held during the actual model/DBN work) so the note-processing thread can snap
+/// chord onsets to it without ever blocking on this thread's heavier computation. Public for
 /// `examples/beat_replay.rs`, which drives it from a file at real-time pace.
-pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(rx: Receiver<Vec<f32>>, stop: &AtomicBool, on_event: &Mutex<F>) {
+pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(
+    rx: Receiver<Vec<f32>>,
+    stop: &AtomicBool,
+    on_event: &Mutex<F>,
+    beat_grid: &Mutex<Option<BeatGrid>>,
+) {
     let model = match BeatModel::load(1) {
         Ok(m) => m,
         Err(e) => {
@@ -239,6 +255,7 @@ pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(rx: Receiver<Vec<f32>>, stop: &
             eprintln!("beat tracking stopped: {e:#}");
             return;
         }
+        *beat_grid.lock().unwrap() = tracker.beat_grid(tracker.now());
         emit(&tracker);
     }
     // the capture ended on its own (e.g. --duration): commit through the end, as the note pipeline's finish()
@@ -325,6 +342,32 @@ fn evaluate_active(note_events: &[NoteEvent], t: f32) -> ActiveNow {
 // live playing, same as WINDOW_S/SWITCH_MARGIN in key_estimator.rs.
 const CHORD_MIN_HOLD_S: f32 = 0.15;
 
+// A committed chord's (backdated) onset is snapped to the nearest point on this subdivision
+// of the current `BeatGrid` (see `BeatTracker::beat_grid`), once one is known -- fine enough
+// (a sixteenth of a beat) that a legitimate off-beat onset (an eighth-note anticipation, a
+// syncopated pickup) still lands on its own grid line rather than being dragged all the way
+// to the nearest beat, but coarse enough to absorb the residual onset-detection/hold-time
+// slop `since` still carries. No published source prescribes this either -- start here and
+// tune empirically against live playing, same as CHORD_MIN_HOLD_S/WINDOW_S/SWITCH_MARGIN.
+const CHORD_SNAP_SUBDIVISIONS_PER_BEAT: f64 = 4.0; // sixteenth notes
+
+/// Nearest point on `grid`'s subdivision lattice (see `CHORD_SNAP_SUBDIVISIONS_PER_BEAT`) to
+/// `t`, or `t` unchanged if no grid is known yet (session start, or beat tracking disabled/
+/// unavailable -- matches file mode, which never has one). Snapped once, at commit time, and
+/// never revised afterward even if the grid estimate is later corrected: such corrections are
+/// rare in practice (confirmed live, 2026-09-27), and letting a displayed chord's start move
+/// after the fact would reintroduce the same kind of visible jitter the piano-roll clock's
+/// fixed-offset design (see CLAUDE.md, "Piano-roll clock") already avoids elsewhere.
+fn snap_to_beat_grid(t: f32, grid: Option<BeatGrid>) -> f32 {
+    let Some(grid) = grid else { return t };
+    if !(grid.period_s > 0.0) {
+        return t; // guards against a degenerate/zero period rather than trusting it blindly
+    }
+    let step = grid.period_s / CHORD_SNAP_SUBDIVISIONS_PER_BEAT;
+    let k = ((t as f64 - grid.anchor_s) / step).round();
+    (grid.anchor_s + k * step) as f32
+}
+
 /// Stabilizes the displayed chord against brief melodic interference
 /// (`CHORD_MIN_HOLD_S` hold-time hysteresis, mirroring the proven
 /// margin/hold pattern in `KeyEstimator`) while separately surfacing
@@ -352,12 +395,14 @@ impl ChordStabilizer {
         candidate: ChordAt,
         t: f32,
         current_key: Option<KeyEstimate>,
+        beat_grid: Option<BeatGrid>,
         on_event: &mut impl FnMut(PipelineEvent),
     ) {
         let roman = match (&candidate, current_key) {
             (ChordAt::Match(m), Some(key)) => Some(roman_numeral(&key, m)),
             _ => None,
         };
+        let t = snap_to_beat_grid(t, beat_grid);
         on_event(PipelineEvent::ChordChange { t, label: candidate.label(), roman_numeral: roman });
         self.displayed = Some(candidate);
         self.pending = None;
@@ -372,6 +417,7 @@ impl ChordStabilizer {
         evaluated: ActiveNow,
         t: f32,
         current_key: Option<KeyEstimate>,
+        beat_grid: Option<BeatGrid>,
         mut on_event: impl FnMut(PipelineEvent),
     ) {
         // A chord's notes don't release simultaneously -- confirmed via
@@ -393,12 +439,21 @@ impl ChordStabilizer {
         if let Some(candidate) = evaluated.chord {
             if !is_decay_to_bare_fifth {
                 match self.displayed {
-                    None => self.commit(candidate, t, current_key, &mut on_event),
+                    None => self.commit(candidate, t, current_key, beat_grid, &mut on_event),
                     Some(cur) if cur == candidate => self.pending = None,
                     Some(_) => match self.pending {
                         Some((cand, since)) if cand == candidate => {
+                            // Backdated to `since`, not `t`: `since` is the earliest
+                            // checkpoint at which this exact candidate already won every
+                            // re-evaluation, i.e. the earliest time consistent with the
+                            // notes actually sounding -- CHORD_MIN_HOLD_S is a decision
+                            // gate against melodic flicker, not a claim about when the
+                            // chord itself began, so it shouldn't also push back the
+                            // displayed start time (mirrors NoteConfirmed, which already
+                            // reports a note's true onset despite arriving once it ends).
+                            // `commit` then snaps it to the beat grid on top of that.
                             if t - since >= CHORD_MIN_HOLD_S {
-                                self.commit(candidate, t, current_key, &mut on_event);
+                                self.commit(candidate, since, current_key, beat_grid, &mut on_event);
                             }
                         }
                         _ => self.pending = Some((candidate, t)),
@@ -444,6 +499,9 @@ const CHORD_CHECKPOINT_GRID_S: f32 = 0.05;
 /// Re-evaluate the chord at every note onset within the newly covered
 /// span, plus a periodic grid (see `CHORD_CHECKPOINT_GRID_S`) so a held
 /// chord always gets enough checkpoints to clear `CHORD_MIN_HOLD_S`.
+/// `beat_grid` is the beat tracker's current grid, if any is known yet
+/// (see `BeatTracker::beat_grid`) -- `None` in file mode, which has no
+/// beat tracker at all, and early in a live session before one settles.
 pub fn report_new_chords(
     note_events: &[NoteEvent],
     prev_covered: f32,
@@ -451,6 +509,7 @@ pub fn report_new_chords(
     chord_display: &mut ChordStabilizer,
     key_estimator: &mut KeyEstimator,
     key_mode: &KeyMode,
+    beat_grid: Option<BeatGrid>,
     last_key_name: &mut Option<String>,
     mut on_event: impl FnMut(PipelineEvent),
 ) {
@@ -494,7 +553,7 @@ pub fn report_new_chords(
             }
         }
         let evaluated = evaluate_active(note_events, t);
-        chord_display.observe(evaluated, t, current_key, &mut on_event);
+        chord_display.observe(evaluated, t, current_key, beat_grid, &mut on_event);
     }
 }
 
@@ -542,13 +601,15 @@ pub fn run_live_session(
     on_event: impl FnMut(PipelineEvent) + Send,
 ) -> Result<()> {
     let on_event = Mutex::new(on_event);
+    let beat_grid: Mutex<Option<BeatGrid>> = Mutex::new(None);
     let (beat_tx, beat_rx) = channel::<Vec<f32>>();
     std::thread::scope(|scope| {
         let beat_stop = &*stop;
         let on_event_ref = &on_event;
-        scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref));
+        let beat_grid_ref = &beat_grid;
+        scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref, beat_grid_ref));
         let mut emit = |event| (on_event.lock().unwrap())(event);
-        let result = run_note_pipeline(config, hop_seconds, duration_s, &stop, &key_mode, |chunk| {
+        let result = run_note_pipeline(config, hop_seconds, duration_s, &stop, &key_mode, &beat_grid, |chunk| {
             let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
         }, &mut emit);
         drop(beat_tx); // lets the beat thread flush and exit; the scope joins it
@@ -562,6 +623,7 @@ fn run_note_pipeline(
     duration_s: Option<f32>,
     stop: &AtomicBool,
     key_mode: &Mutex<KeyMode>,
+    beat_grid: &Mutex<Option<BeatGrid>>,
     mut on_chunk: impl FnMut(&[f32]),
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
@@ -589,6 +651,7 @@ fn run_note_pipeline(
             let covered = transcriber.covered_seconds();
             emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, &mut on_event);
             let current_key_mode = *key_mode.lock().unwrap();
+            let current_beat_grid = *beat_grid.lock().unwrap();
             report_new_chords(
                 &note_events,
                 last_covered,
@@ -596,6 +659,7 @@ fn run_note_pipeline(
                 &mut chord_display,
                 &mut key_estimator,
                 &current_key_mode,
+                current_beat_grid,
                 &mut last_key_name,
                 &mut on_event,
             );
@@ -620,6 +684,7 @@ fn run_note_pipeline(
     let final_note_events = transcriber.note_events();
     emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, &mut on_event);
     let current_key_mode = *key_mode.lock().unwrap();
+    let current_beat_grid = *beat_grid.lock().unwrap();
     report_new_chords(
         &final_note_events,
         last_covered,
@@ -627,6 +692,7 @@ fn run_note_pipeline(
         &mut chord_display,
         &mut key_estimator,
         &current_key_mode,
+        current_beat_grid,
         &mut last_key_name,
         &mut on_event,
     );
