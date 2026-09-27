@@ -93,10 +93,11 @@ npm run tauri dev
     amplify the difference. Verified to be the binary, not the windowing
     (2026-09-27); notes are identical.
   - The weights are for non-commercial use only (training data include
-    CC BY-NC-SA material; `rust/core/models/harmonica.LICENSE.txt`). The ONNX
-    files are copied by hand from `harmonica-repro/runs/p5/onnx/`
-    (`rust/core/models/` is gitignored); `build.rs` stops with a message if
-    one is missing.
+    CC BY-NC-SA material; see the model card). They're hosted in the Hugging
+    Face model repo `mazun/rekord` (private for now), which `build.rs`
+    downloads from at a pinned commit (`HF_REVISION`) and checks against
+    pinned SHA-256s; `rust/core/models/` is gitignored. New weights: upload
+    them there first, then update `HF_REVISION` and the hashes.
 
 - **Beat/downbeat tracking (`beat_model.rs`, `beat_tracker.rs`, and the DBN
   decoder in its own crate `rust/beat_dbn/`) is Beat This! small0 + madmom's

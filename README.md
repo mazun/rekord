@@ -65,11 +65,12 @@ cargo build --release
 | `--cpu` | Disables DirectML, forcing the small model onto CPU |
 | `--hop <seconds>` | Interval between chunks of captured (or, in file mode, simulated) audio handed off for processing (default: 0.064s) |
 
-Harmonica's ONNX model files (`cqt156.onnx`, `small_uni_300k.onnx`,
-`medium_uni_300k_urmp.onnx`, `large_uni_300k_urmp.onnx`) must be copied by
-hand into `rust/core/models/` from the separate harmonica-repro project's
-`runs/p5/onnx/` -- `cargo build` doesn't download them (see
-[Third party](#third-party) for why). basic-pitch is no longer used.
+`cargo build` downloads Harmonica's ONNX model files into
+`rust/core/models/` from the Hugging Face model repo
+[mazun/rekord](https://huggingface.co/mazun/rekord), at a pinned revision
+and checked against pinned SHA-256s. That repo is private for now, so the
+build needs `HF_TOKEN` set to a read-access token (or Hugging Face's token
+file, `~/.cache/huggingface/token`).
 
 ## Layout
 
@@ -96,10 +97,10 @@ sample_audio/          Piano recordings used for validation
   harmonica-repro project, on data that includes CC BY-NC-SA 4.0 material
   (MAESTRO, and the GAPS dataset's Zenodo release) -- so, unlike the rest
   of this repository, they're for non-commercial use only and aren't
-  covered by the MIT license below. See
-  `rust/core/models/harmonica.LICENSE.txt` for the full breakdown. They
-  aren't bundled in the repository; see the CLI section above for where to
-  get them.
+  covered by the MIT license below. See the
+  [model card](https://huggingface.co/mazun/rekord) for the full breakdown.
+  They aren't in this repository; `cargo build` downloads them (see the CLI
+  section above).
 - Main dependencies: [ort](https://github.com/pykeio/ort),
   [cpal](https://github.com/RustAudio/cpal), [Tauri](https://tauri.app/),
   [Svelte](https://svelte.dev/), [Bits UI](https://bits-ui.com/),

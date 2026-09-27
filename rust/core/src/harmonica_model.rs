@@ -5,7 +5,7 @@
 //! see that repo's `docs/phase5-report.md` for the executable spec this
 //! follows. Streaming (window construction, block scheduling) lives in
 //! `harmonica_stream.rs`; this module is just model loading + single-window
-//! inference, mirroring `onnx_model.rs`/`beat_model.rs`'s split.
+//! inference, mirroring `beat_model.rs`'s split.
 
 use anyhow::{anyhow, Result};
 use ndarray::{Array2, ArrayView2};
