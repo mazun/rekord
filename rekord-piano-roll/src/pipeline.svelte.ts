@@ -130,6 +130,7 @@ export interface PipelineHandlers {
   onStarted(totalLatencyS: number): void;
   onNote(note: ConfirmedNote): void;
   onBeatLines(lines: BeatLines): void;
+  onChordChange(t: number, label: string, romanNumeral: string | null): void;
 }
 
 // Note, beat-line and clock events bypass reactive state entirely and go straight to
@@ -160,6 +161,7 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
     } else if (payload.type === "ChordChange") {
       pipeline.chord = payload.label;
       pipeline.roman = payload.roman_numeral ?? EMPTY_ROMAN;
+      handlers.onChordChange(payload.t, payload.label, payload.roman_numeral);
     } else if (payload.type === "TensionsChanged") {
       pipeline.tensions = payload.tensions;
     } else if (payload.type === "BeatLines") {

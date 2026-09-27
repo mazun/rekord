@@ -1,4 +1,4 @@
-import { Application, Container, Graphics } from "pixi.js";
+import { Application, Container, Graphics, Text } from "pixi.js";
 
 const MIN_PITCH = 21; // A0
 const MAX_PITCH = 108; // C8
@@ -43,6 +43,28 @@ const BAR_LINE_WIDTH = 2;
 const BEAT_MATCH_TOLERANCE_S = 0.1;
 // Time constant of every beat-line transition (layer, bar/beat, position, fade in/out).
 const BEAT_ANIM_TAU_S = 0.15;
+
+// Chord history lane (rekord_core::pipeline::ChordStabilizer, via PipelineEvent::ChordChange):
+// a strip along the top showing each stabilized chord as it scrolls past, like the notes below
+// it -- a chord's rectangle starts at its ChordChange time and, unlike a note, has no known end
+// until the *next* ChordChange arrives, so the still-current chord's right edge is redrawn at
+// the playhead every tick instead of a fixed value. Bands alternate tint solely so consecutive
+// chords read as distinct spans; it carries no other meaning. The roman numeral is repeated here
+// (already shown big in ChordDisplay.svelte) because the point of putting chords on the roll at
+// all is seeing the *progression* scroll past, and the numeral is the part of that worth reading
+// after the chord itself has scrolled away from the always-current ChordDisplay.
+const CHORD_LANE_HEIGHT = 34;
+const CHORD_LABEL_FONT_SIZE = 13;
+const CHORD_ROMAN_FONT_SIZE = 10;
+const CHORD_LABEL_PADDING = 6;
+const CHORD_BAND_COLOR_A = 0x1c2136;
+const CHORD_BAND_COLOR_B = 0x242b47;
+const CHORD_BOUNDARY_COLOR = 0x5a6580;
+const CHORD_TEXT_COLOR = 0xe8e8ec; // matches --text
+const CHORD_ROMAN_COLOR = 0x8b93a7; // matches --text-dim
+const CHORD_SILENCE_COLOR = 0x555f78;
+// Mirrors ChordAt::Silence's label() in pipeline.rs.
+const SILENCE_LABEL = "(silence)";
 
 // Vertical piano keyboard drawn at the playhead (the "now" line notes
 // scroll into). Its left edge doubles as the playhead x, replacing the
@@ -115,6 +137,17 @@ interface BeatSprite {
   dying: boolean; // absent from the latest snapshot: fading out, then destroyed
 }
 
+// endS is null for the still-current chord -- its right edge is computed fresh from the
+// playhead each tick instead (see tickChordSegments).
+interface ChordSegment {
+  startS: number;
+  endS: number | null;
+  band: Graphics;
+  boundary: Graphics;
+  label: Text;
+  roman: Text;
+}
+
 interface KeySprite {
   graphic: Graphics;
   isBlack: boolean;
@@ -150,6 +183,8 @@ export class PianoRoll {
   private noteLayer: Container;
   private beatLayer = new Container();
   private beatLines: BeatSprite[] = [];
+  private chordLayer = new Container();
+  private chordSegments: ChordSegment[] = [];
   private guides = new Graphics();
   private keyboardBacking = new Graphics();
   private keys = new Map<number, KeySprite>();
@@ -184,6 +219,7 @@ export class PianoRoll {
     app.stage.addChild(roll.guides);
     app.stage.addChild(roll.beatLayer);
     app.stage.addChild(noteLayer);
+    app.stage.addChild(roll.chordLayer);
     app.stage.addChild(keyboardLayer);
     keyboardLayer.addChild(roll.keyboardBacking);
     roll.createKeyboard(keyboardLayer);
@@ -232,7 +268,7 @@ export class PianoRoll {
     this.keyboardBacking.x = noteAreaWidth;
     this.keyboardBacking.y = 0;
 
-    const rowHeight = height / (MAX_PITCH - MIN_PITCH);
+    const rowHeight = (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
     for (const [pitch, key] of this.keys) {
       key.graphic.x = noteAreaWidth;
       key.graphic.y = this.pitchToY(pitch, height) - rowHeight / 2;
@@ -271,13 +307,15 @@ export class PianoRoll {
     const key = this.keys.get(pitch);
     if (!key || key.active === active) return;
     key.active = active;
-    const rowHeight = this.app.screen.height / (MAX_PITCH - MIN_PITCH);
+    const rowHeight = (this.app.screen.height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
     this.redrawKey(key, rowHeight);
   }
 
+  // Rows fill [CHORD_LANE_HEIGHT, height], not [0, height] -- the chord lane at the top is
+  // reserved space, like KEYBOARD_WIDTH is on the right, not an overlay on top of note rows.
   private pitchToY(pitch: number, height: number): number {
     const t = (pitch - MIN_PITCH) / (MAX_PITCH - MIN_PITCH);
-    return height - t * height;
+    return height - t * (height - CHORD_LANE_HEIGHT);
   }
 
   /** Clears the view and starts the scroll clock. Call when a session
@@ -291,6 +329,13 @@ export class PianoRoll {
     this.notes = [];
     for (const b of this.beatLines) b.graphic.destroy();
     this.beatLines = [];
+    for (const c of this.chordSegments) {
+      c.band.destroy();
+      c.boundary.destroy();
+      c.label.destroy();
+      c.roman.destroy();
+    }
+    this.chordSegments = [];
     for (const pitch of this.keys.keys()) this.setKeyActive(pitch, false);
   }
 
@@ -312,7 +357,7 @@ export class PianoRoll {
 
   addNote(note: ConfirmedNote): void {
     const height = this.app.screen.height;
-    const noteHeightPx = Math.max(3, height / (MAX_PITCH - MIN_PITCH) - 1);
+    const noteHeightPx = Math.max(3, (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
     const widthPx = Math.max(2, (note.end_s - note.start_s) * PIXELS_PER_SECOND);
 
     const [colorMin, colorMax] =
@@ -333,6 +378,67 @@ export class PianoRoll {
     graphic.y = this.pitchToY(note.pitch_midi, height) - noteHeightPx / 2;
     this.noteLayer.addChild(graphic);
     this.notes.push({ ...note, graphic });
+  }
+
+  /** Appends a newly stabilized chord (rekord_core's ChordStabilizer already debounced it --
+   * this never revises or removes a segment, only closes the previous one off at `t` and opens
+   * a new one). `t` is the pipeline's own clock, positioned with xForTime like everything else. */
+  addChordChange(t: number, label: string, romanNumeral: string | null): void {
+    const previous = this.chordSegments[this.chordSegments.length - 1];
+    if (previous) previous.endS = t;
+
+    const band = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
+    band.tint = this.chordSegments.length % 2 === 0 ? CHORD_BAND_COLOR_A : CHORD_BAND_COLOR_B;
+    const boundary = new Graphics().rect(0, 0, 1, 1).fill({ color: CHORD_BOUNDARY_COLOR });
+    const isSilence = label === SILENCE_LABEL;
+    const labelText = new Text({
+      text: label,
+      style: { fontSize: CHORD_LABEL_FONT_SIZE, fontWeight: "600", fill: isSilence ? CHORD_SILENCE_COLOR : CHORD_TEXT_COLOR },
+    });
+    const romanText = new Text({
+      text: romanNumeral ?? "",
+      style: { fontSize: CHORD_ROMAN_FONT_SIZE, fill: CHORD_ROMAN_COLOR },
+    });
+    band.visible = !isSilence;
+    this.chordLayer.addChild(band, boundary, labelText, romanText);
+    this.chordSegments.push({ startS: t, endS: null, band, boundary, label: labelText, roman: romanText });
+  }
+
+  /** Positions every chord segment for the current displayS(), same as onTick does for notes,
+   * and prunes ones fully scrolled past the left edge. The label/roman text sticks to the
+   * visible left edge of its segment (clamped between the segment's own bounds) rather than
+   * scrolling off with its start time, so a long-held chord's name stays readable the whole
+   * time it's current -- the same reasoning a sticky table header uses. */
+  private tickChordSegments(): void {
+    const kept: ChordSegment[] = [];
+    for (const seg of this.chordSegments) {
+      const leftX = this.xForTime(seg.startS);
+      const rightX = seg.endS !== null ? this.xForTime(seg.endS) : this.playheadX();
+      if (rightX < 0) {
+        seg.band.destroy();
+        seg.boundary.destroy();
+        seg.label.destroy();
+        seg.roman.destroy();
+        continue;
+      }
+      const width = Math.max(0, rightX - leftX);
+      seg.band.x = leftX;
+      seg.band.scale.set(width, CHORD_LANE_HEIGHT);
+      seg.boundary.x = leftX;
+      seg.boundary.scale.set(1.5, CHORD_LANE_HEIGHT);
+
+      // Widest of the label/roman text decides how much room the sticky clamp gives itself --
+      // a short label like "C" shouldn't get pinned any further right than a wide one would.
+      const textWidth = Math.max(seg.label.width, seg.roman.width);
+      const maxTextX = rightX - textWidth - CHORD_LABEL_PADDING;
+      const textX = Math.max(leftX + CHORD_LABEL_PADDING, Math.min(CHORD_LABEL_PADDING, maxTextX));
+      seg.label.x = textX;
+      seg.label.y = 2;
+      seg.roman.x = textX;
+      seg.roman.y = CHORD_LANE_HEIGHT - seg.roman.height - 2;
+      kept.push(seg);
+    }
+    this.chordSegments = kept;
   }
 
   /** Applies a BeatLines snapshot: it replaces every line at or after `from_s`. A line
@@ -399,6 +505,7 @@ export class PianoRoll {
   private onTick(): void {
     if (!this.running) return;
     this.tickBeatLines(this.app.ticker.deltaMS / 1000);
+    this.tickChordSegments();
     const displayS = this.displayS();
     const activePitches = new Set<number>();
     const stillVisible: NoteSprite[] = [];
