@@ -98,6 +98,7 @@ fn run_file(audio_path: &str, size: ModelSize, future_frames: usize, allow_direc
                 &mut chord_display,
                 &mut key_estimator,
                 &pipeline::KeyMode::Auto,
+                None, // file mode has no beat tracker to snap chord onsets to
                 &mut last_key_name,
                 print_event,
             );
@@ -117,6 +118,7 @@ fn run_file(audio_path: &str, size: ModelSize, future_frames: usize, allow_direc
         &mut chord_display,
         &mut key_estimator,
         &pipeline::KeyMode::Auto,
+        None,
         &mut last_key_name,
         print_event,
     );

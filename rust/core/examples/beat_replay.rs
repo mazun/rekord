@@ -62,9 +62,10 @@ fn main() -> Result<()> {
         }
     });
     let stop = AtomicBool::new(false);
+    let beat_grid = Mutex::new(None);
     let (tx, rx) = channel();
     std::thread::scope(|scope| {
-        scope.spawn(|| run_beat_tracker(rx, &stop, &on_event));
+        scope.spawn(|| run_beat_tracker(rx, &stop, &on_event, &beat_grid));
         for (k, chunk) in audio.chunks(n).enumerate() {
             // chunk k covers [k hop, (k+1) hop) and is delivered once it has all been captured
             let due = Duration::from_secs_f64((k + 1) as f64 * hop);

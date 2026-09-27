@@ -119,6 +119,16 @@ pub struct PredictedLine {
     pub is_bar: bool,
 }
 
+/// A local beat grid: `anchor_s` is a settled provisional beat's time and `period_s` the
+/// seconds-per-beat around it (from the same last-5-beats median `predicted_lines` itself
+/// extrapolates from), usable to snap an arbitrary timestamp to the nearest fine subdivision
+/// without being limited to `lines()`'s own `MAX_AHEAD`-beat horizon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BeatGrid {
+    pub anchor_s: f64,
+    pub period_s: f64,
+}
+
 /// What the piano roll would show at a given time: committed, provisional (after the
 /// committed frontier) and predicted lines. Mirrors `OnlineTracker.lines`.
 #[derive(Debug, Clone, Default)]
@@ -256,6 +266,20 @@ impl BeatTracker {
     /// leading pad. Mirrors `OnlineTracker.lines`'s default.
     pub fn now(&self) -> f64 {
         (self.audio.len() as f64 - (N_FFT as f64 / 2.0)) / SAMPLE_RATE as f64
+    }
+
+    /// The current best-known beat grid as of `now` (typically `self.now()`), or `None`
+    /// before enough provisional beats have settled -- same settled-beat filter and
+    /// last-5-diffs median `predicted_lines` uses, just returned as a reusable anchor+period
+    /// instead of a couple of lookahead points.
+    pub fn beat_grid(&self, now: f64) -> Option<BeatGrid> {
+        let pb_known: Vec<f64> = self.prov_b.iter().cloned().filter(|&x| x + PROV_DELAY <= now).collect();
+        if pb_known.len() < 5 {
+            return None;
+        }
+        let last5 = &pb_known[pb_known.len() - 5..];
+        let diffs: Vec<f64> = last5.windows(2).map(|w| w[1] - w[0]).collect();
+        Some(BeatGrid { anchor_s: *pb_known.last().unwrap(), period_s: median(diffs) })
     }
 
     // ------------------------------------------------------------------ input
