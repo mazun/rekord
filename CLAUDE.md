@@ -133,13 +133,9 @@ npm run tauri dev
     downloads from at a pinned commit (`HF_REVISION`) and checks against
     pinned SHA-256s; `rust/core/models/` is gitignored. New weights: upload
     them there first, then update `HF_REVISION` and the hashes.
-    **`mix_large_v1.onnx` is not on Hugging Face yet** (2026-10-02, pending the
-    user's upload) and is therefore not in `build.rs`'s `HARMONICA_MODELS`
-    (listing it before the upload would make every build fail on the
-    download): copy it from harmonica-repro's `runs/mix_b4/onnx/` into
-    `rust/core/models/` by hand until then. Its training data also include
-    the user's own commercial CDs (328 h, mixes + pseudo-labels), which the
-    model card's license text has to say.
+    `mix_large_v1.onnx` was uploaded and pinned on 2026-10-03 (revision
+    `4f3b3d37`). Its training data also include the user's own commercial CDs
+    (328 h, mixes + pseudo-labels), which the model card's license text says.
 
 - **Beat/downbeat tracking (`beat_model.rs`, `beat_tracker.rs`, and the DBN
   decoder in its own crate `rust/beat_dbn/`) is Beat This! small0 + madmom's
