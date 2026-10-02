@@ -29,9 +29,10 @@
       }}
       disabled={pipeline.status !== "idle"}
     >
-      <option value="small">{t("settings.noteModelSmall")}</option>
-      <option value="medium">{t("settings.noteModelMedium")}</option>
+      <option value="mix">{t("settings.noteModelMix")}</option>
       <option value="large">{t("settings.noteModelLarge")}</option>
+      <option value="medium">{t("settings.noteModelMedium")}</option>
+      <option value="small">{t("settings.noteModelSmall")}</option>
     </select>
     {#if pipeline.noteModel?.device === "cpu"}
       <p class="settings-note">{t("settings.cpuFallbackNote")}</p>

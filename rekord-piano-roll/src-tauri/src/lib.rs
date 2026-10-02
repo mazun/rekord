@@ -34,7 +34,7 @@ fn start_capture(
     // Sanity checks on the frontend-supplied model settings -- server-side
     // insurance so a malformed value can never reach the pipeline, on top
     // of whatever validation the frontend's settings loaders already do.
-    let size = model_size.parse::<ModelSize>().unwrap_or(ModelSize::Large);
+    let size = model_size.parse::<ModelSize>().unwrap_or(ModelSize::Mix);
     let future_frames = if FUTURE_FRAME_CHOICES.contains(&future_frames) {
         future_frames
     } else {

@@ -9,10 +9,10 @@
 use std::collections::VecDeque;
 
 use anyhow::Result;
-use ndarray::{s, Array2};
+use ndarray::s;
 
 use crate::harmonica_decode::{ConfirmedNote, DecodedNote, NoteEvent, StreamingDecoder};
-use crate::harmonica_model::{HarmonicaModel, BLOCK_FRAMES, CHUNK, FRAME_S, HISTORY, HOP, WINDOW_SAMPLES};
+use crate::harmonica_model::{HarmonicaModel, Part, PartProbs, BLOCK_FRAMES, CHUNK, FRAME_S, HISTORY, HOP, WINDOW_SAMPLES};
 
 /// How long a finished note stays in `NoteTranscriber::note_events` after it
 /// ends. Those events are the context chord matching (`pipeline.rs`) and the
@@ -21,14 +21,13 @@ use crate::harmonica_model::{HarmonicaModel, BLOCK_FRAMES, CHUNK, FRAME_S, HISTO
 /// basic-pitch extractor used to retain.
 pub const RETAINED_SECONDS: f32 = 3.3;
 
-/// One streaming block's output: onset/sustain/offset probabilities for
-/// frames `[first_frame, first_frame + rows)`, normally BLOCK_FRAMES (8)
-/// rows, fewer only for the final block(s) emitted by `finish`.
+/// One streaming block's output: per output part, onset/sustain/offset
+/// probabilities for frames `[first_frame, first_frame + rows)`, normally
+/// BLOCK_FRAMES (8) rows, fewer only for the final block(s) emitted by
+/// `finish`. `parts` is in the model's `parts()` order.
 pub struct BlockProbs {
     pub first_frame: usize,
-    pub onset: Array2<f32>,
-    pub sustain: Array2<f32>,
-    pub offset: Array2<f32>,
+    pub parts: Vec<PartProbs>,
 }
 
 /// Feeds arbitrarily-sized audio chunks to a `HarmonicaModel` and emits
@@ -137,7 +136,7 @@ impl BlockStreamer {
                 mag.row_mut(i).fill(0.0);
             }
         }
-        let [onset, sustain, offset] = self.model.net(mag.view())?;
+        let net_parts = self.model.net(mag.view())?;
         let local_start = CHUNK - BLOCK_FRAMES - self.future_frames;
         let local_end = match t_limit {
             // Only rows whose absolute frame (w0 + row) is < T are real.
@@ -147,12 +146,16 @@ impl BlockStreamer {
             None => CHUNK - self.future_frames,
         };
 
-        Ok(BlockProbs {
-            first_frame: BLOCK_FRAMES * b,
-            onset: onset.slice(s![local_start..local_end, ..]).to_owned(),
-            sustain: sustain.slice(s![local_start..local_end, ..]).to_owned(),
-            offset: offset.slice(s![local_start..local_end, ..]).to_owned(),
-        })
+        let parts = net_parts
+            .into_iter()
+            .map(|p| PartProbs {
+                part: p.part,
+                onset: p.onset.slice(s![local_start..local_end, ..]).to_owned(),
+                sustain: p.sustain.slice(s![local_start..local_end, ..]).to_owned(),
+                offset: p.offset.slice(s![local_start..local_end, ..]).to_owned(),
+            })
+            .collect();
+        Ok(BlockProbs { first_frame: BLOCK_FRAMES * b, parts })
     }
 
     /// Drops buffered audio strictly before absolute sample `abs` -- safe
@@ -218,14 +221,17 @@ impl BlockStreamer {
     }
 }
 
-/// `BlockStreamer` + `StreamingDecoder` + a short retained-note history for
-/// display. There is no confirm margin (unlike basic-pitch's
-/// `NoteStitcher`): the streaming decode never revises a note once it's
-/// decided a note has ended, so each is emitted exactly once, the moment
-/// that becomes known -- nothing to "confirm" later.
+/// `BlockStreamer` + one `StreamingDecoder` per output part + a short
+/// retained-note history for display. There is no confirm margin (unlike
+/// basic-pitch's `NoteStitcher`): the streaming decode never revises a note
+/// once it's decided a note has ended, so each is emitted exactly once, the
+/// moment that becomes known -- nothing to "confirm" later.
 pub struct NoteTranscriber {
     streamer: BlockStreamer,
-    decoder: StreamingDecoder,
+    /// One decoder per model part, in the model's `parts()` order, each with
+    /// that part's own thresholds. All of them see the same frames, so their
+    /// frame counters always agree.
+    decoders: Vec<(Part, StreamingDecoder)>,
     future_frames: usize,
     /// Recently-finished notes kept around for `note_events`'s rolling
     /// display window. Pruned with a full `retain` rather than a front-only
@@ -240,10 +246,15 @@ pub struct NoteTranscriber {
 
 impl NoteTranscriber {
     pub fn new(model: HarmonicaModel, future_frames: usize) -> Self {
-        let (th_on, th_sus) = model.size().thresholds();
+        let decoders = model
+            .parts()
+            .iter()
+            .zip(model.part_thresholds(future_frames))
+            .map(|(&part, &(th_on, th_sus))| (part, StreamingDecoder::new(th_on, th_sus)))
+            .collect();
         Self {
             streamer: BlockStreamer::new(model, future_frames),
-            decoder: StreamingDecoder::new(th_on, th_sus),
+            decoders,
             future_frames,
             finished_notes: Vec::new(),
         }
@@ -264,7 +275,7 @@ impl NoteTranscriber {
     /// Seconds of audio whose note state is final -- nothing at or before
     /// this time will ever change again.
     pub fn covered_seconds(&self) -> f32 {
-        self.decoder.decided_frames() as f32 * FRAME_S
+        self.decoders[0].1.decided_frames() as f32 * FRAME_S
     }
 
     /// Worst case from a note's true end to the moment it's emitted: an
@@ -274,10 +285,16 @@ impl NoteTranscriber {
         (BLOCK_FRAMES + self.future_frames) as f32 * FRAME_S
     }
 
-    fn finalize(&mut self, decoded: Vec<DecodedNote>) -> Vec<ConfirmedNote> {
+    fn finalize(&mut self, decoded: Vec<(Part, DecodedNote)>) -> Vec<ConfirmedNote> {
         let mut confirmed: Vec<ConfirmedNote> = decoded
             .into_iter()
-            .map(|n| ConfirmedNote { start_s: n.start_frame as f32 * FRAME_S, end_s: n.end_frame as f32 * FRAME_S, pitch_midi: n.pitch_midi, velocity: n.velocity })
+            .map(|(part, n)| ConfirmedNote {
+                start_s: n.start_frame as f32 * FRAME_S,
+                end_s: n.end_frame as f32 * FRAME_S,
+                pitch_midi: n.pitch_midi,
+                part,
+                velocity: n.velocity,
+            })
             .collect();
         confirmed.sort_by(|a, b| a.start_s.partial_cmp(&b.start_s).unwrap());
         self.finished_notes.extend(confirmed.iter().copied());
@@ -289,10 +306,8 @@ impl NoteTranscriber {
     /// Feeds audio; returns notes that ended while processing it.
     pub fn push(&mut self, audio: &[f32]) -> Result<Vec<ConfirmedNote>> {
         let mut decoded = Vec::new();
-        let decoder = &mut self.decoder;
-        self.streamer.push(audio, |block: BlockProbs| {
-            decoded.extend(decoder.push(block.onset.view(), block.sustain.view()));
-        })?;
+        let decoders = &mut self.decoders;
+        self.streamer.push(audio, |block: BlockProbs| push_block(decoders, &block, &mut decoded))?;
         Ok(self.finalize(decoded))
     }
 
@@ -301,11 +316,11 @@ impl NoteTranscriber {
     /// follow.
     pub fn finish(&mut self) -> Result<Vec<ConfirmedNote>> {
         let mut decoded = Vec::new();
-        let decoder = &mut self.decoder;
-        self.streamer.finish(|block: BlockProbs| {
-            decoded.extend(decoder.push(block.onset.view(), block.sustain.view()));
-        })?;
-        decoded.extend(self.decoder.finish());
+        let decoders = &mut self.decoders;
+        self.streamer.finish(|block: BlockProbs| push_block(decoders, &block, &mut decoded))?;
+        for (part, decoder) in &mut self.decoders {
+            decoded.extend(decoder.finish().into_iter().map(|n| (*part, n)));
+        }
         Ok(self.finalize(decoded))
     }
 
@@ -316,11 +331,22 @@ impl NoteTranscriber {
         let covered = self.covered_seconds();
         let cutoff = covered - RETAINED_SECONDS;
         let mut events: Vec<NoteEvent> =
-            self.finished_notes.iter().filter(|n| n.end_s >= cutoff).map(|n| (n.start_s, n.end_s, n.pitch_midi, n.velocity)).collect();
-        for (start_frame, pitch, vel) in self.decoder.open_notes() {
-            events.push((start_frame as f32 * FRAME_S, covered, pitch, vel));
+            self.finished_notes.iter().filter(|n| n.end_s >= cutoff).map(|n| (n.start_s, n.end_s, n.pitch_midi, n.velocity, n.part)).collect();
+        for (part, decoder) in &self.decoders {
+            for (start_frame, pitch, vel) in decoder.open_notes() {
+                events.push((start_frame as f32 * FRAME_S, covered, pitch, vel, *part));
+            }
         }
         events.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         events
+    }
+}
+
+/// Feeds one block's per-part probabilities to the matching decoders (the
+/// block's `parts` and `decoders` are both in the model's part order).
+fn push_block(decoders: &mut [(Part, StreamingDecoder)], block: &BlockProbs, decoded: &mut Vec<(Part, DecodedNote)>) {
+    for ((part, decoder), probs) in decoders.iter_mut().zip(&block.parts) {
+        debug_assert_eq!(*part, probs.part);
+        decoded.extend(decoder.push(probs.onset.view(), probs.sustain.view()).into_iter().map(|n| (*part, n)));
     }
 }

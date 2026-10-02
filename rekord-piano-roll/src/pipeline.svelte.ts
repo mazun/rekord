@@ -155,6 +155,7 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
         end_s: payload.end_s,
         pitch_midi: payload.pitch_midi,
         velocity: payload.velocity,
+        part: payload.part,
         melody: payload.melody,
         bass: payload.bass,
       });

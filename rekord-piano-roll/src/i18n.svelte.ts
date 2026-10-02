@@ -17,9 +17,10 @@ const en = {
   "settings.close": "Close",
   "settings.language": "Language",
   "settings.noteModel": "Note model",
-  "settings.noteModelSmall": "Small (lightest)",
-  "settings.noteModelMedium": "Medium",
-  "settings.noteModelLarge": "Large (most accurate)",
+  "settings.noteModelMix": "Large, 3 parts: vocal / bass / other (for songs)",
+  "settings.noteModelLarge": "Large, single part (solo instruments)",
+  "settings.noteModelMedium": "Medium, single part",
+  "settings.noteModelSmall": "Small, single part (lightest)",
   "settings.lookAhead": "Look-ahead",
   "settings.lookAhead8": "0.26 s (less delay)",
   "settings.lookAhead16": "0.51 s (slightly more accurate)",
@@ -32,6 +33,9 @@ const en = {
   "pianoRollView.rolesToggle": "Click to toggle melody/bass coloring",
   "pianoRollView.melody": "Melody",
   "pianoRollView.bass": "Bass",
+  "pianoRollView.partToggle": "Click to show or hide this part's notes",
+  "pianoRollView.vocal": "Vocal",
+  "pianoRollView.other": "Other",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -45,9 +49,10 @@ const ja: Record<MessageKey, string> = {
   "settings.close": "閉じる",
   "settings.language": "言語",
   "settings.noteModel": "音符検出のモデル",
-  "settings.noteModelSmall": "small",
-  "settings.noteModelMedium": "medium",
-  "settings.noteModelLarge": "large",
+  "settings.noteModelMix": "large・3 パート(歌/ベース/その他、曲向け)",
+  "settings.noteModelLarge": "large・単一パート(単独の楽器向け)",
+  "settings.noteModelMedium": "medium・単一パート",
+  "settings.noteModelSmall": "small・単一パート(最軽量)",
   "settings.lookAhead": "先読み",
   "settings.lookAhead8": "0.26 秒(低遅延)",
   "settings.lookAhead16": "0.51 秒(高精度)",
@@ -60,6 +65,9 @@ const ja: Record<MessageKey, string> = {
   "pianoRollView.rolesToggle": "クリックでメロディ/ベースの色分けを切り替え",
   "pianoRollView.melody": "メロディ",
   "pianoRollView.bass": "ベース",
+  "pianoRollView.partToggle": "クリックでこのパートの音符を表示/非表示",
+  "pianoRollView.vocal": "歌",
+  "pianoRollView.other": "その他",
 };
 
 const messages: Record<Locale, Record<MessageKey, string>> = { en, ja };
