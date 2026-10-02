@@ -17,6 +17,7 @@ use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
 use crate::harmonica_model::{self, Device, HarmonicaModel, ModelSize, Part};
 use crate::harmonica_stream::NoteTranscriber;
 use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
+use crate::spelling::{note_name, Accidental};
 use crate::live_capture;
 use crate::melody_bass::{LineTracker, NoteRoles};
 
@@ -85,11 +86,8 @@ impl Default for KeyMode {
     }
 }
 
-pub const MIDI_NOTE_NAMES: [&str; 12] =
-    ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-
-pub fn midi_to_name(pitch: i32) -> String {
-    format!("{}{}", MIDI_NOTE_NAMES[pitch.rem_euclid(12) as usize], pitch.div_euclid(12) - 1)
+pub fn midi_to_name(pitch: i32, mode: Accidental) -> String {
+    format!("{}{}", note_name(pitch, mode), pitch.div_euclid(12) - 1)
 }
 
 /// A beat line on the same audio timeline as the notes; `bar` marks a downbeat.
@@ -156,6 +154,10 @@ pub enum PipelineEvent {
     /// it draws doesn't start late, and lands on a clean subdivision
     /// instead of visibly floating a few ms off of one.
     ChordChange { t: f32, label: String, roman_numeral: Option<String> },
+    /// The still-current chord spelled again after the user switched the sharp/flat
+    /// setting mid-session (its time and Roman numeral are unchanged); chords already
+    /// scrolled into the past keep the spelling they had.
+    ChordRelabel { label: String },
     /// Notes currently sounding that fall outside the chord named by the
     /// last `ChordChange` -- e.g. a melodic passing tone over a held
     /// chord. Unlike `ChordChange` (gated by `CHORD_MIN_HOLD_S`'s hold-time
@@ -293,10 +295,10 @@ pub enum ChordAt {
 }
 
 impl ChordAt {
-    pub fn label(&self) -> String {
+    pub fn label(&self, key: Option<&KeyEstimate>, mode: Accidental) -> String {
         match self {
             ChordAt::Silence => "(silence)".to_string(),
-            ChordAt::Match(m) => m.label(),
+            ChordAt::Match(m) => m.label(key, mode),
         }
     }
 }
@@ -403,11 +405,13 @@ pub struct ChordStabilizer {
     // KeyEstimator::pending).
     pending: Option<(ChordAt, f32)>,
     tensions: Vec<&'static str>,
+    // The sharp/flat setting `displayed` was last labeled with (see `relabel`).
+    labeled_with: Option<Accidental>,
 }
 
 impl ChordStabilizer {
     pub fn new() -> Self {
-        Self { displayed: None, pending: None, tensions: Vec::new() }
+        Self { displayed: None, pending: None, tensions: Vec::new(), labeled_with: None }
     }
 
     fn commit(
@@ -415,6 +419,7 @@ impl ChordStabilizer {
         candidate: ChordAt,
         t: f32,
         current_key: Option<KeyEstimate>,
+        accidental: Accidental,
         beat_grid: Option<BeatGrid>,
         on_event: &mut impl FnMut(PipelineEvent),
     ) {
@@ -423,9 +428,24 @@ impl ChordStabilizer {
             _ => None,
         };
         let t = snap_to_beat_grid(t, beat_grid);
-        on_event(PipelineEvent::ChordChange { t, label: candidate.label(), roman_numeral: roman });
+        let label = candidate.label(current_key.as_ref(), accidental);
+        on_event(PipelineEvent::ChordChange { t, label, roman_numeral: roman });
         self.displayed = Some(candidate);
+        self.labeled_with = Some(accidental);
         self.pending = None;
+    }
+
+    /// Re-announces the displayed chord when the sharp/flat setting changed since it was
+    /// labeled, so the live display follows a mid-session switch immediately instead of at
+    /// the next chord change.
+    fn relabel(&mut self, current_key: Option<KeyEstimate>, accidental: Accidental, on_event: &mut impl FnMut(PipelineEvent)) {
+        if self.labeled_with.is_none() || self.labeled_with == Some(accidental) {
+            return;
+        }
+        if let Some(chord @ ChordAt::Match(_)) = self.displayed {
+            on_event(PipelineEvent::ChordRelabel { label: chord.label(current_key.as_ref(), accidental) });
+        }
+        self.labeled_with = Some(accidental);
     }
 
     /// Feed one checkpoint's active-pitch-class reading (see
@@ -437,6 +457,7 @@ impl ChordStabilizer {
         evaluated: ActiveNow,
         t: f32,
         current_key: Option<KeyEstimate>,
+        accidental: Accidental,
         beat_grid: Option<BeatGrid>,
         mut on_event: impl FnMut(PipelineEvent),
     ) {
@@ -459,7 +480,7 @@ impl ChordStabilizer {
         if let Some(candidate) = evaluated.chord {
             if !is_decay_to_bare_fifth {
                 match self.displayed {
-                    None => self.commit(candidate, t, current_key, beat_grid, &mut on_event),
+                    None => self.commit(candidate, t, current_key, accidental, beat_grid, &mut on_event),
                     Some(cur) if cur == candidate => self.pending = None,
                     Some(_) => match self.pending {
                         Some((cand, since)) if cand == candidate => {
@@ -473,7 +494,7 @@ impl ChordStabilizer {
                             // reports a note's true onset despite arriving once it ends).
                             // `commit` then snaps it to the beat grid on top of that.
                             if t - since >= CHORD_MIN_HOLD_S {
-                                self.commit(candidate, since, current_key, beat_grid, &mut on_event);
+                                self.commit(candidate, since, current_key, accidental, beat_grid, &mut on_event);
                             }
                         }
                         _ => self.pending = Some((candidate, t)),
@@ -529,6 +550,7 @@ pub fn report_new_chords(
     chord_display: &mut ChordStabilizer,
     key_estimator: &mut KeyEstimator,
     key_mode: &KeyMode,
+    accidental: Accidental,
     beat_grid: Option<BeatGrid>,
     last_key_name: &mut Option<String>,
     mut on_event: impl FnMut(PipelineEvent),
@@ -566,14 +588,15 @@ pub fn report_new_chords(
             KeyMode::Manual(key) => Some(*key),
         };
         if let Some(key) = current_key {
-            let key_name = key.name();
+            let key_name = key.name(accidental);
             if Some(&key_name) != last_key_name.as_ref() {
                 on_event(PipelineEvent::KeyChange { key_name: key_name.clone() });
                 *last_key_name = Some(key_name);
             }
         }
+        chord_display.relabel(current_key, accidental, &mut on_event);
         let evaluated = evaluate_active(note_events, t);
-        chord_display.observe(evaluated, t, current_key, beat_grid, &mut on_event);
+        chord_display.observe(evaluated, t, current_key, accidental, beat_grid, &mut on_event);
     }
 }
 
@@ -621,6 +644,7 @@ pub fn run_live_session(
     duration_s: Option<f32>,
     stop: Arc<AtomicBool>,
     key_mode: Arc<Mutex<KeyMode>>,
+    accidental: Arc<Mutex<Accidental>>,
     on_event: impl FnMut(PipelineEvent) + Send,
 ) -> Result<()> {
     let on_event = Mutex::new(on_event);
@@ -632,7 +656,7 @@ pub fn run_live_session(
         let beat_grid_ref = &beat_grid;
         scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref, beat_grid_ref));
         let mut emit = |event| (on_event.lock().unwrap())(event);
-        let result = run_note_pipeline(config, hop_seconds, duration_s, &stop, &key_mode, &beat_grid, |chunk| {
+        let result = run_note_pipeline(config, hop_seconds, duration_s, &stop, &key_mode, &accidental, &beat_grid, |chunk| {
             let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
         }, &mut emit);
         drop(beat_tx); // lets the beat thread flush and exit; the scope joins it
@@ -646,6 +670,7 @@ fn run_note_pipeline(
     duration_s: Option<f32>,
     stop: &AtomicBool,
     key_mode: &Mutex<KeyMode>,
+    accidental: &Mutex<Accidental>,
     beat_grid: &Mutex<Option<BeatGrid>>,
     mut on_chunk: impl FnMut(&[f32]),
     mut on_event: impl FnMut(PipelineEvent),
@@ -677,6 +702,7 @@ fn run_note_pipeline(
                 on_event(PipelineEvent::NoteStarted { start_s: n.start_s, pitch_midi: n.pitch_midi, velocity: n.velocity, part: n.part });
             }
             let current_key_mode = *key_mode.lock().unwrap();
+            let current_accidental = *accidental.lock().unwrap();
             let current_beat_grid = *beat_grid.lock().unwrap();
             report_new_chords(
                 &note_events,
@@ -685,6 +711,7 @@ fn run_note_pipeline(
                 &mut chord_display,
                 &mut key_estimator,
                 &current_key_mode,
+                current_accidental,
                 current_beat_grid,
                 &mut last_key_name,
                 &mut on_event,
@@ -710,6 +737,7 @@ fn run_note_pipeline(
     let final_note_events = transcriber.note_events();
     emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, &mut on_event);
     let current_key_mode = *key_mode.lock().unwrap();
+    let current_accidental = *accidental.lock().unwrap();
     let current_beat_grid = *beat_grid.lock().unwrap();
     report_new_chords(
         &final_note_events,
@@ -718,6 +746,7 @@ fn run_note_pipeline(
         &mut chord_display,
         &mut key_estimator,
         &current_key_mode,
+        current_accidental,
         current_beat_grid,
         &mut last_key_name,
         &mut on_event,

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { pipeline } from "../pipeline.svelte";
-  import { settings, saveModelSize, saveFutureFrames, type ModelSize } from "../settings.svelte";
+  import { pipeline, setAccidental } from "../pipeline.svelte";
+  import { settings, saveModelSize, saveFutureFrames, saveAccidental, type Accidental, type ModelSize } from "../settings.svelte";
   import { i18n, t, setLocale, type Locale } from "../i18n.svelte";
 
   let { hidden, onClose }: { hidden: boolean; onClose: () => void } = $props();
@@ -51,6 +51,22 @@
     >
       <option value="8">{t("settings.lookAhead8")}</option>
       <option value="16">{t("settings.lookAhead16")}</option>
+    </select>
+  </div>
+  <div class="settings-row">
+    <label for="accidental-select">{t("settings.accidental")}</label>
+    <select
+      id="accidental-select"
+      value={settings.accidental}
+      onchange={(e) => {
+        settings.accidental = e.currentTarget.value as Accidental;
+        saveAccidental();
+        setAccidental();
+      }}
+    >
+      <option value="auto">{t("settings.accidentalAuto")}</option>
+      <option value="sharp">{t("settings.accidentalSharp")}</option>
+      <option value="flat">{t("settings.accidentalFlat")}</option>
     </select>
   </div>
   <div class="settings-row">
