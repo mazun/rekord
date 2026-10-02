@@ -117,9 +117,25 @@ export interface ConfirmedNote {
   bass: boolean;
 }
 
+/** A note whose onset is known but whose end isn't yet (`NoteStarted`). */
+export interface StartedNote {
+  start_s: number;
+  pitch_midi: number;
+  velocity: number;
+  part: NotePart;
+}
+
 interface NoteSprite extends ConfirmedNote {
   graphic: Graphics;
+  /** Still sounding as far as the pipeline knows: end_s tracks the clock until the
+   * matching NoteConfirmed arrives. */
+  open: boolean;
 }
+
+// An open note is drawn up to the newest audio the pipeline has seen, which is about the
+// capture hop plus compute behind the wall clock (the rest of total_latency_s is the
+// structural wait for a note's end, which an open note doesn't have).
+const OPEN_NOTE_LAG_S = 0.15;
 
 // Bottom to top: when notes of different parts overlap at the same pitch, the vocal is drawn
 // over the bass over the rest.
@@ -182,10 +198,10 @@ interface KeySprite {
   active: boolean;
 }
 
-/** Falling-note piano roll driven by confirmed note events. Notes arrive
- * already fully formed (start_s and end_s both known -- the pipeline only
- * reports a note once it's finished, in ~1.6s batches), so this doesn't
- * grow notes in real time; it just positions each one along the time axis.
+/** Falling-note piano roll driven by note events. A note is first reported
+ * when its onset is decided (`NoteStarted`, drawn growing with the clock) and
+ * again with its end known (`NoteConfirmed`, which fixes its length); the
+ * rest is just positioning each one along the time axis.
  *
  * The pipeline's confirm delay (window-advance stride + capture hop +
  * NoteStitcher's confirm margin) is a fixed length for a given session, not
@@ -394,15 +410,35 @@ export class PianoRoll {
     this.partLayers[part].visible = visible;
   }
 
-  addNote(note: ConfirmedNote): void {
-    const height = this.app.screen.height;
-    const noteHeightPx = Math.max(3, (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
+  private drawNote(graphic: Graphics, note: ConfirmedNote): void {
+    const noteHeightPx = Math.max(3, (this.app.screen.height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
     const widthPx = Math.max(2, (note.end_s - note.start_s) * PIXELS_PER_SECOND);
-
     const [colorMin, colorMax] = noteColors(note, this.roleColoringEnabled);
     const color = lerpColor(colorMin, colorMax, note.velocity);
+    graphic.clear().roundRect(0, 0, widthPx, noteHeightPx, 2).fill({ color });
+  }
+
+  /** Draws a note from its onset; it grows with the clock until addNote() delivers its end. */
+  startNote(note: StartedNote): void {
+    this.addSprite({ ...note, end_s: this.wallClockS() - OPEN_NOTE_LAG_S, melody: false, bass: false }, true);
+  }
+
+  addNote(note: ConfirmedNote): void {
+    const open = this.notes.find((n) => n.open && n.part === note.part && n.pitch_midi === note.pitch_midi && n.start_s === note.start_s);
+    if (open) {
+      Object.assign(open, note, { open: false });
+      this.drawNote(open.graphic, open);
+      return;
+    }
+    // Ended before it was ever reported as started (shorter than one block).
+    this.addSprite(note, false);
+  }
+
+  private addSprite(note: ConfirmedNote, open: boolean): void {
+    const height = this.app.screen.height;
+    const noteHeightPx = Math.max(3, (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
     const graphic = new Graphics();
-    graphic.roundRect(0, 0, widthPx, noteHeightPx, 2).fill({ color });
+    this.drawNote(graphic, note);
     // Position it correctly right away -- left at the Graphics default
     // (x=0, the far-left edge where the oldest, about-to-be-pruned notes
     // sit) until the next tick, a newly-added note would flash there for
@@ -411,7 +447,7 @@ export class PianoRoll {
     graphic.x = this.xForTime(note.start_s);
     graphic.y = this.pitchToY(note.pitch_midi, height) - noteHeightPx / 2;
     this.partLayers[note.part].addChild(graphic);
-    this.notes.push({ ...note, graphic });
+    this.notes.push({ ...note, graphic, open });
   }
 
   /** Appends a newly stabilized chord (rekord_core's ChordStabilizer already debounced it --
@@ -543,7 +579,12 @@ export class PianoRoll {
     const displayS = this.displayS();
     const activePitches = new Set<number>();
     const stillVisible: NoteSprite[] = [];
+    const openEndS = this.wallClockS() - OPEN_NOTE_LAG_S;
     for (const n of this.notes) {
+      if (n.open) {
+        n.end_s = Math.max(n.end_s, openEndS);
+        this.drawNote(n.graphic, n);
+      }
       const x = this.xForTime(n.start_s);
       n.graphic.x = x;
       if (x + n.graphic.width < 0) {

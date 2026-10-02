@@ -119,6 +119,11 @@ pub enum PipelineEvent {
     /// not hardcode or re-derive it. `note_model` is the model actually
     /// loaded, after any DirectML->CPU fallback (see `HarmonicaModel::load`).
     Started { total_latency_s: f32, note_model: NoteModelInfo },
+    /// A note whose onset is decided but which is still sounding (as far as
+    /// the decoder knows); `NoteConfirmed` follows with the same `start_s`,
+    /// `pitch_midi` and `part` once it ends. Lets the piano roll draw the note
+    /// from its onset, growing, instead of only once it is over.
+    NoteStarted { start_s: f32, pitch_midi: i32, velocity: f32, part: Part },
     /// `velocity` is the onset probability at the note's onset frame (see
     /// `harmonica_decode::ConfirmedNote::velocity`) -- a frontend can use it
     /// to shade/intensify the note by how strongly it sounded, correctly
@@ -668,6 +673,9 @@ fn run_note_pipeline(
             let note_events = transcriber.note_events();
             let covered = transcriber.covered_seconds();
             emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, &mut on_event);
+            for n in transcriber.take_started_notes() {
+                on_event(PipelineEvent::NoteStarted { start_s: n.start_s, pitch_midi: n.pitch_midi, velocity: n.velocity, part: n.part });
+            }
             let current_key_mode = *key_mode.lock().unwrap();
             let current_beat_grid = *beat_grid.lock().unwrap();
             report_new_chords(

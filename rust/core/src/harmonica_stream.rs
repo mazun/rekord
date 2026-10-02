@@ -6,7 +6,7 @@
 //! wires together, and harmonica-repro's docs/phase5-report.md
 //! ("ストリーミングの手順" / "音符への変換") for the spec both port.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use anyhow::Result;
 use ndarray::s;
@@ -242,6 +242,18 @@ pub struct NoteTranscriber {
     /// `KeyEstimator`'s history pruning (see CLAUDE.md). With
     /// RETAINED_SECONDS this small, the retain stays cheap.
     finished_notes: Vec<ConfirmedNote>,
+    /// Open notes `take_started_notes` has already reported, as
+    /// (part, pitch, start_frame).
+    announced: HashSet<(Part, i32, usize)>,
+}
+
+/// A note whose onset is decided but which hasn't ended yet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StartedNote {
+    pub start_s: f32,
+    pub pitch_midi: i32,
+    pub part: Part,
+    pub velocity: f32,
 }
 
 impl NoteTranscriber {
@@ -257,7 +269,29 @@ impl NoteTranscriber {
             decoders,
             future_frames,
             finished_notes: Vec::new(),
+            announced: HashSet::new(),
         }
+    }
+
+    /// Open notes not reported by an earlier call, so a UI can show a note
+    /// from its onset instead of waiting for its end. Each note is later
+    /// returned by `push`/`finish` with the same `start_s` and `part`.
+    pub fn take_started_notes(&mut self) -> Vec<StartedNote> {
+        let mut open = HashSet::new();
+        let mut started = Vec::new();
+        for (part, decoder) in &self.decoders {
+            for (start_frame, pitch, velocity) in decoder.open_notes() {
+                let key = (*part, pitch, start_frame);
+                open.insert(key);
+                if self.announced.insert(key) {
+                    started.push(StartedNote { start_s: start_frame as f32 * FRAME_S, pitch_midi: pitch, part: *part, velocity });
+                }
+            }
+        }
+        // Forget notes that have ended, so the set stays bounded.
+        self.announced = open;
+        started.sort_by(|a, b| a.start_s.partial_cmp(&b.start_s).unwrap());
+        started
     }
 
     pub fn model(&self) -> &HarmonicaModel {

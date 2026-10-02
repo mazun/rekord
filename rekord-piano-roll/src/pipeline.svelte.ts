@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { BeatLines, ConfirmedNote } from "./pianoroll";
+import type { BeatLines, ConfirmedNote, StartedNote } from "./pianoroll";
 import { settings, type ModelSize } from "./settings.svelte";
 
 // The model actually running, after any DirectML->CPU fallback the backend
@@ -14,6 +14,7 @@ export interface NoteModel {
 
 type PipelineEvent =
   | { type: "Started"; total_latency_s: number; note_model: NoteModel }
+  | ({ type: "NoteStarted" } & StartedNote)
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
   | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
   | { type: "TensionsChanged"; tensions: string[] }
@@ -128,6 +129,7 @@ export function keyPairLabel(relativeMajorPc: number): string {
 
 export interface PipelineHandlers {
   onStarted(totalLatencyS: number): void;
+  onNoteStarted(note: StartedNote): void;
   onNote(note: ConfirmedNote): void;
   onBeatLines(lines: BeatLines): void;
   onChordChange(t: number, label: string, romanNumeral: string | null): void;
@@ -149,6 +151,13 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
       // constant could account for.
       pipeline.noteModel = payload.note_model;
       handlers.onStarted(payload.total_latency_s);
+    } else if (payload.type === "NoteStarted") {
+      handlers.onNoteStarted({
+        start_s: payload.start_s,
+        pitch_midi: payload.pitch_midi,
+        velocity: payload.velocity,
+        part: payload.part,
+      });
     } else if (payload.type === "NoteConfirmed") {
       handlers.onNote({
         start_s: payload.start_s,
