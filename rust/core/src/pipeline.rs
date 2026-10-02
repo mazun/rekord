@@ -14,11 +14,11 @@ use crate::beat_model::{self, BeatModel};
 use crate::beat_tracker::{BeatGrid, BeatTracker};
 use crate::chord_templates::{extra_tensions, match_chord, ChordMatch};
 use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
-use crate::harmonica_model::{self, Device, HarmonicaModel, ModelSize};
+use crate::harmonica_model::{self, Device, HarmonicaModel, ModelSize, Part};
 use crate::harmonica_stream::NoteTranscriber;
 use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
 use crate::live_capture;
-use crate::melody_bass::LineTracker;
+use crate::melody_bass::{LineTracker, NoteRoles};
 
 // Extra fudge for IPC/processing overhead and jitter on top of the
 // pipeline's own structural confirm delay, so the reported total_latency_s
@@ -124,13 +124,18 @@ pub enum PipelineEvent {
     /// to shade/intensify the note by how strongly it sounded, correctly
     /// distinguishing notes within the same chord.
     ///
-    /// `melody`/`bass` say whether the note belongs to the top/bottom voice
-    /// line (see `melody_bass`); both false means an inner voice.
+    /// `part` is the model's own output part (vocal/bass/other for the Mix
+    /// model; `All` for the single-part models, which can't tell them apart).
+    /// For `All` notes, `melody`/`bass` say whether the note belongs to the
+    /// top/bottom voice line (see `melody_bass`), both false meaning an inner
+    /// voice; for the other parts the model has already answered that, so
+    /// both are false.
     NoteConfirmed {
         start_s: f32,
         end_s: f32,
         pitch_midi: i32,
         velocity: f32,
+        part: Part,
         melody: bool,
         bass: bool,
     },
@@ -307,24 +312,34 @@ struct ActiveNow {
 /// grace period after it (basic-pitch needed 0.2 s for its ragged ends,
 /// which with Harmonica only let the previous chord linger into the next
 /// as a mixed chord, e.g. Am7 for C -> Am).
+///
+/// With the Mix model the chord is named from the accompaniment only (bass
+/// and other): the sung melody is mostly non-chord tones, so it's kept out
+/// of the match and only reaches `active_pitch_classes`, i.e. shows up as a
+/// tension over the displayed chord. Vocal-only moments therefore read as
+/// silence for the chord lane. Single-part models have no vocal part, so
+/// they behave as before.
 fn evaluate_active(note_events: &[NoteEvent], t: f32) -> ActiveNow {
-    let active: Vec<i32> = note_events
+    let sounding = |s: f32, e: f32| s <= t + 1e-6 && e >= t;
+    let active: Vec<i32> = note_events.iter().filter(|&&(s, e, ..)| sounding(s, e)).map(|&(_s, _e, p, ..)| p).collect();
+    let chord_notes: Vec<i32> = note_events
         .iter()
-        .filter(|&&(s, e, _p, _a)| s <= t + 1e-6 && e >= t)
-        .map(|&(_s, _e, p, _a)| p)
+        .filter(|&&(s, e, _p, _a, part)| sounding(s, e) && part != Part::Vocal)
+        .map(|&(_s, _e, p, ..)| p)
         .collect();
-    if active.is_empty() {
+    let pitch_classes: Vec<i32> = active.iter().map(|p| p.rem_euclid(12)).collect();
+    if chord_notes.is_empty() {
         let recently_sounding = note_events
             .iter()
-            .any(|&(s, e, _p, _a)| s <= t + 1e-6 && e >= t - SILENCE_HOLD_S);
+            .any(|&(s, e, _p, _a, part)| part != Part::Vocal && s <= t + 1e-6 && e >= t - SILENCE_HOLD_S);
         return ActiveNow {
-            active_pitch_classes: Vec::new(),
+            active_pitch_classes: pitch_classes,
             chord: if recently_sounding { None } else { Some(ChordAt::Silence) },
         };
     }
-    let bass_pc = active.iter().min().map(|p| p.rem_euclid(12));
-    let pitch_classes: Vec<i32> = active.iter().map(|p| p.rem_euclid(12)).collect();
-    let chord = match_chord(&pitch_classes, bass_pc).map(ChordAt::Match);
+    let bass_pc = chord_notes.iter().min().map(|p| p.rem_euclid(12));
+    let chord_pitch_classes: Vec<i32> = chord_notes.iter().map(|p| p.rem_euclid(12)).collect();
+    let chord = match_chord(&chord_pitch_classes, bass_pc).map(ChordAt::Match);
     ActiveNow { active_pitch_classes: pitch_classes, chord }
 }
 
@@ -515,7 +530,7 @@ pub fn report_new_chords(
 ) {
     let mut checkpoints: BTreeSet<i64> = note_events
         .iter()
-        .map(|&(s, _e, _p, _a)| s)
+        .map(|&(s, ..)| s)
         .filter(|&s| s > prev_covered && s <= covered)
         .map(|s| (s * 1000.0).round() as i64)
         .collect();
@@ -570,12 +585,15 @@ pub fn emit_confirmed_notes(
 ) {
     for n in notes {
         key_estimator.observe(&n);
-        let roles = lines.classify(&n, note_events);
+        // The skyline rule only makes sense when the model gives no parts of
+        // its own (it would see the vocal/bass/other notes mixed together).
+        let roles = if n.part == Part::All { lines.classify(&n, note_events) } else { NoteRoles::default() };
         on_event(PipelineEvent::NoteConfirmed {
             start_s: n.start_s,
             end_s: n.end_s,
             pitch_midi: n.pitch_midi,
             velocity: n.velocity,
+            part: n.part,
             melody: roles.melody,
             bass: roles.bass,
         });

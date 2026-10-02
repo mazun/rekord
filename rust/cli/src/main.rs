@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 
 use rekord_core::audio_io;
-use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelSize};
+use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelSize, Part};
 use rekord_core::harmonica_stream::NoteTranscriber;
 use rekord_core::key_estimator::KeyEstimator;
 use rekord_core::melody_bass::LineTracker;
@@ -36,12 +36,15 @@ fn print_event(event: PipelineEvent) {
                 note_model.future_frames
             );
         }
-        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity, melody, bass } => {
-            let role = match (melody, bass) {
-                (true, true) => " [melody+bass]",
-                (true, false) => " [melody]",
-                (false, true) => " [bass]",
-                (false, false) => "",
+        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity, part, melody, bass } => {
+            let role = match (part, melody, bass) {
+                (Part::Vocal, ..) => " [vocal]",
+                (Part::Bass, ..) => " [bass part]",
+                (Part::Other, ..) => " [other]",
+                (Part::All, true, true) => " [melody+bass]",
+                (Part::All, true, false) => " [melody]",
+                (Part::All, false, true) => " [bass]",
+                (Part::All, false, false) => "",
             };
             println!(
                 "[{start_s:6.2}s -> {end_s:6.2}s] note {} (vel {velocity:.2}){role}",
@@ -151,7 +154,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut audio_file: Option<String> = None;
     let mut hop = CAPTURE_HOP_S;
-    let mut size = ModelSize::Large;
+    let mut size = ModelSize::Mix;
     let mut future_frames = DEFAULT_FUTURE_FRAMES;
     let mut allow_directml = true;
     let mut live = false;
@@ -169,7 +172,7 @@ fn main() -> Result<()> {
             }
             "--size" => {
                 i += 1;
-                let value = args.get(i).context("--size expects small, medium or large")?;
+                let value = args.get(i).context("--size expects small, medium, large or mix")?;
                 size = value.parse()?;
             }
             "--future" => {
@@ -202,7 +205,7 @@ fn main() -> Result<()> {
         run_live(config, hop, duration)
     } else {
         let audio_file = audio_file.context(
-            "usage: rekord_engine <audio_file> [--size small|medium|large] [--future 8|16] [--cpu] [--hop 0.064]",
+            "usage: rekord_engine <audio_file> [--size small|medium|large|mix] [--future 8|16] [--cpu] [--hop 0.064]",
         )?;
         run_file(&audio_file, size, future_frames, allow_directml, hop)
     }

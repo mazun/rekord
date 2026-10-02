@@ -8,6 +8,7 @@
 //   ref      optional JSON {beats: [...], downbeats: [...]}: reference beats, drawn as
 //            ticks along the top/bottom edges (downbeats yellow and taller)
 //   latency  total_latency_s sent on Started (default 1.3 = the app's default 250 ms setting)
+//   model    note model size reported on Started (default large; "mix" shows the 3-part legend)
 const cbs = new Map();
 const listeners = [];
 let nextId = 1;
@@ -26,7 +27,10 @@ async function startReplay() {
   const events = text.trim().split("\n").map((l) => JSON.parse(l));
   const ref = params.get("ref") ? await (await fetch("/dev/" + params.get("ref"))).json() : null;
   window.__replay = { t0: performance.now(), events, ref };
-  emit("pipeline-event", { type: "Started", total_latency_s: LATENCY });
+  emit("pipeline-event", {
+    type: "Started", total_latency_s: LATENCY,
+    note_model: { size: params.get("model") ?? "large", device: "directml", future_frames: 8 },
+  });
   for (const e of events) {
     timers.push(setTimeout(() => emit("pipeline-event", {
       type: "BeatLines", from_s: e.from_s,

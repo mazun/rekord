@@ -10,8 +10,12 @@ const PIXELS_PER_SECOND = 120;
 // indication of how hard it was played relative to its neighbors.
 const NOTE_COLOR_MIN = 0x2c3550; // quiet: closer to the guide/background grey-blue
 const NOTE_COLOR_MAX = 0xaecbff; // loud: bright, near-white blue
+// The Mix model's own parts reuse the same three palettes: vocal is drawn in the melody
+// green, bass in the bass orange, other in the default blue (see noteColors).
+//
 // Melody/bass line labels (see rekord_core::melody_bass -- a skyline rule
-// over the live note stream, no separation model) get their own color
+// over the live note stream, no separation model; only used for single-part
+// models, whose notes have part "all") get their own color
 // pairs, same velocity-shading treatment as the default. An inner voice
 // (neither) keeps the original blue. The backend's melody/bass flags
 // aren't mutually exclusive (a lone note low enough to be "lowest
@@ -99,17 +103,41 @@ function lerpColor(from: number, to: number, t: number): number {
   return (channel(16) << 16) | (channel(8) << 8) | channel(0);
 }
 
+// Which output part of the note model a note came from (rekord_core's Part): "all" for the
+// single-part models, vocal/bass/other for the Mix model.
+export type NotePart = "all" | "vocal" | "bass" | "other";
+
 export interface ConfirmedNote {
   start_s: number;
   end_s: number;
   pitch_midi: number;
   velocity: number;
+  part: NotePart;
   melody: boolean;
   bass: boolean;
 }
 
 interface NoteSprite extends ConfirmedNote {
   graphic: Graphics;
+}
+
+// Bottom to top: when notes of different parts overlap at the same pitch, the vocal is drawn
+// over the bass over the rest.
+const PART_DRAW_ORDER: NotePart[] = ["all", "other", "bass", "vocal"];
+
+function noteColors(note: ConfirmedNote, roleColoringEnabled: boolean): [number, number] {
+  switch (note.part) {
+    case "vocal":
+      return [MELODY_COLOR_MIN, MELODY_COLOR_MAX];
+    case "bass":
+      return [BASS_COLOR_MIN, BASS_COLOR_MAX];
+    case "other":
+      return [NOTE_COLOR_MIN, NOTE_COLOR_MAX];
+    case "all":
+      if (roleColoringEnabled && note.melody) return [MELODY_COLOR_MIN, MELODY_COLOR_MAX];
+      if (roleColoringEnabled && note.bass) return [BASS_COLOR_MIN, BASS_COLOR_MAX];
+      return [NOTE_COLOR_MIN, NOTE_COLOR_MAX];
+  }
 }
 
 export interface BeatLine {
@@ -180,7 +208,9 @@ interface KeySprite {
  * or re-anchored again. */
 export class PianoRoll {
   private app: Application;
-  private noteLayer: Container;
+  // One layer per part inside the note layer, so a part can be hidden as a whole and
+  // overlapping notes stack in a fixed order (see PART_DRAW_ORDER).
+  private partLayers = {} as Record<NotePart, Container>;
   private beatLayer = new Container();
   private beatLines: BeatSprite[] = [];
   private chordLayer = new Container();
@@ -201,7 +231,10 @@ export class PianoRoll {
 
   private constructor(app: Application, noteLayer: Container) {
     this.app = app;
-    this.noteLayer = noteLayer;
+    for (const part of PART_DRAW_ORDER) {
+      this.partLayers[part] = new Container();
+      noteLayer.addChild(this.partLayers[part]);
+    }
   }
 
   static async create(container: HTMLElement): Promise<PianoRoll> {
@@ -355,17 +388,18 @@ export class PianoRoll {
     this.roleColoringEnabled = enabled;
   }
 
+  /** Shows or hides every note of one model part, past and future. Only affects the drawing:
+   * hidden notes still count for the chord, key and the highlighted keys. */
+  setPartVisible(part: NotePart, visible: boolean): void {
+    this.partLayers[part].visible = visible;
+  }
+
   addNote(note: ConfirmedNote): void {
     const height = this.app.screen.height;
     const noteHeightPx = Math.max(3, (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
     const widthPx = Math.max(2, (note.end_s - note.start_s) * PIXELS_PER_SECOND);
 
-    const [colorMin, colorMax] =
-      this.roleColoringEnabled && note.melody
-        ? [MELODY_COLOR_MIN, MELODY_COLOR_MAX]
-        : this.roleColoringEnabled && note.bass
-          ? [BASS_COLOR_MIN, BASS_COLOR_MAX]
-          : [NOTE_COLOR_MIN, NOTE_COLOR_MAX];
+    const [colorMin, colorMax] = noteColors(note, this.roleColoringEnabled);
     const color = lerpColor(colorMin, colorMax, note.velocity);
     const graphic = new Graphics();
     graphic.roundRect(0, 0, widthPx, noteHeightPx, 2).fill({ color });
@@ -376,7 +410,7 @@ export class PianoRoll {
     // already is."
     graphic.x = this.xForTime(note.start_s);
     graphic.y = this.pitchToY(note.pitch_midi, height) - noteHeightPx / 2;
-    this.noteLayer.addChild(graphic);
+    this.partLayers[note.part].addChild(graphic);
     this.notes.push({ ...note, graphic });
   }
 

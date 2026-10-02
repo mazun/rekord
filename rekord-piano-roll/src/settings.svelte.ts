@@ -7,14 +7,16 @@ const MODEL_SIZE_STORAGE_KEY = "chord.modelSize";
 const FUTURE_FRAMES_STORAGE_KEY = "chord.futureFrames";
 const PIANOROLL_VISIBLE_STORAGE_KEY = "chord.pianorollVisible";
 
-export type ModelSize = "small" | "medium" | "large";
+// "mix" is the large network with three output parts (vocal/bass/other) trained for full
+// mixes; the others are single-part models.
+export type ModelSize = "small" | "medium" | "large" | "mix";
 
-const DEFAULT_MODEL_SIZE: ModelSize = "large";
+const DEFAULT_MODEL_SIZE: ModelSize = "mix";
 const DEFAULT_FUTURE_FRAMES = 8;
 
 function loadModelSize(): ModelSize {
   const stored = localStorage.getItem(MODEL_SIZE_STORAGE_KEY);
-  return stored === "small" || stored === "medium" || stored === "large" ? stored : DEFAULT_MODEL_SIZE;
+  return stored === "small" || stored === "medium" || stored === "large" || stored === "mix" ? stored : DEFAULT_MODEL_SIZE;
 }
 
 function loadFutureFrames(): number {

@@ -3200,6 +3200,7 @@ dependencies = [
  "rekord_beat_dbn",
  "rubato",
  "serde",
+ "serde_json",
  "sha2",
  "ureq",
 ]

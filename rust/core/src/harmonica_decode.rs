@@ -16,11 +16,11 @@
 
 use ndarray::ArrayView2;
 
-use crate::harmonica_model::{MIN_MIDI, N_PITCH};
+use crate::harmonica_model::{Part, MIN_MIDI, N_PITCH};
 
-/// (start_s, end_s, midi pitch, velocity) -- the flat tuple form used by
-/// `NoteTranscriber::note_events` for the live in-progress note list.
-pub type NoteEvent = (f32, f32, i32, f32);
+/// (start_s, end_s, midi pitch, velocity, part) -- the flat tuple form used
+/// by `NoteTranscriber::note_events` for the live in-progress note list.
+pub type NoteEvent = (f32, f32, i32, f32, Part);
 
 /// A finished, never-to-be-revised note, in seconds.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,6 +28,9 @@ pub struct ConfirmedNote {
     pub start_s: f32,
     pub end_s: f32,
     pub pitch_midi: i32,
+    /// Which output part of the model this note came from (`Part::All` for a
+    /// single-part model).
+    pub part: Part,
     /// The onset probability at the note's onset frame (the local maximum's
     /// own value) -- not mean sustain, which saturates near 1 for almost
     /// every real note and gives no usable contrast (decided by the user).

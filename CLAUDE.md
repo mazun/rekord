@@ -65,13 +65,41 @@ npm run tauri dev
   - Streaming: 16 kHz mono, 32 ms frames; every 8 frames (0.256 s) one 5 s
     window (156 frames) ending `f` frames after the block, audio after "now"
     zeroed, CQT rows before the stream start zeroed, output rows
-    `[148-f, 156-f)`. No LSTM state is carried (the model normalizes over the
+    `[148-f, 156-f)` (of the time axis, for every part). No LSTM state is carried (the model normalizes over the
     whole window). `f` = 8 (0.26 s, default) or 16 (0.51 s) is a user
     setting; longer doesn't help, 0 loses a lot of accuracy.
-  - Sizes small/medium/large are all shipped and user-selectable (default
-    large). If DirectML can't be used, it runs **small on the CPU** whatever
-    was chosen (medium/large are too slow on CPU). Thresholds are per size,
-    shared by both `f` (small 0.25/0.45, medium and large 0.20/0.45).
+  - Sizes small/medium/large (single part) and **mix** (large architecture,
+    three output parts; see the next bullet) are all shipped and
+    user-selectable; the default is **mix** (2026-10-02, user). If DirectML
+    can't be used, it runs **small on the CPU** whatever was chosen
+    (medium/large/mix are too slow on CPU). Single-part thresholds are per
+    size, shared by both `f` (small 0.25/0.45, medium and large 0.20/0.45).
+  - **The Mix model (`mix_large_v1.onnx`, `ModelSize::Mix`) outputs
+    `[1, 3, T, 88]` per head: parts vocal, bass, other** (harmonica-repro
+    `docs/mix-b4-report.md`; trained on full mixes incl. drums, COnP 50 ms on
+    RWC-Pop .452 vs .275 for the single-part large). The `parts` and
+    `thresholds_f8`/`thresholds_f16` (per part, `[th_on, th_sus]`) come from
+    the ONNX metadata, not from constants here; the part order is checked at
+    load. `NoteTranscriber` runs one `StreamingDecoder` per part with that
+    part's thresholds, and every `ConfirmedNote`/`NoteEvent`/`NoteConfirmed`
+    carries its `Part` (`All` for single-part models). Known behavior, not a
+    bug: low notes of solo instruments (piano bass, contrabass, cello) get
+    split between the bass and other parts, so the same pitch can appear in
+    both, and bass-part notes can be short fragments (seen on `sample_audio`).
+    `velocity` is not on a common scale across parts (other's `th_on` is .10,
+    vocal/bass .25), which also skews `KeyEstimator`'s velocity weighting
+    toward bass-part notes -- not re-tuned.
+  - With the Mix model: the piano roll colors by part (vocal = melody green,
+    bass = orange, other = blue; the legend toggles each part's visibility),
+    `melody_bass.rs`'s skyline rule is only used for `Part::All` notes, and
+    the chord is named from bass + other only -- **vocal notes feed only the
+    tensions** (`evaluate_active` in `pipeline.rs`), because sung melody is
+    mostly non-chord tones. Vocal-only moments read as chord silence.
+    Slash chords are unchanged (lowest chord note, shown whenever it differs
+    from the root): a bass-part-only slash rule was designed (harmonica-repro
+    measured `majmin_inv` .769 -> .779 for the offline version) but the user
+    chose to leave it, since chord display beyond tensions is going to be
+    rebuilt around a separate chord model.
   - The decode (onset local maxima, ended by sustain or the next onset) is
     exact in streaming form and never revises a note, so there is no confirm
     margin and no `NoteStitcher`: a note is emitted once, when it ends.
@@ -85,7 +113,14 @@ npm run tauri dev
     hop (64 ms) + 0.3` = 0.88 s at f = 8, 1.13 s at f = 16.
   - `cargo test -p rekord_core --release harmonica_` checks the Rust port
     against harmonica-repro's golden vectors (`runs/p5/golden`, override with
-    `HARMONICA_GOLDEN_DIR`; skipped when absent). They match to ~1e-6 except
+    `HARMONICA_GOLDEN_DIR`; skipped when absent), and the `harmonica_mix_*`
+    tests do the same for the Mix model (`runs/mix_b4/golden` = GuitarSet,
+    notes only in `other`, and `golden_rwc001` = 20 s of RWC-Pop 001 with all
+    three parts; override the parent with `HARMONICA_MIX_GOLDEN_DIR`; also
+    skipped without `models/mix_large_v1.onnx`). RWC is not redistributable,
+    so it is only ever read from harmonica-repro. Mix matches to ~1e-6
+    steady-state on DirectML; on CPU up to 1.2e-4 (tolerance 2e-4), notes
+    identical. The single-part tests match to ~1e-6 except
     the first 18 blocks of a stream (up to ~1.5e-3), where the window is
     mostly zeroed rows: `ort` statically links pyke's own ONNX Runtime 1.28
     build, which differs slightly from Microsoft's (Python onnxruntime 1.24.4
@@ -98,6 +133,13 @@ npm run tauri dev
     downloads from at a pinned commit (`HF_REVISION`) and checks against
     pinned SHA-256s; `rust/core/models/` is gitignored. New weights: upload
     them there first, then update `HF_REVISION` and the hashes.
+    **`mix_large_v1.onnx` is not on Hugging Face yet** (2026-10-02, pending the
+    user's upload) and is therefore not in `build.rs`'s `HARMONICA_MODELS`
+    (listing it before the upload would make every build fail on the
+    download): copy it from harmonica-repro's `runs/mix_b4/onnx/` into
+    `rust/core/models/` by hand until then. Its training data also include
+    the user's own commercial CDs (328 h, mixes + pseudo-labels), which the
+    model card's license text has to say.
 
 - **Beat/downbeat tracking (`beat_model.rs`, `beat_tracker.rs`, and the DBN
   decoder in its own crate `rust/beat_dbn/`) is Beat This! small0 + madmom's
@@ -321,7 +363,10 @@ Key design decisions), and beat tracking also has the replay tools above.
 Everything else has no unit test suite — validation is empirical, against the real recordings
 in `sample_audio/` (`piano_progression_C_Am_F_G.wav`,
 `piano_progression_ConG_A7sus4_FM7add9_G6.wav`,
-`piano_complex_progression_ConG_A7sus4_FM7add9_G6.wav`). **Never validate
+`piano_complex_progression_ConG_A7sus4_FM7add9_G6.wav`; with the Mix model
+(2026-10-02) all three give the same chord sequence as the single-part large,
+only the third file's early Roman numerals differ, from a start-of-session key
+guess on a single bass note). **Never validate
 against synthetic sine-wave test audio** — harmonics produce false
 tension-chord detections (e.g. spurious add9) that don't occur with real
 piano recordings. When changing the note streaming/decode/clock logic,

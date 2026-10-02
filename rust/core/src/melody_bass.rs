@@ -111,8 +111,8 @@ impl Default for LineTracker {
 fn loudest_overlapping(start_s: f32, end_s: f32, events: &[NoteEvent]) -> f32 {
     events
         .iter()
-        .filter(|&&(s, e, _p, _a)| s < end_s && start_s < e)
-        .map(|&(_s, _e, _p, a)| a)
+        .filter(|&&(s, e, ..)| s < end_s && start_s < e)
+        .map(|&(_s, _e, _p, a, _part)| a)
         .fold(0.0, f32::max)
 }
 
@@ -122,7 +122,7 @@ fn strong_events(events: &[NoteEvent]) -> Vec<NoteEvent> {
     events
         .iter()
         .copied()
-        .filter(|&(s, e, _p, a)| a >= MIN_RELATIVE_VELOCITY * loudest_overlapping(s, e, events))
+        .filter(|&(s, e, _p, a, _part)| a >= MIN_RELATIVE_VELOCITY * loudest_overlapping(s, e, events))
         .collect()
 }
 
@@ -137,7 +137,7 @@ fn extreme_fraction(note: &ConfirmedNote, events: &[NoteEvent], top: bool) -> f3
     let mut held = 0usize;
     for i in 0..steps {
         let t = note.start_s + (i as f32 + 0.5) * duration / steps as f32;
-        let beaten = events.iter().any(|&(s, e, p, _)| {
+        let beaten = events.iter().any(|&(s, e, p, ..)| {
             s <= t && t < e && if top { p > note.pitch_midi } else { p < note.pitch_midi }
         });
         if !beaten {
