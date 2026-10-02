@@ -2,9 +2,8 @@
 //! against chord templates (root + quality, intervals in semitones from
 //! root). Ported from chord_poc/chord_templates.py -- keep in sync.
 
-pub const NOTE_NAMES: [&str; 12] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-];
+use crate::key_estimator::KeyEstimate;
+use crate::spelling::{chord_label, Accidental};
 
 pub struct ChordTemplate {
     pub quality: &'static str,
@@ -73,15 +72,10 @@ impl ChordMatch {
         if self.quality == "maj" { "" } else { self.quality }
     }
 
-    pub fn label(&self) -> String {
-        let mut name = format!("{}{}", NOTE_NAMES[self.root_pc as usize], self.quality_suffix());
-        if let Some(bass_pc) = self.bass_pc {
-            if bass_pc != self.root_pc {
-                name.push('/');
-                name.push_str(NOTE_NAMES[bass_pc as usize]);
-            }
-        }
-        name
+    /// The chord's display name, spelled per `mode` (and, for `Accidental::Auto`, the current
+    /// key); see `spelling`.
+    pub fn label(&self, key: Option<&KeyEstimate>, mode: Accidental) -> String {
+        chord_label(self, key, mode)
     }
 }
 

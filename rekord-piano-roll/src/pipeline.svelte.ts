@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { BeatLines, ConfirmedNote, StartedNote } from "./pianoroll";
-import { settings, type ModelSize } from "./settings.svelte";
+import { settings, type Accidental, type ModelSize } from "./settings.svelte";
 
 // The model actually running, after any DirectML->CPU fallback the backend
 // applies -- see NoteModelConfig/run_live_session in lib.rs. Distinct from
@@ -17,6 +17,7 @@ type PipelineEvent =
   | ({ type: "NoteStarted" } & StartedNote)
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
   | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
+  | { type: "ChordRelabel"; label: string }
   | { type: "TensionsChanged"; tensions: string[] }
   | { type: "KeyChange"; key_name: string }
   | ({ type: "BeatLines" } & BeatLines);
@@ -116,15 +117,30 @@ function updateBpm(lines: BeatLines) {
   }
 }
 
-// Mirrors rekord_core::chord_templates::NOTE_NAMES and
-// KeyEstimate::name()'s "X Major (Y Minor)" formatting -- the manual-key
-// menu offers the same 12 relative major/minor pairs the automatic
-// estimator can ever display, so switching to a manual pick never shows a
-// label the Auto mode couldn't have shown itself.
-const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-export function keyPairLabel(relativeMajorPc: number): string {
+// Mirrors rekord_core::spelling::key_pair_name (the "X Major (Y Minor)" key name) -- the
+// manual-key menu offers the same 12 relative major/minor pairs the automatic estimator can
+// ever display, so switching to a manual pick never shows a label Auto mode couldn't have
+// shown itself. Auto: majors by key signature on the flat side (G♭, not F♯), relative minors
+// with the fewest accidentals (C♯m, F♯m, G♯m but E♭m, B♭m).
+const SHARP_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const FLAT_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+const AUTO_MINOR_KEY_NAMES = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "G♯", "A", "B♭", "B"];
+
+export function keyPairLabel(relativeMajorPc: number, mode: Accidental = settings.accidental): string {
   const minorPc = (relativeMajorPc + 9) % 12; // -3 semitones, wrapped
-  return `${NOTE_NAMES[relativeMajorPc]} Major (${NOTE_NAMES[minorPc]} Minor)`;
+  const major = mode === "sharp" ? SHARP_NAMES : FLAT_NAMES;
+  const minor = mode === "sharp" ? SHARP_NAMES : mode === "flat" ? FLAT_NAMES : AUTO_MINOR_KEY_NAMES;
+  return `${major[relativeMajorPc]} Major (${minor[minorPc]} Minor)`;
+}
+
+/** The relative-major pitch class a displayed key label is for, in whichever spelling it was
+ * written (a stale one right after the setting changed still resolves), or -1 for "--". */
+export function keyPcFromLabel(label: string): number {
+  const modes: Accidental[] = ["auto", "sharp", "flat"];
+  for (let pc = 0; pc < 12; pc++) {
+    if (modes.some((m) => keyPairLabel(pc, m) === label)) return pc;
+  }
+  return -1;
 }
 
 export interface PipelineHandlers {
@@ -133,6 +149,8 @@ export interface PipelineHandlers {
   onNote(note: ConfirmedNote): void;
   onBeatLines(lines: BeatLines): void;
   onChordChange(t: number, label: string, romanNumeral: string | null): void;
+  /** The current chord spelled again after the accidental setting changed. */
+  onChordRelabel(label: string): void;
 }
 
 // Note, beat-line and clock events bypass reactive state entirely and go straight to
@@ -172,6 +190,9 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
       pipeline.chord = payload.label;
       pipeline.roman = payload.roman_numeral ?? EMPTY_ROMAN;
       handlers.onChordChange(payload.t, payload.label, payload.roman_numeral);
+    } else if (payload.type === "ChordRelabel") {
+      pipeline.chord = payload.label;
+      handlers.onChordRelabel(payload.label);
     } else if (payload.type === "TensionsChanged") {
       pipeline.tensions = payload.tensions;
     } else if (payload.type === "BeatLines") {
@@ -206,6 +227,7 @@ export async function startCapture(): Promise<void> {
     await invoke("start_capture", {
       modelSize: settings.modelSize,
       futureFrames: settings.futureFrames,
+      accidental: settings.accidental,
     });
   } catch (err) {
     console.error(err);
@@ -232,6 +254,19 @@ export async function setKeyMode(tonicPc: number | null): Promise<void> {
   }
   try {
     await invoke("set_key_mode", { tonicPc });
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+export async function setAccidental(): Promise<void> {
+  // While capture runs the backend re-announces the chord and key in the new spelling. A key
+  // already on screen from before (or while stopped, when nothing is re-announced) is
+  // respelled here.
+  const pc = keyPcFromLabel(pipeline.keyName);
+  if (pc >= 0) pipeline.keyName = keyPairLabel(pc);
+  try {
+    await invoke("set_accidental", { accidental: settings.accidental });
   } catch (err) {
     console.error(err);
   }
