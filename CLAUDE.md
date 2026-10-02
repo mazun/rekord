@@ -182,11 +182,15 @@ npm run tauri dev
   bounded re-decoding of retained frames, and raising it caused O(T²)-ish
   growth; that concern is gone.)
 - **Piano-roll clock is a pure linear function of wall-clock time, offset
-  by a fixed known constant** (`total_latency_s`, computed once per
-  session in `pipeline.rs` from the look-ahead and capture hop in use and
-  sent on the `PipelineEvent::Started` event — `pianoroll.ts`
-  just consumes it, it doesn't compute or hardcode it) — never estimated
-  or corrected at runtime. The confirm-delay is structural (block length +
+  by a constant fixed once per session** (2026-10-03, user): the playhead
+  is the keyboard's left edge and shows the audio clock minus
+  `displayLagS` = the smallest `wall - start_s` over the `NoteStarted`
+  events of the first 4 s (`LAG_MEASURE_S`) + 0.01 s, measured in
+  `pianoroll.ts` and then never re-estimated. This replaced the earlier
+  `total_latency_s` offset (~0.88 s, the wait for a note's *end*), which
+  drew every new note off-screen to the right / under the keyboard for
+  its first ~0.6 s. `total_latency_s` is still sent on `Started` but the
+  piano roll ignores it. The delay is structural (block length +
   look-ahead + capture hop), not jitter, so
   anchor-and-extrapolate or rate-correction approaches both produce
   visible warping/acceleration; a fixed offset anchored to the `Started`

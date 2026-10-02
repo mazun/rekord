@@ -137,6 +137,12 @@ interface NoteSprite extends ConfirmedNote {
 // structural wait for a note's end, which an open note doesn't have).
 const OPEN_NOTE_LAG_S = 0.15;
 
+// The display lag is measured from the NoteStarted notes of the first LAG_MEASURE_S of a session
+// (it locks at the first tick after that with at least one sample, so silence just delays it),
+// plus a small safety margin. Untuned.
+const LAG_MEASURE_S = 4;
+const LAG_MARGIN_S = 0.01;
+
 // Bottom to top: when notes of different parts overlap at the same pitch, the vocal is drawn
 // over the bass over the rest.
 const PART_DRAW_ORDER: NotePart[] = ["all", "other", "bass", "vocal"];
@@ -237,7 +243,9 @@ export class PianoRoll {
   private notes: NoteSprite[] = [];
   private running = false;
   private resetAtMs = 0;
-  private totalLatencyS = 0;
+  private displayLagS = 0;
+  private displayLagLocked = false;
+  private lagSampleMinS = Infinity;
   // Whether newly-added notes get the melody/bass color treatment (see
   // addNote) or just the default coloring, as if every note were an inner
   // voice. Toggling only affects notes added from here on -- notes already
@@ -370,10 +378,12 @@ export class PianoRoll {
   /** Clears the view and starts the scroll clock. Call when a session
    * starts, with the backend-computed confirm-delay figure for that
    * session (from the pipeline's `Started { total_latency_s }` event). */
-  reset(totalLatencyS: number): void {
+  reset(_totalLatencyS: number): void {
     this.running = true;
     this.resetAtMs = performance.now();
-    this.totalLatencyS = totalLatencyS;
+    this.displayLagS = 0;
+    this.displayLagLocked = false;
+    this.lagSampleMinS = Infinity;
     for (const n of this.notes) n.graphic.destroy();
     this.notes = [];
     for (const b of this.beatLines) b.graphic.destroy();
@@ -392,8 +402,13 @@ export class PianoRoll {
     return (performance.now() - this.resetAtMs) / 1000;
   }
 
+  // The playhead (keyboard's left edge) shows the audio clock minus `displayLagS`, the measured
+  // delay between a note's onset and its NoteStarted arriving (see startNote). It is measured once,
+  // in the first LAG_MEASURE_S of a session, and then fixed -- never re-estimated -- so the scroll
+  // stays a constant-rate function of the wall clock. total_latency_s (the wait for a note's
+  // *end*) is not used: a note is drawn from its onset.
   private displayS(): number {
-    return this.wallClockS() - this.totalLatencyS;
+    return this.wallClockS() - this.displayLagS;
   }
 
   private xForTime(t: number): number {
@@ -420,6 +435,9 @@ export class PianoRoll {
 
   /** Draws a note from its onset; it grows with the clock until addNote() delivers its end. */
   startNote(note: StartedNote): void {
+    // Smallest onset-to-arrival delay seen so far: the freshest notes then land exactly on the
+    // keyboard edge, later-detected ones a little to its left.
+    if (this.displayLagLocked === false) this.lagSampleMinS = Math.min(this.lagSampleMinS, this.wallClockS() - note.start_s);
     this.addSprite({ ...note, end_s: this.wallClockS() - OPEN_NOTE_LAG_S, melody: false, bass: false }, true);
   }
 
@@ -574,6 +592,10 @@ export class PianoRoll {
 
   private onTick(): void {
     if (!this.running) return;
+    if (!this.displayLagLocked && this.wallClockS() >= LAG_MEASURE_S && Number.isFinite(this.lagSampleMinS)) {
+      this.displayLagS = this.lagSampleMinS + LAG_MARGIN_S;
+      this.displayLagLocked = true;
+    }
     this.tickBeatLines(this.app.ticker.deltaMS / 1000);
     this.tickChordSegments();
     const displayS = this.displayS();
@@ -594,7 +616,8 @@ export class PianoRoll {
         n.graphic.destroy();
       } else {
         stillVisible.push(n);
-        if (displayS >= n.start_s && displayS <= n.end_s) activePitches.add(n.pitch_midi);
+        // An open note's end_s only trails the clock; it is still sounding.
+        if (displayS >= n.start_s && (n.open || displayS <= n.end_s)) activePitches.add(n.pitch_midi);
       }
     }
     this.notes = stillVisible;
