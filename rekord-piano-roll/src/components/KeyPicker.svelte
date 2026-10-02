@@ -1,19 +1,17 @@
 <script lang="ts">
-  import { pipeline, keyPairLabel, setKeyMode } from "../pipeline.svelte";
+  import { pipeline, keyPcFromLabel, setKeyMode } from "../pipeline.svelte";
   import { t } from "../i18n.svelte";
 
   // A toggle plus up/down steppers instead of a dropdown: the collapsed
   // window is only a few rows tall, so a 13-item menu opened from here
   // always ran off the bottom of it.
-  const KEY_LABELS = Array.from({ length: 12 }, (_, pc) => keyPairLabel(pc));
-
   let auto = $state(true);
 
   // The key currently displayed -- the detected one in Auto mode, the picked
   // one otherwise (setKeyMode updates the label immediately). Stepping from
   // Auto starts from what's on screen, falling back to C before the first
   // estimate arrives ("--").
-  const currentPc = $derived(Math.max(0, KEY_LABELS.indexOf(pipeline.keyName)));
+  const currentPc = $derived(Math.max(0, keyPcFromLabel(pipeline.keyName)));
 
   function toggleAuto() {
     auto = !auto;

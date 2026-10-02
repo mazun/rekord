@@ -8,8 +8,9 @@
 
 use std::collections::VecDeque;
 
-use crate::chord_templates::{ChordMatch, NOTE_NAMES};
+use crate::chord_templates::ChordMatch;
 use crate::harmonica_decode::ConfirmedNote;
+use crate::spelling::{key_name, Accidental};
 
 // Bellman & Budge (1999) key profiles, via
 // https://extras.humdrum.org/man/keycor/ (also reproduced in music21's
@@ -78,10 +79,8 @@ impl KeyEstimate {
     /// and minor share all seven diatonic pitch classes, so that call is
     /// inherently the noisiest part of the estimate (see `SWITCH_MARGIN`)
     /// and this way the noise never surfaces as a visibly different label.
-    pub fn name(&self) -> String {
-        let major_pc = self.relative_major_pc();
-        let minor_pc = (major_pc - 3).rem_euclid(12);
-        format!("{} Major ({} Minor)", NOTE_NAMES[major_pc as usize], NOTE_NAMES[minor_pc as usize])
+    pub fn name(&self, mode: Accidental) -> String {
+        key_name(self, mode)
     }
 
     /// Roman-numeral degrees are always spelled against this project's
@@ -89,7 +88,7 @@ impl KeyEstimate {
     /// major (+3 semitones) if minor -- e.g. in A minor, a C-major chord
     /// (the relative major's own tonic) reads "I", and the A-minor tonic
     /// chord itself reads "VIm", never "i" as if A were degree 1.
-    fn relative_major_pc(&self) -> i32 {
+    pub fn relative_major_pc(&self) -> i32 {
         match self.mode {
             Mode::Major => self.tonic_pc,
             Mode::Minor => (self.tonic_pc + 3).rem_euclid(12),

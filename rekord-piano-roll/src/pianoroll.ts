@@ -492,6 +492,13 @@ export class PianoRoll {
     this.chordSegments.push({ startS: t, endS: null, band, boundary, label: labelText, roman: romanText });
   }
 
+  /** Respells the still-current chord (the accidental setting changed mid-session); chords that
+   * already scrolled into the past keep the spelling they were drawn with. */
+  relabelCurrentChord(label: string): void {
+    const current = this.chordSegments[this.chordSegments.length - 1];
+    if (current && current.label.text !== SILENCE_LABEL) current.label.text = label;
+  }
+
   /** Positions every chord segment for the current displayS(), same as onTick does for notes,
    * and prunes ones fully scrolled past the left edge. The label/roman text sticks to the
    * visible left edge of its segment (clamped between the segment's own bounds) rather than

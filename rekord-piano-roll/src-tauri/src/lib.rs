@@ -4,6 +4,7 @@ use std::thread::JoinHandle;
 
 use rekord_core::harmonica_model::ModelSize;
 use rekord_core::key_estimator::{KeyEstimate, Mode};
+use rekord_core::spelling::Accidental;
 use rekord_core::pipeline::{
     KeyMode, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
 };
@@ -17,6 +18,8 @@ struct CaptureState {
     // handle, which are per-session) so a key choice made before pressing
     // Start -- or left over from a previous session -- isn't lost.
     key_mode: Arc<Mutex<KeyMode>>,
+    // Same lifetime as key_mode; changeable while a session runs (set_accidental).
+    accidental: Arc<Mutex<Accidental>>,
 }
 
 #[tauri::command]
@@ -25,6 +28,7 @@ fn start_capture(
     state: State<Mutex<CaptureState>>,
     model_size: String,
     future_frames: usize,
+    accidental: String,
 ) -> Result<(), String> {
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     if guard.handle.is_some() {
@@ -45,6 +49,8 @@ fn start_capture(
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_thread = Arc::clone(&stop_flag);
     let key_mode_thread = Arc::clone(&guard.key_mode);
+    *guard.accidental.lock().map_err(|e| e.to_string())? = accidental.parse().unwrap_or_default();
+    let accidental_thread = Arc::clone(&guard.accidental);
     let app_for_thread = app.clone();
 
     let handle = std::thread::spawn(move || {
@@ -54,6 +60,7 @@ fn start_capture(
             None,
             stop_flag_thread,
             key_mode_thread,
+            accidental_thread,
             |event| {
                 let _ = app_for_thread.emit("pipeline-event", &event);
             },
@@ -83,6 +90,16 @@ fn set_key_mode(state: State<Mutex<CaptureState>>, tonic_pc: Option<i32>) -> Res
     Ok(())
 }
 
+// "auto" | "sharp" | "flat" -- how chord and key names spell black-key pitch classes.
+// Takes effect immediately, mid-session included (the pipeline re-announces the
+// displayed chord and key in the new spelling).
+#[tauri::command]
+fn set_accidental(state: State<Mutex<CaptureState>>, accidental: String) -> Result<(), String> {
+    let guard = state.lock().map_err(|e| e.to_string())?;
+    *guard.accidental.lock().map_err(|e| e.to_string())? = accidental.parse().map_err(|e: anyhow::Error| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn stop_capture(state: State<Mutex<CaptureState>>) -> Result<(), String> {
     let (stop_flag, handle) = {
@@ -105,7 +122,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(CaptureState::default()))
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, set_key_mode])
+        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, set_key_mode, set_accidental])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
