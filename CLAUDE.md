@@ -226,6 +226,22 @@ npm run tauri dev
   share all seven diatonic pitch classes, so that call is the noisiest
   part of the estimate, and this makes the noise invisible instead of
   surfacing as a flickering label.
+- **Chord/key spelling (`spelling.rs`) has three user modes -- Auto / always ♯ /
+  always ♭** (`Accidental`, setting `chord.accidental`, live-switchable via
+  `set_accidental`; the pipeline re-announces the current chord as
+  `ChordRelabel` and the key as a normal `KeyChange`, past chords on the roll
+  keep their spelling). Auto = "most natural on a piano score" (2026-10-02,
+  user): dim/dim7/m7b5 roots are always ♯; otherwise a root is spelled as a
+  scale degree of the estimated key (so A major gets C♯m/F♯m, D major a
+  borrowed B♭), with a fixed table while there is no key (flats, but F♯ and
+  C♯m/F♯m/G♯m); a slash-chord bass is spelled by letter arithmetic from the
+  spelled root (E/G♯, Fm/A♭, Gmaj7/F♯, C/B♭, never G♭/A♯); key names are G♭-side
+  majors with the fewest-accidentals relative minor ("E Major (C♯ Minor)").
+  C♭/F♭/E♯/B♯ and double accidentals are never produced. The frontend
+  mirrors only the key-pair table (`keyPairLabel` in `pipeline.svelte.ts`) for
+  the manual key picker; keep it in step with `key_pair_name`. Because the Auto
+  spelling follows the key estimate, a short-window key misdetection also
+  respells chords (accepted). Not yet checked by ear/eye in the live app.
 - **A short-window key misdetection is an expected limitation, not
   necessarily a bug** — confirmed via live loopback testing (2026-09-03):
   a real G-major song displayed as "C Major (A Minor)" because within the

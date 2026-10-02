@@ -9,3 +9,4 @@ pub mod key_estimator;
 pub mod live_capture;
 pub mod melody_bass;
 pub mod pipeline;
+pub mod spelling;

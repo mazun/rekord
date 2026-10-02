@@ -9,6 +9,7 @@ use rekord_core::pipeline::{
     self, midi_to_name, ChordStabilizer, NoteModelConfig, NoteModelInfo, PipelineEvent, CAPTURE_HOP_S,
     DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
 };
+use rekord_core::spelling::Accidental;
 
 fn device_name(device: Device) -> &'static str {
     match device {
@@ -26,7 +27,7 @@ fn print_model_info(note_model: NoteModelInfo) {
     );
 }
 
-fn print_event(event: PipelineEvent) {
+fn print_event(event: PipelineEvent, accidental: Accidental) {
     match event {
         PipelineEvent::Started { total_latency_s, note_model } => {
             println!(
@@ -48,7 +49,7 @@ fn print_event(event: PipelineEvent) {
             };
             println!(
                 "[{start_s:6.2}s -> {end_s:6.2}s] note {} (vel {velocity:.2}){role}",
-                midi_to_name(pitch_midi)
+                midi_to_name(pitch_midi, accidental)
             );
         }
         PipelineEvent::ChordChange { t, label, roman_numeral } => {
@@ -60,6 +61,9 @@ fn print_event(event: PipelineEvent) {
                 println!("    tensions: {}", tensions.join(", "));
             }
         }
+        PipelineEvent::ChordRelabel { label } => {
+            println!("  chord (respelled): {label}");
+        }
         PipelineEvent::KeyChange { key_name } => {
             println!("  key: {key_name}");
         }
@@ -70,7 +74,14 @@ fn print_event(event: PipelineEvent) {
     }
 }
 
-fn run_file(audio_path: &str, size: ModelSize, future_frames: usize, allow_directml: bool, hop_seconds: f32) -> Result<()> {
+fn run_file(
+    audio_path: &str,
+    size: ModelSize,
+    future_frames: usize,
+    allow_directml: bool,
+    hop_seconds: f32,
+    accidental: Accidental,
+) -> Result<()> {
     println!("Loading {audio_path} ...");
     let audio = audio_io::load_audio(audio_path, harmonica_model::SAMPLE_RATE)?;
     let duration = audio.len() as f32 / harmonica_model::SAMPLE_RATE as f32;
@@ -95,7 +106,7 @@ fn run_file(audio_path: &str, size: ModelSize, future_frames: usize, allow_direc
         if transcriber.blocks_done() != blocks_before {
             let note_events = transcriber.note_events();
             let covered = transcriber.covered_seconds();
-            pipeline::emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, print_event);
+            pipeline::emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, |e| print_event(e, accidental));
             pipeline::report_new_chords(
                 &note_events,
                 last_covered,
@@ -103,9 +114,10 @@ fn run_file(audio_path: &str, size: ModelSize, future_frames: usize, allow_direc
                 &mut chord_display,
                 &mut key_estimator,
                 &pipeline::KeyMode::Auto,
+                accidental,
                 None, // file mode has no beat tracker to snap chord onsets to
                 &mut last_key_name,
-                print_event,
+                |e| print_event(e, accidental),
             );
             last_covered = covered;
         }
@@ -115,7 +127,7 @@ fn run_file(audio_path: &str, size: ModelSize, future_frames: usize, allow_direc
     // note, exactly as the reference does over a whole file.
     let final_notes = transcriber.finish()?;
     let final_note_events = transcriber.note_events();
-    pipeline::emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, print_event);
+    pipeline::emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, |e| print_event(e, accidental));
     pipeline::report_new_chords(
         &final_note_events,
         last_covered,
@@ -123,15 +135,16 @@ fn run_file(audio_path: &str, size: ModelSize, future_frames: usize, allow_direc
         &mut chord_display,
         &mut key_estimator,
         &pipeline::KeyMode::Auto,
+        accidental,
         None,
         &mut last_key_name,
-        print_event,
+        |e| print_event(e, accidental),
     );
 
     Ok(())
 }
 
-fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>) -> Result<()> {
+fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>, accidental: Accidental) -> Result<()> {
     println!("Listening to default speaker output via loopback capture ...");
     match duration_s {
         Some(d) => println!("Will stop after {d:.1}s (Ctrl+C to stop earlier)\n"),
@@ -139,8 +152,9 @@ fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>) 
     }
     let never_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let key_mode = std::sync::Arc::new(std::sync::Mutex::new(pipeline::KeyMode::Auto));
+    let accidental_setting = std::sync::Arc::new(std::sync::Mutex::new(accidental));
     let mut printed_until = f32::NEG_INFINITY;
-    pipeline::run_live_session(config, hop_seconds, duration_s, never_stop, key_mode, move |event| {
+    pipeline::run_live_session(config, hop_seconds, duration_s, never_stop, key_mode, accidental_setting, move |event| {
         if let PipelineEvent::BeatLines { committed, .. } = &event {
             let from = printed_until;
             for line in committed.iter().filter(|l| l.t > from) {
@@ -148,7 +162,7 @@ fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>) 
                 printed_until = line.t;
             }
         }
-        print_event(event)
+        print_event(event, accidental)
     })
 }
 
@@ -159,6 +173,7 @@ fn main() -> Result<()> {
     let mut size = ModelSize::Mix;
     let mut future_frames = DEFAULT_FUTURE_FRAMES;
     let mut allow_directml = true;
+    let mut accidental = Accidental::Auto;
     let mut live = false;
     let mut duration: Option<f32> = None;
     let mut i = 1;
@@ -186,6 +201,11 @@ fn main() -> Result<()> {
                 }
                 future_frames = parsed;
             }
+            "--accidental" => {
+                i += 1;
+                let value = args.get(i).context("--accidental expects auto, sharp or flat")?;
+                accidental = value.parse()?;
+            }
             "--cpu" => allow_directml = false,
             "--live" => live = true,
             "--duration" => {
@@ -204,11 +224,11 @@ fn main() -> Result<()> {
 
     if live {
         let config = NoteModelConfig { size, future_frames, allow_directml };
-        run_live(config, hop, duration)
+        run_live(config, hop, duration, accidental)
     } else {
         let audio_file = audio_file.context(
-            "usage: rekord_engine <audio_file> [--size small|medium|large|mix] [--future 8|16] [--cpu] [--hop 0.064]",
+            "usage: rekord_engine <audio_file> [--size small|medium|large|mix] [--future 8|16] [--accidental auto|sharp|flat] [--cpu] [--hop 0.064]",
         )?;
-        run_file(&audio_file, size, future_frames, allow_directml, hop)
+        run_file(&audio_file, size, future_frames, allow_directml, hop, accidental)
     }
 }
