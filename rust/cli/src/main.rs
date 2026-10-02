@@ -63,6 +63,8 @@ fn print_event(event: PipelineEvent) {
         PipelineEvent::KeyChange { key_name } => {
             println!("  key: {key_name}");
         }
+        // the CLI prints a note once, when it ends
+        PipelineEvent::NoteStarted { .. } => {}
         // snapshots of a moving window; run_live prints each committed line once instead
         PipelineEvent::BeatLines { .. } => {}
     }

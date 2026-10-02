@@ -100,6 +100,10 @@ npm run tauri dev
     measured `majmin_inv` .769 -> .779 for the offline version) but the user
     chose to leave it, since chord display beyond tensions is going to be
     rebuilt around a separate chord model.
+  - The piano roll shows a note from its onset: `NoteTranscriber::take_started_notes`
+    reports newly opened notes as `PipelineEvent::NoteStarted`, drawn growing
+    with the clock (`OPEN_NOTE_LAG_S` in `pianoroll.ts`, untuned) until the
+    `NoteConfirmed` with the same start/pitch/part fixes the length.
   - The decode (onset local maxima, ended by sustain or the next onset) is
     exact in streaming form and never revises a note, so there is no confirm
     margin and no `NoteStitcher`: a note is emitted once, when it ends.

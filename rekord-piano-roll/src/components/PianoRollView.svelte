@@ -37,6 +37,7 @@
       roll.setRoleColoringEnabled(rolesEnabled);
       const off = await connectPipeline({
         onStarted: (totalLatencyS) => roll?.reset(totalLatencyS),
+        onNoteStarted: (note) => roll?.startNote(note),
         onNote: (note) => roll?.addNote(note),
         onBeatLines: (lines) => roll?.setBeatLines(lines),
         onChordChange: (t, label, romanNumeral) => roll?.addChordChange(t, label, romanNumeral),
