@@ -60,6 +60,7 @@ const BEAT_ANIM_TAU_S = 0.15;
 // all is seeing the *progression* scroll past, and the numeral is the part of that worth reading
 // after the chord itself has scrolled away from the always-current ChordDisplay.
 const CHORD_LANE_HEIGHT = 34;
+const CHORD_FONT_FAMILY = '"Accidentals", "Segoe UI", sans-serif'; // same stack as styles.css
 const CHORD_LABEL_FONT_SIZE = 13;
 const CHORD_ROMAN_FONT_SIZE = 10;
 const CHORD_LABEL_PADDING = 6;
@@ -491,11 +492,11 @@ export class PianoRoll {
     const isSilence = label === SILENCE_LABEL;
     const labelText = new Text({
       text: label,
-      style: { fontSize: CHORD_LABEL_FONT_SIZE, fontWeight: "600", fill: isSilence ? CHORD_SILENCE_COLOR : CHORD_TEXT_COLOR },
+      style: { fontFamily: CHORD_FONT_FAMILY, fontSize: CHORD_LABEL_FONT_SIZE, fontWeight: "600", fill: isSilence ? CHORD_SILENCE_COLOR : CHORD_TEXT_COLOR },
     });
     const romanText = new Text({
       text: romanNumeral ?? "",
-      style: { fontSize: CHORD_ROMAN_FONT_SIZE, fill: CHORD_ROMAN_COLOR },
+      style: { fontFamily: CHORD_FONT_FAMILY, fontSize: CHORD_ROMAN_FONT_SIZE, fill: CHORD_ROMAN_COLOR },
     });
     band.visible = !isSilence;
     this.chordLayer.addChild(band, boundary, labelText, romanText);

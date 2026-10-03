@@ -112,3 +112,8 @@ sample_audio/          Piano recordings used for validation
 
 All recordings in `sample_audio/` were produced by the author and are
 provided under the same license.
+
+`rekord-piano-roll/src/assets/fonts/DejaVuSans-accidentals.woff2` is
+[DejaVu Sans](https://dejavu-fonts.github.io/) reduced to the three glyphs
+♭ ♮ ♯ (U+266D-266F); it keeps its own license, not MIT
+(`DejaVu-LICENSE.txt` next to it).
