@@ -30,7 +30,7 @@ const HF_REPO: &str = "mazun/rekord";
 /// A commit hash, not a branch, so an old checkout keeps building the weights
 /// it was tested against. New weights: upload them first, then update this
 /// and the hashes below.
-const HF_REVISION: &str = "4f3b3d37ab897cccc2625557a71c0d3d5ca64d98";
+const HF_REVISION: &str = "6ebdd5568f689173a4ed470994ab34628c8ba7ac";
 
 /// (file name, lowercase hex SHA-256).
 const HARMONICA_MODELS: [(&str, &str); 5] = [
@@ -38,7 +38,7 @@ const HARMONICA_MODELS: [(&str, &str); 5] = [
     ("small_uni_300k.onnx", "780ace3e0e619665b7975f387f7b06016b104b7133eb5734af1704e6377146dc"),
     ("medium_uni_300k_urmp.onnx", "d408a313c0fdfd6ece7189b7a32b726899efcd0051baf599671b57736bbe1eeb"),
     ("large_uni_300k_urmp.onnx", "c455139320d69062269f8e0ab723938065e2d56d3539cad6f8f362f35dcca888"),
-    ("mix_large_v1.onnx", "e75de4a1caae506a0cb06cdd1fc513c62947a53c76c6f8278d7d530d7e46a229"),
+    ("mix_large_v1.onnx", "bdd74c8aa2a4e8035b0c8403a3467a73caea8beb5c9f57947502f56bcf0109af"),
 ];
 
 // ureq's read_to_vec() defaults to a 10MB cap; cqt156.onnx alone is ~17MB.
