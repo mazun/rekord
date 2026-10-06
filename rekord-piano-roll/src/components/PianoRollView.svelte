@@ -127,7 +127,7 @@
      corner, and the two overlapped there. */
   .legend {
     position: absolute;
-    bottom: 0.6rem;
+    bottom: calc(0.6rem + 14px); /* clear of the scrollbar along the bottom edge (SCROLLBAR_HEIGHT + SCROLLBAR_BOTTOM_PADDING) */
     left: 0.6rem;
     z-index: 1;
     display: flex;

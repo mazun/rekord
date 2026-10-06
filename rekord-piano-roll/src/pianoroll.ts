@@ -91,6 +91,23 @@ const KEY_BORDER_COLOR = 0x0c0d12;
 // color, same as a real keyboard's frame between/behind the keys.
 const KEYBOARD_BACKING_COLOR = 0x2a2e3a;
 
+// How much of the past is kept (notes, chords, beat lines) so a stopped roll can be scrolled back
+// through it; anything that ended longer ago than this is dropped. Untuned.
+const HISTORY_S = 300;
+// While stopped, the wheel/trackpad scrolls this many times faster than the content moves under
+// the pointer when dragging, since a wheel notch is only ~100 px and the history is minutes long.
+const WHEEL_SCROLL_SPEED = 4;
+const WHEEL_LINE_PX = 16; // deltaMode "line" -> pixels
+// Scrollbar along the bottom of the note area (stopped and scrollable only): the thumb is the
+// visible window within the retained history, its right end = the stop position.
+const SCROLLBAR_HEIGHT = 10;
+const SCROLLBAR_BOTTOM_PADDING = 4; // gap between the scrollbar and the bottom edge
+const SCROLLBAR_HIT_HEIGHT = 24; // clickable strip above the bottom edge, wider than what's drawn
+const SCROLLBAR_MIN_THUMB_PX = 24;
+const SCROLLBAR_TRACK_COLOR = 0x1a1c22;
+const SCROLLBAR_THUMB_COLOR = 0x5a6580;
+const SCROLLBAR_THUMB_ACTIVE_COLOR = 0x9aaad8;
+
 function isBlackKey(pitch: number): boolean {
   return [1, 3, 6, 8, 10].includes(pitch % 12);
 }
@@ -247,6 +264,20 @@ export class PianoRoll {
   private running = false;
   private resetAtMs = 0;
   private stoppedAtMs: number | null = null;
+  // How far back from the stop position the view is scrolled (seconds, >= 0; always 0 while
+  // running), and the most it can be: far enough that the oldest retained item reaches the left edge.
+  private viewOffsetS = 0;
+  private maxViewOffsetS = 0;
+  // What a pointer drag moves: the notes themselves, or the scrollbar thumb.
+  private dragMode: "none" | "content" | "thumb" = "none";
+  private scrollbarLayer = new Container();
+  private scrollbarTrack = new Graphics();
+  private scrollbarThumb = new Graphics();
+  private thumbX = 0;
+  private thumbW = 0;
+  private drawnThumb = { w: -1, active: false };
+  // Start time of the oldest retained note/chord/beat line, recomputed every tick.
+  private oldestS = Infinity;
   private displayLagS = 0;
   private displayLagLocked = false;
   private lagSampleMinS = Infinity;
@@ -281,6 +312,9 @@ export class PianoRoll {
     app.stage.addChild(roll.beatLayer);
     app.stage.addChild(noteLayer);
     app.stage.addChild(roll.chordLayer);
+    app.stage.addChild(roll.scrollbarLayer);
+    roll.scrollbarLayer.addChild(roll.scrollbarTrack, roll.scrollbarThumb);
+    roll.scrollbarLayer.visible = false;
     app.stage.addChild(keyboardLayer);
     keyboardLayer.addChild(roll.keyboardBacking);
     roll.createKeyboard(keyboardLayer);
@@ -297,8 +331,65 @@ export class PianoRoll {
     app.renderer.on("resize", () => roll.layout());
     requestAnimationFrame(() => app.resize());
 
+    roll.attachScrollInput(app.canvas);
     app.ticker.add(() => roll.onTick());
     return roll;
+  }
+
+  /** Lets a stopped roll be scrolled back through its history: the wheel/trackpad (down = later,
+   * like any scrolled view) or dragging the notes. Ignored while capture is running. */
+  private attachScrollInput(canvas: HTMLCanvasElement): void {
+    canvas.style.touchAction = "none";
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        if (this.stoppedAtMs === null) return;
+        e.preventDefault();
+        const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINE_PX : 1;
+        this.scrollBy(-((e.deltaY + e.deltaX) * unit * WHEEL_SCROLL_SPEED) / PIXELS_PER_SECOND);
+      },
+      { passive: false },
+    );
+    canvas.addEventListener("pointerdown", (e) => {
+      if (this.stoppedAtMs === null) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      canvas.setPointerCapture(e.pointerId);
+      if (this.scrollbarLayer.visible && y >= this.app.screen.height - SCROLLBAR_HIT_HEIGHT && x < this.playheadX()) {
+        // Clicking the track outside the thumb centers the thumb there first, then drags it.
+        if (x < this.thumbX || x > this.thumbX + this.thumbW) this.setThumbX(x - this.thumbW / 2);
+        this.dragMode = "thumb";
+      } else {
+        this.dragMode = "content";
+      }
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (this.dragMode === "content") {
+        this.scrollBy(e.movementX / PIXELS_PER_SECOND);
+      } else if (this.dragMode === "thumb") {
+        const span = this.playheadX() - this.thumbW;
+        if (span > 0) this.scrollBy((-e.movementX * this.maxViewOffsetS) / span);
+      }
+    });
+    const endDrag = () => {
+      this.dragMode = "none";
+    };
+    canvas.addEventListener("pointerup", endDrag);
+    canvas.addEventListener("pointercancel", endDrag);
+  }
+
+  /** Scrolls so the scrollbar thumb's left edge sits at `x` (clamped to the track). */
+  private setThumbX(x: number): void {
+    const span = this.playheadX() - this.thumbW;
+    if (span <= 0) return;
+    const frac = Math.min(1, Math.max(0, x / span));
+    this.viewOffsetS = (1 - frac) * this.maxViewOffsetS;
+  }
+
+  /** Moves the view `deltaS` further into the past (negative: back towards the stop position). */
+  private scrollBy(deltaS: number): void {
+    this.viewOffsetS = Math.min(this.maxViewOffsetS, Math.max(0, this.viewOffsetS + deltaS));
   }
 
   // Tears down the renderer and removes its canvas -- only needed so a
@@ -332,6 +423,10 @@ export class PianoRoll {
       this.guides.moveTo(0, y).lineTo(noteAreaWidth, y);
     }
     this.guides.stroke({ width: 1, color: GUIDE_COLOR });
+
+    this.scrollbarTrack.clear().rect(0, 0, noteAreaWidth, SCROLLBAR_HEIGHT).fill({ color: SCROLLBAR_TRACK_COLOR, alpha: 0.85 });
+    this.scrollbarLayer.y = height - SCROLLBAR_HEIGHT - SCROLLBAR_BOTTOM_PADDING;
+    this.drawnThumb.w = -1; // thumb height follows the layer; redraw it next tick
 
     this.keyboardBacking.clear().rect(0, 0, KEYBOARD_WIDTH, height).fill({ color: KEYBOARD_BACKING_COLOR });
     this.keyboardBacking.x = noteAreaWidth;
@@ -394,6 +489,10 @@ export class PianoRoll {
     this.running = true;
     this.resetAtMs = performance.now();
     this.stoppedAtMs = null;
+    this.viewOffsetS = 0;
+    this.maxViewOffsetS = 0;
+    this.dragMode = "none";
+    this.scrollbarLayer.visible = false;
     this.displayLagS = 0;
     this.displayLagLocked = false;
     this.lagSampleMinS = Infinity;
@@ -411,7 +510,8 @@ export class PianoRoll {
     for (const pitch of this.keys.keys()) this.setKeyActive(pitch, false);
   }
 
-  /** Freezes the scroll where it is (capture stopped); the next reset() resumes it. */
+  /** Freezes the scroll where it is (capture stopped) and makes the history scrollable; the next
+   * reset() resumes it. */
   stop(): void {
     if (this.stoppedAtMs === null) this.stoppedAtMs = performance.now();
   }
@@ -425,8 +525,13 @@ export class PianoRoll {
   // in the first LAG_MEASURE_S of a session, and then fixed -- never re-estimated -- so the scroll
   // stays a constant-rate function of the wall clock. total_latency_s (the wait for a note's
   // *end*) is not used: a note is drawn from its onset.
-  private displayS(): number {
+  private liveDisplayS(): number {
     return this.wallClockS() - this.displayLagS;
+  }
+
+  // What the playhead shows: the live position, minus how far a stopped roll is scrolled back.
+  private displayS(): number {
+    return this.liveDisplayS() - this.viewOffsetS;
   }
 
   private xForTime(t: number): number {
@@ -524,14 +629,25 @@ export class PianoRoll {
    * time it's current -- the same reasoning a sticky table header uses. */
   private tickChordSegments(): void {
     const kept: ChordSegment[] = [];
+    const liveS = this.liveDisplayS();
     for (const seg of this.chordSegments) {
-      const leftX = this.xForTime(seg.startS);
-      const rightX = seg.endS !== null ? this.xForTime(seg.endS) : this.playheadX();
-      if (rightX < 0) {
+      if (seg.endS !== null && seg.endS < liveS - HISTORY_S) {
         seg.band.destroy();
         seg.boundary.destroy();
         seg.label.destroy();
         seg.roman.destroy();
+        continue;
+      }
+      this.oldestS = Math.min(this.oldestS, seg.startS);
+      const leftX = this.xForTime(seg.startS);
+      // The still-current chord runs up to the live position, which a scrolled-back stopped roll
+      // has moved away from the playhead.
+      const rightX = this.xForTime(seg.endS ?? liveS);
+      const onScreen = rightX >= 0 && leftX <= this.app.screen.width;
+      for (const g of [seg.boundary, seg.label, seg.roman]) g.visible = onScreen;
+      seg.band.visible = onScreen && seg.label.text !== SILENCE_LABEL; // silence has no band
+      if (!onScreen) {
+        kept.push(seg);
         continue;
       }
       const width = Math.max(0, rightX - leftX);
@@ -602,10 +718,12 @@ export class PianoRoll {
       b.bar += (b.targetBar - b.bar) * k;
       const width = 1 + (BAR_LINE_WIDTH - 1) * b.bar;
       const x = this.xForTime(b.t) - width / 2;
-      if ((b.dying && b.alpha < 0.01) || x + width < 0) {
+      if ((b.dying && b.alpha < 0.01) || b.t < this.liveDisplayS() - HISTORY_S) {
         b.graphic.destroy();
         continue;
       }
+      this.oldestS = Math.min(this.oldestS, b.t);
+      b.graphic.visible = x + width >= 0 && x <= this.app.screen.width;
       b.graphic.x = x;
       b.graphic.scale.set(width, height);
       b.graphic.alpha = b.alpha * (1 + b.bar * 0.4);
@@ -621,33 +739,72 @@ export class PianoRoll {
       this.displayLagS = this.lagSampleMinS + LAG_MARGIN_S;
       this.displayLagLocked = true;
     }
+    this.oldestS = Infinity;
     this.tickBeatLines(this.app.ticker.deltaMS / 1000);
     this.tickChordSegments();
     const displayS = this.displayS();
+    const liveS = this.liveDisplayS();
     const activePitches = new Set<number>();
-    const stillVisible: NoteSprite[] = [];
+    const retained: NoteSprite[] = [];
     const openEndS = this.wallClockS() - OPEN_NOTE_LAG_S;
+    const screenWidth = this.app.screen.width;
     for (const n of this.notes) {
       if (n.open) {
         n.end_s = Math.max(n.end_s, openEndS);
-        this.drawNote(n.graphic, n);
       }
-      const x = this.xForTime(n.start_s);
-      n.graphic.x = x;
-      if (x + n.graphic.width < 0) {
-        // Scrolled fully off the left edge -- drop it so the note list
+      if (!n.open && n.end_s < liveS - HISTORY_S) {
+        // Older than the retained history -- drop it so the note list
         // (and the number of display objects) doesn't grow forever over
         // a long session.
         n.graphic.destroy();
-      } else {
-        stillVisible.push(n);
-        // An open note's end_s only trails the clock; it is still sounding.
-        if (displayS >= n.start_s && (n.open || displayS <= n.end_s)) activePitches.add(n.pitch_midi);
+        continue;
       }
+      retained.push(n);
+      this.oldestS = Math.min(this.oldestS, n.start_s);
+      const x = this.xForTime(n.start_s);
+      const right = this.xForTime(Math.max(n.end_s, n.start_s + 2 / PIXELS_PER_SECOND));
+      // Only what is on screen is redrawn and positioned; the rest of the history just waits.
+      const onScreen = right >= 0 && x <= screenWidth;
+      n.graphic.visible = onScreen;
+      if (!onScreen) continue;
+      if (n.open) this.drawNote(n.graphic, n);
+      n.graphic.x = x;
+      // An open note's end_s only trails the clock; it is still sounding.
+      if (displayS >= n.start_s && (n.open || displayS <= n.end_s)) activePitches.add(n.pitch_midi);
     }
-    this.notes = stillVisible;
+    this.notes = retained;
     for (const pitch of this.keys.keys()) {
       this.setKeyActive(pitch, this.stoppedAtMs === null && activePitches.has(pitch));
     }
+
+    // Scrolling back is limited to where the oldest retained item reaches the left edge, and only
+    // exists while stopped (the live roll always follows the clock).
+    this.maxViewOffsetS =
+      this.stoppedAtMs === null || !Number.isFinite(this.oldestS)
+        ? 0
+        : Math.max(0, liveS - this.oldestS - this.playheadX() / PIXELS_PER_SECOND);
+    this.viewOffsetS = Math.min(this.viewOffsetS, this.maxViewOffsetS);
+    this.tickScrollbar();
+  }
+
+  /** The thumb spans the visible window (playheadX / PIXELS_PER_SECOND seconds) out of the whole
+   * scrollable history; at offset 0 it sits at the right end, at the maximum at the left end. */
+  private tickScrollbar(): void {
+    const show = this.stoppedAtMs !== null && this.maxViewOffsetS > 0;
+    this.scrollbarLayer.visible = show;
+    if (!show) return;
+    const trackW = this.playheadX();
+    const visibleS = trackW / PIXELS_PER_SECOND;
+    this.thumbW = Math.min(trackW, Math.max(SCROLLBAR_MIN_THUMB_PX, (trackW * visibleS) / (this.maxViewOffsetS + visibleS)));
+    this.thumbX = (1 - this.viewOffsetS / this.maxViewOffsetS) * (trackW - this.thumbW);
+    const active = this.dragMode === "thumb";
+    if (this.drawnThumb.w !== this.thumbW || this.drawnThumb.active !== active) {
+      this.drawnThumb = { w: this.thumbW, active };
+      this.scrollbarThumb
+        .clear()
+        .roundRect(0, 1, this.thumbW, SCROLLBAR_HEIGHT - 2, (SCROLLBAR_HEIGHT - 2) / 2)
+        .fill({ color: active ? SCROLLBAR_THUMB_ACTIVE_COLOR : SCROLLBAR_THUMB_COLOR });
+    }
+    this.scrollbarThumb.x = this.thumbX;
   }
 }

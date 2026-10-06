@@ -199,6 +199,14 @@ npm run tauri dev
   and was reached only after several rounds of live-app testing. The
   window (156 frames, 5 s) and the ONNX input shapes are fixed at export;
   only the look-ahead `f` is configurable.
+- **The piano roll keeps the last 5 minutes** (`HISTORY_S` in `pianoroll.ts`:
+  notes, chord lane, beat lines; off-screen items are only hidden, not
+  destroyed). While capture is stopped, the wheel/trackpad, dragging the
+  notes, or a draggable scrollbar along the bottom edge scrolls back through
+  it (`viewOffsetS`, subtracted in `displayS()`; the live
+  clock itself is untouched and the offset is always 0 while running).
+  Added 2026-10-07, user; the scroll speed/retention are untuned and it has
+  not been tried with a real 5-minute session in the live app.
 - **`directml` ort feature has no Linux prebuilt binary** — the full
   workspace does not link on WSL (the `core` lib alone builds fine). User
   explicitly declined making it `cfg(windows)`-conditional; this is a
