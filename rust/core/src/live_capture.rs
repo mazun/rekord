@@ -60,7 +60,16 @@ pub fn spawn_loopback_capture<const N: usize>(
     // receiving thread instead.
     let (raw_tx, raw_rx) = sync_channel::<Vec<f32>>(200);
 
-    let err_fn = |err| eprintln!("audio stream error: {err}");
+    // cpal reports `Xrun` whenever WASAPI flags a packet as a data
+    // discontinuity. On loopback that is routine (capture starting while the
+    // endpoint is idle, playback stopping/starting) and says nothing about
+    // our consumer -- real overload shows up as `dropped_chunks` below -- so
+    // it is not worth printing on every launch.
+    let err_fn = |err: cpal::Error| {
+        if err.kind() != cpal::ErrorKind::Xrun {
+            eprintln!("audio stream error: {err}");
+        }
+    };
     let sample_format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
 
