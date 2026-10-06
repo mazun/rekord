@@ -28,6 +28,8 @@ const MELODY_COLOR_MAX = 0x6be3a0;
 const BASS_COLOR_MIN = 0x3d2c1f;
 const BASS_COLOR_MAX = 0xff9f5b;
 const GUIDE_COLOR = 0x262b36;
+const WHITE_ROW_COLOR = 0xffffff; // tint behind white-key pitches (untuned)
+const WHITE_ROW_ALPHA = 0.05;
 
 // Beat/bar lines (rekord_core::beat_tracker, via PipelineEvent::BeatLines) come in three
 // layers of the same beats: predicted (extrapolated, no delay), provisional (the network's
@@ -314,6 +316,14 @@ export class PianoRoll {
     const noteAreaWidth = this.playheadX();
 
     this.guides.clear();
+    // White-key rows are tinted lighter than black-key rows so pitches are easy to read.
+    const guideRowHeight = (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
+    for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch += 1) {
+      if (isBlackKey(pitch)) continue;
+      const y = this.pitchToY(pitch, height) - guideRowHeight / 2;
+      this.guides.rect(0, y, noteAreaWidth, guideRowHeight);
+    }
+    this.guides.fill({ color: WHITE_ROW_COLOR, alpha: WHITE_ROW_ALPHA });
     for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch += 1) {
       if (pitch % 12 !== 0) continue; // one guide line per C
       const y = this.pitchToY(pitch, height);
