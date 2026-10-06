@@ -148,6 +148,8 @@ export interface PipelineHandlers {
   onNoteStarted(note: StartedNote): void;
   onNote(note: ConfirmedNote): void;
   onBeatLines(lines: BeatLines): void;
+  /** Capture was stopped; the piano roll should freeze. */
+  onStopped(): void;
   onChordChange(t: number, label: string, romanNumeral: string | null): void;
   /** The current chord spelled again after the accidental setting changed. */
   onChordRelabel(label: string): void;
@@ -156,7 +158,10 @@ export interface PipelineHandlers {
 // Note, beat-line and clock events bypass reactive state entirely and go straight to
 // the piano roll -- notes arrive far too often to be worth routing
 // through $state, and nothing else in the UI renders them.
+let onStopped: (() => void) | null = null;
+
 export async function connectPipeline(handlers: PipelineHandlers): Promise<UnlistenFn> {
+  onStopped = handlers.onStopped;
   const unlistenEvent = await listen<PipelineEvent>("pipeline-event", (event) => {
     const payload = event.payload;
     if (payload.type === "Started") {
@@ -241,6 +246,7 @@ export async function stopCapture(): Promise<void> {
     await invoke("stop_capture");
   } finally {
     pipeline.status = "idle";
+    onStopped?.();
   }
 }
 

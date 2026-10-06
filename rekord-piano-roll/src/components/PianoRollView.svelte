@@ -40,6 +40,7 @@
         onNoteStarted: (note) => roll?.startNote(note),
         onNote: (note) => roll?.addNote(note),
         onBeatLines: (lines) => roll?.setBeatLines(lines),
+        onStopped: () => roll?.stop(),
         onChordChange: (t, label, romanNumeral) => roll?.addChordChange(t, label, romanNumeral),
         onChordRelabel: (label) => roll?.relabelCurrentChord(label),
       });

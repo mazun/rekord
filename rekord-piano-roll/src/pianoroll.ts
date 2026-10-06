@@ -246,6 +246,7 @@ export class PianoRoll {
   private notes: NoteSprite[] = [];
   private running = false;
   private resetAtMs = 0;
+  private stoppedAtMs: number | null = null;
   private displayLagS = 0;
   private displayLagLocked = false;
   private lagSampleMinS = Infinity;
@@ -392,6 +393,7 @@ export class PianoRoll {
   reset(_totalLatencyS: number): void {
     this.running = true;
     this.resetAtMs = performance.now();
+    this.stoppedAtMs = null;
     this.displayLagS = 0;
     this.displayLagLocked = false;
     this.lagSampleMinS = Infinity;
@@ -409,8 +411,13 @@ export class PianoRoll {
     for (const pitch of this.keys.keys()) this.setKeyActive(pitch, false);
   }
 
+  /** Freezes the scroll where it is (capture stopped); the next reset() resumes it. */
+  stop(): void {
+    if (this.stoppedAtMs === null) this.stoppedAtMs = performance.now();
+  }
+
   private wallClockS(): number {
-    return (performance.now() - this.resetAtMs) / 1000;
+    return ((this.stoppedAtMs ?? performance.now()) - this.resetAtMs) / 1000;
   }
 
   // The playhead (keyboard's left edge) shows the audio clock minus `displayLagS`, the measured
@@ -640,7 +647,7 @@ export class PianoRoll {
     }
     this.notes = stillVisible;
     for (const pitch of this.keys.keys()) {
-      this.setKeyActive(pitch, activePitches.has(pitch));
+      this.setKeyActive(pitch, this.stoppedAtMs === null && activePitches.has(pitch));
     }
   }
 }
