@@ -29,7 +29,7 @@ const BASS_COLOR_MIN = 0x3d2c1f;
 const BASS_COLOR_MAX = 0xff9f5b;
 const GUIDE_COLOR = 0x262b36;
 const WHITE_ROW_COLOR = 0xffffff; // tint behind white-key pitches (untuned)
-const WHITE_ROW_ALPHA = 0.05;
+const WHITE_ROW_ALPHA = 0.08;
 
 // Beat/bar lines (rekord_core::beat_tracker, via PipelineEvent::BeatLines) come in three
 // layers of the same beats: predicted (extrapolated, no delay), provisional (the network's
