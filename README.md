@@ -95,7 +95,8 @@ sample_audio/          Piano recordings used for validation
 - The Harmonica note-transcription models are reimplemented and trained
   from scratch (not the paper authors' weights) in the separate
   harmonica-repro project, on data that includes CC BY-NC-SA 4.0 material
-  (MAESTRO, and the GAPS dataset's Zenodo release) -- so, unlike the rest
+  (MAESTRO, and the GAPS dataset's Zenodo release) and, for the 3-part
+  model, the CC BY-NC 4.0 GOAT dataset -- so, unlike the rest
   of this repository, they're for non-commercial use only and aren't
   covered by the MIT license below. See the
   [model card](https://huggingface.co/mazun/rekord) for the full breakdown.

@@ -1,7 +1,7 @@
-//! Golden-vector tests for the 3-part Mix model (`mix_large_v1.onnx`: vocal,
+//! Golden-vector tests for the 3-part Mix model (`mix_large_v2.onnx`: vocal,
 //! bass, other) against harmonica-repro's `tools/make_golden.py --mix`
-//! output (ONNX Runtime 1.24.4 CPU, Python), see that repo's
-//! `docs/mix-b4-report.md`. Two datasets:
+//! output (ONNX Runtime 1.24.4 CPU, Python, `runs/s2_deploy`), see that
+//! repo's `docs/mix-s2-report.md`. Two datasets:
 //!
 //! - `golden`: GuitarSet, notes only in the `other` part (vocal and bass
 //!   must stay empty).
@@ -12,7 +12,7 @@
 //! Tolerances are 1e-4 on CPU and 1e-3 on DirectML, as for the single-part
 //! models (see harmonica_golden.rs). Override the directory holding
 //! `golden/` and `golden_rwc001/` with HARMONICA_MIX_GOLDEN_DIR; tests skip
-//! (not fail) when it, or `models/mix_large_v1.onnx`, is absent. DirectML
+//! (not fail) when it, or `models/mix_large_v2.onnx`, is absent. DirectML
 //! variants also skip when DirectML itself is unavailable.
 //!
 //! Run with (release -- CPU large is ~0.5s/block):
@@ -35,7 +35,7 @@ const PARTS: [Part; 3] = [Part::Vocal, Part::Bass, Part::Other];
 fn mix_golden_dirs() -> Vec<(&'static str, PathBuf)> {
     let base = std::env::var("HARMONICA_MIX_GOLDEN_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../harmonica-repro/runs/mix_b4"));
+        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../harmonica-repro/runs/s2_deploy"));
     let model = Path::new(env!("CARGO_MANIFEST_DIR")).join("models").join(ModelSize::Mix.file_name());
     if !model.exists() {
         eprintln!("skipping: no Mix model at {}", model.display());
@@ -73,8 +73,16 @@ fn split_heads_parts(flat: Vec<f32>, rows: usize) -> Vec<PartTriple> {
     (0..PARTS.len()).map(|p| (block(0, p), block(1, p), block(2, p))).collect()
 }
 
-fn golden_thresholds(dir: &Path, part: Part) -> (f32, f32) {
-    let v = &read_meta(dir)["mix_large"]["thresholds"][part.name()];
+/// The golden's own `thresholds` are the f8 set (what its notes were decoded
+/// with); the f16 set exists only as the ONNX metadata copy in `meta.json`.
+fn golden_thresholds(dir: &Path, part: Part, future_frames: usize) -> (f32, f32) {
+    let meta = read_meta(dir);
+    let v = if future_frames >= 16 {
+        let json = meta["mix_large"]["onnx_metadata"]["thresholds_f16"].as_str().expect("golden meta has no thresholds_f16");
+        serde_json::from_str::<serde_json::Value>(json).unwrap()[part.name()].clone()
+    } else {
+        meta["mix_large"]["thresholds"][part.name()].clone()
+    };
     (v[0].as_f64().unwrap() as f32, v[1].as_f64().unwrap() as f32)
 }
 
@@ -98,7 +106,7 @@ fn harmonica_mix_metadata() {
     assert_eq!(model.parts(), &PARTS);
     for future_frames in [8, 16] {
         for (&part, &(th_on, th_sus)) in PARTS.iter().zip(model.part_thresholds(future_frames)) {
-            let (want_on, want_sus) = golden_thresholds(dir, part);
+            let (want_on, want_sus) = golden_thresholds(dir, part, future_frames);
             assert!(
                 (th_on - want_on).abs() < 1e-6 && (th_sus - want_sus).abs() < 1e-6,
                 "{part:?} f={future_frames}: metadata thresholds ({th_on}, {th_sus}) != golden meta ({want_on}, {want_sus})"
@@ -201,7 +209,7 @@ fn harmonica_mix_decode_golden() {
         let t = read_meta_t(&dir);
         let golden = split_heads_parts(read_f32_file(&dir.join("mix_large_probs.f32")), t);
         for (part, (onset, sustain, _)) in PARTS.iter().zip(&golden) {
-            let (th_on, th_sus) = golden_thresholds(&dir, *part);
+            let (th_on, th_sus) = golden_thresholds(&dir, *part, 8);
             let expected: HashSet<(i64, i64, i32)> =
                 golden_notes(&dir, *part).iter().map(|&(a, b, c)| (frame_of(a), frame_of(b), c.round() as i32)).collect();
             for blocks in [8usize, 1, t] {

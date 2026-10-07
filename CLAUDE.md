@@ -77,19 +77,24 @@ npm run tauri dev
     can't be used, it runs **small on the CPU** whatever was chosen
     (medium/large/mix are too slow on CPU). Single-part thresholds are per
     size, shared by both `f` (small 0.25/0.45, medium and large 0.20/0.45).
-  - **The Mix model (`mix_large_v1.onnx`, `ModelSize::Mix`) outputs
+  - **The Mix model (`mix_large_v2.onnx`, `ModelSize::Mix`) outputs
     `[1, 3, T, 88]` per head: parts vocal, bass, other** (harmonica-repro
-    `docs/mix-b4-report.md`; trained on full mixes incl. drums, COnP 50 ms on
-    RWC-Pop .452 vs .275 for the single-part large). The `parts` and
+    `docs/mix-s2-report.md`, section 9; trained on full mixes incl. drums and
+    with GOAT among the training data, COnP 50 ms on RWC-Pop .543 at f16
+    vs .512 for its predecessor B4 = `mix_large_v1.onnx`, replaced 2026-10-07).
+    The `parts` and
     `thresholds_f8`/`thresholds_f16` (per part, `[th_on, th_sus]`) come from
     the ONNX metadata, not from constants here; the part order is checked at
-    load. `NoteTranscriber` runs one `StreamingDecoder` per part with that
+    load. **f8 and f16 differ** (vocal th_sus .35 vs .30; `part_thresholds`
+    picks by `future_frames`); v2: vocal .25/.35|.30, bass .25/.50, other
+    .15/.20 (bass and other th_sus were hand-lowered from the CV picks .85/.40,
+    which cut held notes short). `NoteTranscriber` runs one `StreamingDecoder` per part with that
     part's thresholds, and every `ConfirmedNote`/`NoteEvent`/`NoteConfirmed`
     carries its `Part` (`All` for single-part models). Known behavior, not a
     bug: low notes of solo instruments (piano bass, contrabass, cello) get
     split between the bass and other parts, so the same pitch can appear in
     both, and bass-part notes can be short fragments (seen on `sample_audio`).
-    `velocity` is not on a common scale across parts (other's `th_on` is .10,
+    `velocity` is not on a common scale across parts (other's `th_on` is .15,
     vocal/bass .25), which also skews `KeyEstimator`'s velocity weighting
     toward bass-part notes -- not re-tuned.
   - With the Mix model: the piano roll colors by part (vocal = melody green,
@@ -121,13 +126,15 @@ npm run tauri dev
   - `cargo test -p rekord_core --release harmonica_` checks the Rust port
     against harmonica-repro's golden vectors (`runs/p5/golden`, override with
     `HARMONICA_GOLDEN_DIR`; skipped when absent), and the `harmonica_mix_*`
-    tests do the same for the Mix model (`runs/mix_b4/golden` = GuitarSet,
-    notes only in `other`, and `golden_rwc001` = 20 s of RWC-Pop 001 with all
-    three parts; override the parent with `HARMONICA_MIX_GOLDEN_DIR`; also
-    skipped without `models/mix_large_v1.onnx`). RWC is not redistributable,
-    so it is only ever read from harmonica-repro. Mix matches to ~1e-6
-    steady-state on DirectML; on CPU up to 1.2e-4 (tolerance 2e-4), notes
-    identical. The single-part tests match to ~1e-6 except
+    tests do the same for the Mix model (`runs/s2_deploy/golden` = GuitarSet,
+    notes only in `other` (86), and `golden_rwc001` = 20 s of RWC-Pop 001 with
+    all three parts (48/86/456 notes); override the parent with
+    `HARMONICA_MIX_GOLDEN_DIR`; also skipped without
+    `models/mix_large_v2.onnx`). The golden's `thresholds` are the f8 set; the
+    metadata test reads the f16 set from its `onnx_metadata`. RWC is not
+    redistributable, so it is only ever read from harmonica-repro. Mix matches
+    to ~1e-6 steady-state on DirectML; on CPU up to 1.5e-4 in the first blocks
+    (tolerance 2e-4), notes identical. The single-part tests match to ~1e-6 except
     the first 18 blocks of a stream (up to ~1.5e-3), where the window is
     mostly zeroed rows: `ort` statically links pyke's own ONNX Runtime 1.28
     build, which differs slightly from Microsoft's (Python onnxruntime 1.24.4
@@ -135,13 +142,14 @@ npm run tauri dev
     amplify the difference. Verified to be the binary, not the windowing
     (2026-09-27); notes are identical.
   - The weights are for non-commercial use only (training data include
-    CC BY-NC-SA material; see the model card). They're hosted in the Hugging
+    CC BY-NC-SA material, and for v2 GOAT, CC BY-NC 4.0; see the model card). They're hosted in the Hugging
     Face model repo `mazun/rekord` (private for now), which `build.rs`
     downloads from at a pinned commit (`HF_REVISION`) and checks against
     pinned SHA-256s; `rust/core/models/` is gitignored. New weights: upload
     them there first, then update `HF_REVISION` and the hashes.
-    `mix_large_v1.onnx` was uploaded and pinned on 2026-10-03 (revision
-    `4f3b3d37`). Its training data also include the user's own commercial CDs
+    `mix_large_v2.onnx` was uploaded and pinned on 2026-10-07 (revision
+    `85d1b355`; `mix_large_v1.onnx` stays in the repo for older revisions, and
+    the model card was updated for v2 in the same commit). Its training data also include the user's own commercial CDs
     (328 h, mixes + pseudo-labels), which the model card's license text says.
 
 - **Beat/downbeat tracking (`beat_model.rs`, `beat_tracker.rs`, and the DBN

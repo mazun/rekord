@@ -96,7 +96,7 @@ impl ModelSize {
             ModelSize::Small => "small_uni_300k.onnx",
             ModelSize::Medium => "medium_uni_300k_urmp.onnx",
             ModelSize::Large => "large_uni_300k_urmp.onnx",
-            ModelSize::Mix => "mix_large_v1.onnx",
+            ModelSize::Mix => "mix_large_v2.onnx",
         }
     }
 
@@ -105,7 +105,7 @@ impl ModelSize {
             ModelSize::Small => concat!(env!("CARGO_MANIFEST_DIR"), "/models/small_uni_300k.onnx"),
             ModelSize::Medium => concat!(env!("CARGO_MANIFEST_DIR"), "/models/medium_uni_300k_urmp.onnx"),
             ModelSize::Large => concat!(env!("CARGO_MANIFEST_DIR"), "/models/large_uni_300k_urmp.onnx"),
-            ModelSize::Mix => concat!(env!("CARGO_MANIFEST_DIR"), "/models/mix_large_v1.onnx"),
+            ModelSize::Mix => concat!(env!("CARGO_MANIFEST_DIR"), "/models/mix_large_v2.onnx"),
         }
     }
 
@@ -371,8 +371,8 @@ impl HarmonicaModel {
 
     /// (th_on, th_sus) per part, parallel to `parts()`, for a session with
     /// `future_frames` of look-ahead. The Mix model's metadata carries one
-    /// set per look-ahead (harmonica-repro picked identical values for 8 and
-    /// 16, but that's its call, not ours): 16 or more uses the f16 set.
+    /// set per look-ahead, and they differ (v2: the vocal th_sus is .35 at
+    /// f8, .30 at f16): 16 or more uses the f16 set.
     pub fn part_thresholds(&self, future_frames: usize) -> &[(f32, f32)] {
         if future_frames >= 16 {
             &self.thresholds_f16
