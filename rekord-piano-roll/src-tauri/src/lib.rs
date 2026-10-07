@@ -160,7 +160,7 @@ fn stop_capture(state: State<Mutex<CaptureState>>, ring: State<SharedRing>) -> R
 // waiting for a fade don't block the main thread. `gen` is chosen by the
 // frontend and tags every position report that follows from the command (see
 // `PlaybackEvent`); `notes` are all the notes of the recording, `params`
-// says which parts are hidden and how loud things are.
+// says how loud things are and how each part's notes sound.
 #[tauri::command]
 async fn playback_start(
     app: AppHandle,

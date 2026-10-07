@@ -29,17 +29,55 @@ function loadAccidental(): Accidental {
   return stored === "sharp" || stored === "flat" ? stored : "auto";
 }
 
-// Playback volumes (0..1 slider positions; the backend squares them): the recorded audio, and the
-// notes sounded as sine waves on top of it. Untuned defaults.
+// Playback mix (volumes are 0..1 slider positions; the backend squares them): the recorded audio,
+// and the notes synthesized on top of it -- an overall volume plus, per model part, a wave shape and
+// a volume. Untuned defaults: the lead stands out as a square, the bass is a soft triangle, the
+// accompaniment a plain sine (what chord recognition reads best).
 const VOLUME_ORIGINAL_STORAGE_KEY = "chord.volumeOriginal";
-const VOLUME_SINE_STORAGE_KEY = "chord.volumeSine";
+const VOLUME_NOTES_STORAGE_KEY = "chord.volumeSine"; // named from when the notes were always sine waves
+const VOICES_STORAGE_KEY = "chord.voices";
 const DEFAULT_VOLUME_ORIGINAL = 0.8;
-const DEFAULT_VOLUME_SINE = 0.5;
+const DEFAULT_VOLUME_NOTES = 0.5;
+
+export type Wave = "sine" | "triangle" | "square" | "saw";
+export const WAVES: readonly Wave[] = ["sine", "triangle", "square", "saw"];
+
+/** The parts notes are labeled with: "all" is what the single-part models produce. */
+export type VoicePart = "all" | "vocal" | "bass" | "other";
+
+export interface Voice {
+  wave: Wave;
+  volume: number;
+  muted: boolean;
+}
+
+const DEFAULT_VOICES: Record<VoicePart, Voice> = {
+  all: { wave: "sine", volume: 1, muted: false },
+  vocal: { wave: "square", volume: 1, muted: false },
+  bass: { wave: "triangle", volume: 1, muted: false },
+  other: { wave: "sine", volume: 1, muted: false },
+};
 
 function loadVolume(key: string, fallback: number): number {
   const stored = localStorage.getItem(key);
   const value = stored === null ? NaN : Number(stored);
   return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
+}
+
+// Wave and volume per part; mute is deliberately not remembered.
+function loadVoices(): Record<VoicePart, Voice> {
+  const voices = structuredClone(DEFAULT_VOICES);
+  try {
+    const stored = JSON.parse(localStorage.getItem(VOICES_STORAGE_KEY) ?? "{}");
+    for (const part of Object.keys(voices) as VoicePart[]) {
+      const { wave, volume } = stored?.[part] ?? {};
+      if (WAVES.includes(wave)) voices[part].wave = wave;
+      if (typeof volume === "number" && Number.isFinite(volume)) voices[part].volume = Math.min(1, Math.max(0, volume));
+    }
+  } catch {
+    // garbled: defaults
+  }
+  return voices;
 }
 
 function loadFutureFrames(): number {
@@ -53,12 +91,17 @@ export const settings = $state({
   pianorollVisible: localStorage.getItem(PIANOROLL_VISIBLE_STORAGE_KEY) !== "false",
   accidental: loadAccidental(),
   volumeOriginal: loadVolume(VOLUME_ORIGINAL_STORAGE_KEY, DEFAULT_VOLUME_ORIGINAL),
-  volumeSine: loadVolume(VOLUME_SINE_STORAGE_KEY, DEFAULT_VOLUME_SINE),
+  volumeNotes: loadVolume(VOLUME_NOTES_STORAGE_KEY, DEFAULT_VOLUME_NOTES),
+  muteOriginal: false,
+  muteNotes: false,
+  voices: loadVoices(),
 });
 
 export function saveVolumes(): void {
   localStorage.setItem(VOLUME_ORIGINAL_STORAGE_KEY, String(settings.volumeOriginal));
-  localStorage.setItem(VOLUME_SINE_STORAGE_KEY, String(settings.volumeSine));
+  localStorage.setItem(VOLUME_NOTES_STORAGE_KEY, String(settings.volumeNotes));
+  const voices = Object.fromEntries(Object.entries(settings.voices).map(([part, v]) => [part, { wave: v.wave, volume: v.volume }]));
+  localStorage.setItem(VOICES_STORAGE_KEY, JSON.stringify(voices));
 }
 
 export function saveModelSize(): void {

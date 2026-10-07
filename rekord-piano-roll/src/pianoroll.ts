@@ -115,6 +115,10 @@ const CLICK_MAX_MS = 500;
 const MARKER_COLOR = 0xffd166;
 const MARKER_LINE_WIDTH = 2;
 const MARKER_FLAG_SIZE = 6;
+// The playback cursor while it travels along the roll (before it reaches the keyboard edge).
+const CURSOR_COLOR = 0xffffff;
+const CURSOR_LINE_WIDTH = 2;
+const CURSOR_LINE_ALPHA = 0.85;
 
 function isBlackKey(pitch: number): boolean {
   return [1, 3, 6, 8, 10].includes(pitch % 12);
@@ -278,6 +282,8 @@ export class PianoRoll {
   private markerLayer = new Container();
   private markerLine = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
   private markerFlag = new Graphics();
+  private cursorLayer = new Container();
+  private cursorLine = new Graphics().rect(0, 0, 1, 1).fill({ color: CURSOR_COLOR });
   /** The user clicked the roll at audio time `t` (stopped or playing, not while capturing). */
   onSeekRequest: ((t: number) => void) | null = null;
   /** Called every frame while the roll is not live, with the time at the playhead. */
@@ -318,6 +324,10 @@ export class PianoRoll {
     roll.markerLine.tint = MARKER_COLOR;
     roll.markerFlag.poly([-MARKER_FLAG_SIZE, 0, MARKER_FLAG_SIZE, 0, 0, MARKER_FLAG_SIZE * 1.2]).fill({ color: MARKER_COLOR });
     roll.markerLayer.visible = false;
+    app.stage.addChild(roll.cursorLayer);
+    roll.cursorLayer.addChild(roll.cursorLine);
+    roll.cursorLine.alpha = CURSOR_LINE_ALPHA;
+    roll.cursorLayer.visible = false;
     app.stage.addChild(roll.scrollbarLayer);
     roll.scrollbarLayer.addChild(roll.scrollbarTrack, roll.scrollbarThumb);
     roll.scrollbarLayer.visible = false;
@@ -540,6 +550,7 @@ export class PianoRoll {
     this.press = null;
     this.scrollbarLayer.visible = false;
     this.markerLayer.visible = false;
+    this.cursorLayer.visible = false;
     for (const n of this.notes) n.graphic.destroy();
     this.notes = [];
     for (const b of this.beatLines) b.graphic.destroy();
@@ -568,9 +579,10 @@ export class PianoRoll {
     this.rangeEndS = endS;
   }
 
-  /** The playhead's time (what is at the keyboard's left edge). */
+  /** The playhead's time: where the audio is (the cursor), which is the keyboard's left edge
+   * except while a playback that has just started or jumped moves across the roll towards it. */
   playheadS(): number {
-    return this.clock.displayS();
+    return this.clock.cursorS();
   }
 
   /** The time at the roll's left edge: the oldest thing currently on screen. */
@@ -587,10 +599,11 @@ export class PianoRoll {
     return this.markerS;
   }
 
-  /** Starts following the audio being played from `fromS` (see PlaybackClock). */
+  /** Starts following the audio being played from `fromS` (see PlaybackClock): the view stays
+   * where it is and the cursor moves from `fromS` towards the keyboard edge. */
   startPlayback(fromS: number): void {
     if (this.clock.kind === "live") return;
-    this.clock = new PlaybackClock(fromS, this.rangeEndS, this.clock.headS());
+    this.clock = new PlaybackClock(fromS, this.rangeEndS, this.clock.headS(), this.clock.displayS());
   }
 
   onPlaybackPosition(posS: number, atEpochMs: number): void {
@@ -602,11 +615,12 @@ export class PianoRoll {
     if (this.clock instanceof PlaybackClock) this.clock.holdAt(posS);
   }
 
-  /** Playback is over (or stopped): the view stays where it is, or at `posS`, and can be scrolled
-   * again. */
+  /** Playback is over (or stopped): the view stays where it is (at least up to `posS`), the cursor
+   * where it is or at `posS`, and the view can be scrolled again. */
   stopPlayback(posS?: number): void {
     if (this.clock.kind === "live") return;
-    this.clock = new HeldClock(this.clock.headS(), posS ?? this.clock.displayS());
+    const view = this.clock.displayS();
+    this.clock = new HeldClock(this.clock.headS(), posS === undefined ? view : Math.max(view, posS), posS ?? this.clock.cursorS());
   }
 
   // The live playhead (keyboard's left edge) shows the audio clock minus the display lag, the
@@ -821,12 +835,12 @@ export class PianoRoll {
     this.live.update();
     // A paused playback holds where the audio stopped once the display gets there.
     if (this.clock instanceof PlaybackClock && this.clock.holdReached()) {
-      this.clock = new HeldClock(this.clock.headS(), this.clock.displayS());
+      this.clock = new HeldClock(this.clock.headS(), this.clock.displayS(), this.clock.cursorS());
     }
     this.oldestS = Infinity;
     this.tickBeatLines(this.app.ticker.deltaMS / 1000);
     this.tickChordSegments();
-    const displayS = this.displayS();
+    const cursorS = this.clock.cursorS();
     const headS = this.clock.headS();
     const live = this.clock.kind === "live";
     const activePitches = new Set<number>();
@@ -856,10 +870,10 @@ export class PianoRoll {
       n.graphic.x = x;
       // An open note's end_s only trails the clock; it is still sounding (while capture runs --
       // once it has stopped, an unconfirmed note ends where its end_s froze).
-      if (displayS >= n.start_s && ((n.open && live) || displayS <= n.end_s)) activePitches.add(n.pitch_midi);
+      if (cursorS >= n.start_s && ((n.open && live) || cursorS <= n.end_s)) activePitches.add(n.pitch_midi);
     }
     this.notes = retained;
-    // Highlighted at the playhead whatever moves it: the live clock, a scrolled-back stopped roll
+    // Highlighted at the cursor whatever moves it: the live clock, a scrolled-back stopped roll
     // or playback.
     for (const pitch of this.keys.keys()) {
       this.setKeyActive(pitch, activePitches.has(pitch));
@@ -873,7 +887,8 @@ export class PianoRoll {
       : headS;
     this.maxViewS = Math.max(headS, this.rangeEndS);
     this.tickMarker();
-    if (!live) this.onPlayheadTime?.(this.displayS());
+    this.tickCursor();
+    if (!live) this.onPlayheadTime?.(cursorS);
     this.tickScrollbar();
   }
 
@@ -886,6 +901,16 @@ export class PianoRoll {
     this.markerLine.x = x - MARKER_LINE_WIDTH / 2;
     this.markerLine.scale.set(MARKER_LINE_WIDTH, this.app.screen.height);
     this.markerFlag.x = x;
+  }
+
+  /** The cursor line, while it is somewhere along the roll rather than at the keyboard edge. */
+  private tickCursor(): void {
+    const x = this.xForTime(this.clock.cursorS());
+    const show = this.clock.kind !== "live" && x >= 0 && x < this.playheadX() - CURSOR_LINE_WIDTH;
+    this.cursorLayer.visible = show;
+    if (!show) return;
+    this.cursorLine.x = x - CURSOR_LINE_WIDTH / 2;
+    this.cursorLine.scale.set(CURSOR_LINE_WIDTH, this.app.screen.height);
   }
 
   /** The thumb spans the visible window (playheadX / PIXELS_PER_SECOND seconds) out of the whole

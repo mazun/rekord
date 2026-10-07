@@ -3,10 +3,10 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { NotePart, PianoRoll } from "./pianoroll";
 import { pipeline, showDisplay } from "./pipeline.svelte";
 import { recording } from "./recording";
-import { settings } from "./settings.svelte";
+import { settings, type VoicePart } from "./settings.svelte";
 
 // Replaying the recording (the last HISTORY_S seconds of audio the backend kept, plus the notes
-// shown on the roll as sine waves). The backend plays the sound and reports which recording
+// shown on the roll, synthesized). The backend plays the sound and reports which recording
 // time is audible at which wall-clock instant; the roll follows that (PlaybackClock).
 //
 //   stopped --Play--> playing <--Play--> paused
@@ -35,8 +35,20 @@ let gen = 0;
 // Parts hidden on the roll are not sounded either.
 const hiddenParts = new Set<NotePart>();
 
+const VOICE_PARTS: VoicePart[] = ["all", "vocal", "bass", "other"];
+
+// What the backend mixes: the muted and the hidden are sent as gain 0. The single-part models' notes
+// ("all") have no volume of their own, only the overall one.
 function params() {
-  return { original_gain: settings.volumeOriginal, sine_gain: settings.volumeSine, hidden_parts: [...hiddenParts] };
+  return {
+    original_gain: settings.muteOriginal ? 0 : settings.volumeOriginal,
+    notes_gain: settings.muteNotes ? 0 : settings.volumeNotes,
+    voices: VOICE_PARTS.map((part) => {
+      const voice = settings.voices[part];
+      const silent = voice.muted || hiddenParts.has(part);
+      return { part, wave: voice.wave, gain: silent ? 0 : part === "all" ? 1 : voice.volume };
+    }),
+  };
 }
 
 function clampToRecording(t: number): number {
@@ -167,7 +179,7 @@ export function setPlaybackPartVisible(part: NotePart, visible: boolean): void {
   pushPlaybackParams();
 }
 
-/** Sends the volumes and hidden parts to a playback in progress. */
+/** Sends the volumes, waves and hidden parts to a playback in progress. */
 export function pushPlaybackParams(): void {
   if (transport.state === "stopped") return;
   invoke("playback_set_params", { params: params() }).catch((err) => console.error(err));

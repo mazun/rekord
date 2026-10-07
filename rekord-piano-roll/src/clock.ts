@@ -1,6 +1,12 @@
-// What time the piano roll's playhead (the keyboard's left edge) is at. All times are the
-// pipeline's audio time: seconds since the session's `Started`, the same clock every note, chord
-// and beat line is stamped with.
+// What time the piano roll is showing. All times are the pipeline's audio time: seconds since the
+// session's `Started`, the same clock every note, chord and beat line is stamped with.
+//
+// Two times matter: the *view* (`displayS`), the time at the keyboard's left edge, which positions
+// everything; and the *cursor* (`cursorS`), the time of the audio itself (what the readouts and the
+// highlighted keys follow). Usually they are the same -- the roll scrolls under a cursor fixed at the
+// keyboard -- but when playback starts or jumps, the view stays where it is and the cursor line
+// travels right along the roll, as in a DAW, until it reaches the keyboard edge and the roll
+// scrolls from there.
 //
 // - LiveClock: capture is running. A pure linear function of the wall clock, offset by a constant
 //   fixed once per session (see the notes on `displayLagS` in CLAUDE.md).
@@ -10,8 +16,10 @@
 
 export interface RollClock {
   readonly kind: "live" | "held" | "playing";
-  /** The time at the playhead. */
+  /** The time at the keyboard's left edge (the view). */
   displayS(): number;
+  /** The time of the audio: at or before `displayS()`, drawn as a line when it is before it. */
+  cursorS(): number;
   /** The newest time the live roll got to show. Everything older than `headS() - HISTORY_S` is
    * dropped, and it stays put while stopped, so history pruning doesn't depend on where a
    * stopped or playing roll is looking. */
@@ -55,6 +63,10 @@ export class LiveClock implements RollClock {
     return this.wallS() - this.lagS;
   }
 
+  cursorS(): number {
+    return this.displayS();
+  }
+
   headS(): number {
     return this.displayS();
   }
@@ -77,24 +89,34 @@ export class LiveClock implements RollClock {
 export class HeldClock implements RollClock {
   readonly kind = "held";
   private viewS: number;
+  private cursor: number;
 
+  /** `cursorS` defaults to the view: a paused playback keeps its cursor where it stopped. */
   constructor(
     private readonly head: number,
     viewS: number,
+    cursorS = viewS,
   ) {
     this.viewS = viewS;
+    this.cursor = cursorS;
   }
 
   displayS(): number {
     return this.viewS;
   }
 
+  cursorS(): number {
+    return this.cursor;
+  }
+
   headS(): number {
     return this.head;
   }
 
+  /** Scrolls: the cursor goes back to the keyboard edge. */
   setView(viewS: number): void {
     this.viewS = viewS;
+    this.cursor = viewS;
   }
 }
 
@@ -117,14 +139,20 @@ export class PlaybackClock implements RollClock {
   private holdS: number | null = null;
 
   /** `floorS` is where playback was asked to start: until the first report says the audio is
-   * actually audible, the roll waits there, and it never moves backwards. */
+   * actually audible, the cursor waits there, and it never moves backwards. The view stays at
+   * `viewFloorS` until the cursor catches up with it. */
   constructor(
     private readonly floorS: number,
     private readonly endS: number,
     private readonly head: number,
+    private readonly viewFloorS: number,
   ) {}
 
   displayS(): number {
+    return Math.max(this.viewFloorS, this.cursorS());
+  }
+
+  cursorS(): number {
     let pos = this.anchor ? this.anchor.posS + (epochNowMs() - this.anchor.atEpochMs) / 1000 : this.floorS;
     if (this.holdS !== null) pos = Math.min(pos, this.holdS);
     return Math.min(this.endS, Math.max(this.floorS, pos));
@@ -159,6 +187,6 @@ export class PlaybackClock implements RollClock {
 
   /** The display has reached the position given to `holdAt`. */
   holdReached(): boolean {
-    return this.holdS !== null && this.displayS() >= this.holdS;
+    return this.holdS !== null && this.cursorS() >= this.holdS;
   }
 }

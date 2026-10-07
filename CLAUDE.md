@@ -212,10 +212,11 @@ npm run tauri dev
   Added 2026-10-07, user; the scroll speed/retention are untuned and it has
   not been tried with a real 5-minute session in the live app.
 - **Recording playback** (2026-10-07, user: a play button next to the record
-  button replays the last 5 minutes, recorded audio plus the roll's notes as
-  sine waves). Built and checked live against the sample files (a second
+  button replays the last 5 minutes, recorded audio plus the roll's notes
+  synthesized). Built and checked live against the sample files (a second
   `--live` CLI hears the playback and reads the same chords, also with the
-  recorded audio muted), not yet judged by ear/eye by the user.
+  recorded audio muted, and nothing with everything muted), not yet judged by
+  ear/eye by the user.
   - **The recording** is a `StereoRing` (`audio_ring.rs`): native-rate stereo
     i16, `RECORDING_HISTORY_S` = `HISTORY_S` = 300 s (~57 MB at 48 kHz), indexed
     by absolute frame so frame `n` is pipeline time `n / rate`, i.e. a note's
@@ -233,11 +234,15 @@ npm run tauri dev
     stream and renders 10 ms blocks ahead; the callback only pops them and
     applies a 5 ms fade on pause/seek. The recorded audio is copied as is
     (linear interpolation only if the default device's rate changed), the
-    sines come from `playback/synth.rs` (pure, analytic phase, so seeking and
-    block boundaries don't matter), gains are slider values squared. The
-    frontend sends all notes at Play; which parts are heard (the legend's
-    hidden ones are muted) and the volumes can change live
-    (`playback_set_params`). Capture and playback exclude each other (the
+    notes come from `playback/synth.rs` (pure, analytic phase, so seeking and
+    block boundaries don't matter), gains are slider values squared. Each
+    part (`all` for the single-part models, else vocal/bass/other) has its
+    own wave -- sine, triangle, or PolyBLEP-band-limited square/saw, with a
+    rough per-wave level equalization -- and its own volume, under an overall
+    notes volume; every gain ramps linearly across a 10 ms block, so mute and
+    slider drags don't click. The frontend sends all notes at Play; a muted or
+    legend-hidden part is just gain 0, and the waves, volumes and mutes can
+    change live (`playback_set_params`). Capture and playback exclude each other (the
     loopback would record the playback): `start_capture` stops playback, and
     Play is disabled while capturing.
   - **Sync**: the callback reports `(pos_s, at_epoch_ms)` -- the recording
@@ -247,8 +252,9 @@ npm run tauri dev
     extrapolates at exactly 1x (`performance.timeOrigin + now()` is the same
     wall clock as the backend's), re-anchoring only after three reports 40 ms
     off, so the roll doesn't change speed; there is no display lag in
-    playback, the playhead is the audio being heard. Untuned: `RESYNC_S`, the
-    fade, the sine envelope/amplitude, the default volumes; a Bluetooth
+    playback, the cursor is the audio being heard. Untuned: `RESYNC_S`, the
+    fade, the note envelope/amplitude/per-wave levels, the default waves and
+    volumes (lead = square, bass = triangle, rest = sine); a Bluetooth
     output's latency is probably only partly reported by WASAPI.
   - **UI**: clicking the stopped roll sets a marker (`roll.setMarker`); Play
     starts at the marker, else at the playhead (so pause/resume and scrolling
@@ -257,10 +263,21 @@ npm run tauri dev
     playing seeks; the chord/key/tension/BPM readouts follow the playhead
     (`Recording.stateAt`; `KeyChange`/`TensionsChanged` therefore carry a
     time `t`, and the BPM is stamped with the time its beats describe). The
-    volume sliders are a popover next to Play rather than in settings, since
-    opening settings stops playback. Piano keys are highlighted at the
-    playhead in every non-live mode, including while scrolling a stopped
-    roll (previously only live).
+    mix (recorded audio and notes volumes, plus per-part wave pickers and
+    volumes for the 3-part model, each with a mute button) is a popover next
+    to Play rather than in settings, since opening settings stops playback;
+    waves and volumes are remembered, mutes are not. Piano keys are
+    highlighted at the cursor in every non-live mode, including while
+    scrolling a stopped roll (previously only live).
+  - **Cursor vs view** (DAW-style): `RollClock` has the *view* (`displayS`,
+    the time at the keyboard edge, which positions everything) and the
+    *cursor* (`cursorS`, the time of the audio). When playback starts or
+    seeks, the view stays put and a white cursor line travels right from the
+    start position (the marker, or the left edge) at 1x until it reaches the
+    keyboard edge, after which the roll scrolls under it as before
+    (`PlaybackClock`: view = max(view at start, cursor)). A paused playback
+    keeps its cursor line where it stopped (resume plays from there);
+    scrolling or dragging the stopped roll puts the cursor back at the edge.
 - **`directml` ort feature has no Linux prebuilt binary** — the full
   workspace does not link on WSL (the `core` lib alone builds fine). User
   explicitly declined making it `cfg(windows)`-conditional; this is a
@@ -444,7 +461,7 @@ golden-vector tests against their Python reference in harmonica-repro (see
 Key design decisions), and beat tracking also has the replay tools above.
 Everything else has no unit test suite -- except small pure-function tests for
 the playback pieces (`cargo test -p rekord_core --release --lib`: the ring buffer,
-the sine synth and the block renderer) -- validation is empirical, against the real recordings
+the note synth and the block renderer) -- validation is empirical, against the real recordings
 in `sample_audio/` (`piano_progression_C_Am_F_G.wav`,
 `piano_progression_ConG_A7sus4_FM7add9_G6.wav`,
 `piano_complex_progression_ConG_A7sus4_FM7add9_G6.wav`; with the Mix model
