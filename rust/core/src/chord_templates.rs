@@ -1,6 +1,5 @@
-//! Rule-based chord naming: match a set of currently-sounding pitch classes
-//! against chord templates (root + quality, intervals in semitones from
-//! root). Ported from chord_poc/chord_templates.py -- keep in sync.
+//! Rule-based chord naming: match how long each pitch class sounded in a short window
+//! against chord templates (root + quality, intervals in semitones from root).
 
 use crate::key_estimator::KeyEstimate;
 use crate::spelling::{chord_label, Accidental};
@@ -11,17 +10,12 @@ pub struct ChordTemplate {
 }
 
 pub const CHORD_TEMPLATES: &[ChordTemplate] = &[
-    // Root + perfect 5th only, no 3rd -- a "power chord" (or a bare
-    // 4th/5th dyad read from its other end). Every other template here
-    // has at least 3 tones, so against a genuine 2-pitch-class active set
-    // they all tie at the same "missing one tone" score regardless of
-    // which 3rd they guess -- this scores strictly higher (a perfect,
-    // 0-missing/0-extra fit) whenever exactly this dyad is what's
-    // sounding, without ever being able to win when a 3rd is actually
-    // present too (see chord_templates tests / CLAUDE.md). Confirmed via
-    // real-world testing (2026-09-03): without this, a distorted electric
-    // guitar power chord was always mislabeled as a full major chord
-    // (the array-order tie-break happened to fall on "maj").
+    // Root + perfect 5th only, no 3rd -- a "power chord" (or a bare 4th/5th dyad read from its
+    // other end). Without it a distorted electric guitar power chord was always mislabeled as a
+    // full major chord (confirmed in real-world testing, 2026-09-03): a dyad leaves every
+    // 3-tone template missing one tone. Its prior (`POWER_CHORD_PRIOR`) is lower than the other
+    // ornate qualities' so that it still wins when the 3rd is really absent; the price is that
+    // on RWC-Pop it also names some chords whose 3rd the transcription missed (majmin -.04).
     ChordTemplate { quality: "5", intervals: &[0, 7] },
     ChordTemplate { quality: "maj", intervals: &[0, 4, 7] },
     ChordTemplate { quality: "m", intervals: &[0, 3, 7] },
@@ -48,13 +42,43 @@ pub const CHORD_TEMPLATES: &[ChordTemplate] = &[
     ChordTemplate { quality: "maj13", intervals: &[0, 4, 7, 11, 9] },
 ];
 
-const EXTRA_PENALTY: f32 = 1.5;
-const MISSING_PENALTY: f32 = 0.75;
-const SIZE_PENALTY: f32 = 0.05;
-// Chords that share all their tones (e.g. G6 and Em7 are both {G,B,D,E})
-// can't be told apart by pitch class alone -- prefer the reading whose root
-// matches the bass note, since that's what a listener would actually call it.
-const BASS_IS_ROOT_BONUS: f32 = 0.5;
+// Scoring of `match_chroma`. All of these are this project's own (no published prescription;
+// found by sweeping against RWC-Pop, see CLAUDE.md "Chord naming"): the score of a template is
+// the share of the window's note energy inside it, minus the share outside it, minus a penalty
+// for each template tone that's nearly absent (so a 7th or 9th is only named when it actually
+// sounds for a while), minus a small per-tone cost, plus the share of the bass part's energy
+// that sits on the root.
+const OUTSIDE_WEIGHT: f32 = 0.7;
+const MISSING_FLOOR: f32 = 0.06;
+const MISSING_PENALTY: f32 = 3.0;
+const SIZE_PENALTY: f32 = 0.1;
+const BASS_ROOT_WEIGHT: f32 = 0.3;
+// `quality_prior` tiers: 7th chords, then sus/6th/power/dim/aug, then the 9/11/13 family.
+const SEVENTH_PRIOR: f32 = 0.1;
+const ORNATE_PRIOR: f32 = 0.5;
+const EXTENDED_PRIOR: f32 = 0.2;
+const SIXTH_PRIOR: f32 = 0.2;
+const POWER_CHORD_PRIOR: f32 = 0.15;
+// A 3rd (major or minor) at least this share of the window counts as really sounding.
+const STRONG_THIRD_SHARE: f32 = 0.12;
+
+/// Extra cost of naming `quality` instead of a plain major/minor triad: the rarer or more
+/// ornate a chord is, the more evidence it needs.
+fn quality_prior(quality: &str) -> f32 {
+    match quality {
+        "maj" | "m" => 0.0,
+        "7" | "maj7" | "m7" => SEVENTH_PRIOR,
+        "5" => POWER_CHORD_PRIOR,
+        "6" | "m6" => SIXTH_PRIOR,
+        "sus2" | "sus4" | "sus4(7)" | "dim" | "aug" | "m7b5" | "dim7" => ORNATE_PRIOR,
+        _ => EXTENDED_PRIOR,
+    }
+}
+// A pitch class this far below the strongest one doesn't count towards "at least two pitch
+// classes sound" (kept from the binary version, where fewer than two meant "no chord").
+const PRESENT_SHARE: f32 = 0.03;
+// The bass is only named (for a slash chord) when the bass part has at least this much energy.
+const MIN_BASS_ENERGY: f32 = 0.05;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChordMatch {
@@ -87,41 +111,69 @@ fn pitch_class_set(pitches: &[i32]) -> u16 {
     mask
 }
 
-/// Best-scoring chord for a set of active pitch classes (0-11), or None if
-/// too few distinct notes are active to call it a chord.
-pub fn match_chord(active_pitch_classes: &[i32], bass_pc: Option<i32>) -> Option<ChordMatch> {
-    let active = pitch_class_set(active_pitch_classes);
-    if active.count_ones() < 2 {
+/// A bare root + fifth (`5`) in a known key, on a root whose chord in that key's scale has a
+/// definite 3rd, is that diatonic chord with its 3rd missing: no 3rd of either kind sounds at
+/// least `STRONG_THIRD_SHARE` strong, so it reads as the key's own major or minor triad instead.
+/// (Kept in front of the key-less result so that without a key, or on a root outside the scale,
+/// a power chord is still named as one.)
+fn diatonic_triad_for_bare_fifth(m: &mut ChordMatch, share: &[f32], key: &KeyEstimate) {
+    if m.quality != "5" {
+        return;
+    }
+    let root = m.root_pc as usize;
+    if share[(root + 3) % 12].max(share[(root + 4) % 12]) >= STRONG_THIRD_SHARE {
+        return;
+    }
+    let base = key.relative_major_pc();
+    let in_scale = |pc: usize| matches!((pc as i32 - base).rem_euclid(12), 0 | 2 | 4 | 5 | 7 | 9 | 11);
+    match (in_scale((root + 4) % 12), in_scale((root + 3) % 12)) {
+        (true, false) => m.quality = "maj",
+        (false, true) => m.quality = "m",
+        _ => {}
+    }
+}
+
+/// Best-scoring chord for a window's worth of notes (`key`, if known, only decides what a bare
+/// fifth is, see `diatonic_triad_for_bare_fifth`): `all` is how long each pitch class sounded
+/// in the accompaniment (summed overlap with the window, in seconds), `bass` the same for the
+/// bass part alone (or the lowest note at each moment where there is no bass part). `None` if
+/// fewer than two pitch classes are really present, or nothing sounded at all.
+pub fn match_chroma(all: &[f32; 12], bass: &[f32; 12], key: Option<&KeyEstimate>) -> Option<ChordMatch> {
+    let total: f32 = all.iter().sum();
+    if total <= 0.0 {
         return None;
     }
+    let share: Vec<f32> = all.iter().map(|&x| x / total).collect();
+    if share.iter().filter(|&&c| c >= PRESENT_SHARE).count() < 2 {
+        return None;
+    }
+    let bass_total: f32 = bass.iter().sum();
+    let bass_share = |pc: usize| if bass_total > 0.0 { bass[pc] / bass_total } else { 0.0 };
+    let bass_pc = (bass_total >= MIN_BASS_ENERGY * total)
+        .then(|| (0..12usize).max_by(|&a, &b| bass[a].partial_cmp(&bass[b]).unwrap()).unwrap() as i32);
 
     let mut best: Option<(ChordMatch, f32)> = None;
-    for root in 0..12i32 {
-        if active & (1 << root) == 0 {
-            continue; // root itself must be present
-        }
+    for root in 0..12usize {
         for tpl in CHORD_TEMPLATES {
-            let mut template_mask = 0u16;
+            let mut inside = 0.0;
+            let mut missing = 0.0;
             for &i in tpl.intervals {
-                template_mask |= 1 << (root + i).rem_euclid(12);
+                let c = share[(root + i as usize) % 12];
+                inside += c;
+                missing += (MISSING_FLOOR - c).max(0.0);
             }
-            let matched = (template_mask & active).count_ones();
-            let missing = (template_mask & !active).count_ones();
-            let extra = (active & !template_mask).count_ones();
-            let mut score = matched as f32
-                - MISSING_PENALTY * missing as f32
-                - EXTRA_PENALTY * extra as f32
-                - SIZE_PENALTY * tpl.intervals.len() as f32;
-            if bass_pc == Some(root) {
-                score += BASS_IS_ROOT_BONUS;
-            }
+            let score = inside - OUTSIDE_WEIGHT * (1.0 - inside)
+                - MISSING_PENALTY * missing
+                - SIZE_PENALTY * tpl.intervals.len() as f32
+                - quality_prior(tpl.quality)
+                + BASS_ROOT_WEIGHT * bass_share(root);
             if best.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
-                best = Some((
-                    ChordMatch { root_pc: root, quality: tpl.quality, bass_pc },
-                    score,
-                ));
+                best = Some((ChordMatch { root_pc: root as i32, quality: tpl.quality, bass_pc }, score));
             }
         }
+    }
+    if let (Some((m, _)), Some(key)) = (best.as_mut(), key) {
+        diatonic_triad_for_bare_fifth(m, &share, key);
     }
     best.map(|(m, _)| m)
 }
@@ -131,7 +183,7 @@ pub fn match_chord(active_pitch_classes: &[i32], bass_pc: Option<i32>) -> Option
 // this fixed order, so a diffed/re-rendered tension list never needs
 // sorting). Offsets that coincide with a triad/7th tone (0, 3, 4, 7, 10,
 // 11) are deliberately absent: a note there is either already part of
-// the stabilized chord label or was penalized/matched by `match_chord`
+// the stabilized chord label or was matched by `match_chroma`
 // itself, not something this display is meant to call out.
 const TENSION_NAMES: [(i32, &str); 7] =
     [(1, "b9"), (2, "9"), (3, "#9"), (5, "11"), (6, "#11"), (8, "b13"), (9, "13")];

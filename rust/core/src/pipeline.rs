@@ -13,7 +13,7 @@ use anyhow::Result;
 
 use crate::beat_model::{self, BeatModel};
 use crate::beat_tracker::{BeatGrid, BeatTracker};
-use crate::chord_templates::{extra_tensions, match_chord, ChordMatch};
+use crate::chord_templates::{extra_tensions, match_chroma, ChordMatch};
 use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
 use crate::harmonica_model::{self, Device, HarmonicaModel, ModelSize, Part};
 use crate::harmonica_stream::NoteTranscriber;
@@ -322,6 +322,55 @@ struct ActiveNow {
     chord: Option<ChordAt>,
 }
 
+// The chord is named from the notes of the last this-many seconds (weighted by how long each
+// sounded), not from the instant's set: a passing tone or a half-released chord no longer
+// flips the name, while the stabilizer's hold and the weighting still let a real change win
+// within about half a window. Swept on RWC-Pop (0.5 s beat 0.25 and 1 s).
+const CHORD_WINDOW_S: f32 = 0.5;
+// Sub-steps over the window when there is no bass part and the bass is taken as the lowest
+// sounding note at each of them.
+const BASS_FALLBACK_STEPS: usize = 10;
+
+/// How long each pitch class sounded in `[t - CHORD_WINDOW_S, t]` among the non-vocal notes, and
+/// the same for the bass: the bass part's notes if it has any in the window, otherwise (single-part
+/// models) the lowest sounding note at evenly spaced moments.
+fn window_chroma(note_events: &[NoteEvent], t: f32) -> ([f32; 12], [f32; 12]) {
+    let t0 = t - CHORD_WINDOW_S;
+    let mut all = [0.0f32; 12];
+    let mut bass = [0.0f32; 12];
+    let mut has_bass_part = false;
+    for &(s, e, p, _a, part) in note_events {
+        if part == Part::Vocal {
+            continue;
+        }
+        let overlap = e.min(t) - s.max(t0);
+        if overlap <= 0.0 {
+            continue;
+        }
+        let pc = p.rem_euclid(12) as usize;
+        all[pc] += overlap;
+        if part == Part::Bass {
+            bass[pc] += overlap;
+            has_bass_part = true;
+        }
+    }
+    if !has_bass_part {
+        let step = CHORD_WINDOW_S / BASS_FALLBACK_STEPS as f32;
+        for k in 0..BASS_FALLBACK_STEPS {
+            let tau = t0 + (k as f32 + 0.5) * step;
+            let lowest = note_events
+                .iter()
+                .filter(|&&(s, e, _p, _a, part)| part != Part::Vocal && s <= tau && e >= tau)
+                .map(|&(_s, _e, p, ..)| p)
+                .min();
+            if let Some(p) = lowest {
+                bass[p.rem_euclid(12) as usize] += step;
+            }
+        }
+    }
+    (all, bass)
+}
+
 /// Notes sounding at time t. Note ends are taken as exact: Harmonica's
 /// decode closes a note on the frame its sustain drops, so there's no
 /// grace period after it (basic-pitch needed 0.2 s for its ragged ends,
@@ -334,16 +383,12 @@ struct ActiveNow {
 /// tension over the displayed chord. Vocal-only moments therefore read as
 /// silence for the chord lane. Single-part models have no vocal part, so
 /// they behave as before.
-fn evaluate_active(note_events: &[NoteEvent], t: f32) -> ActiveNow {
+fn evaluate_active(note_events: &[NoteEvent], t: f32, key: Option<&KeyEstimate>) -> ActiveNow {
     let sounding = |s: f32, e: f32| s <= t + 1e-6 && e >= t;
     let active: Vec<i32> = note_events.iter().filter(|&&(s, e, ..)| sounding(s, e)).map(|&(_s, _e, p, ..)| p).collect();
-    let chord_notes: Vec<i32> = note_events
-        .iter()
-        .filter(|&&(s, e, _p, _a, part)| sounding(s, e) && part != Part::Vocal)
-        .map(|&(_s, _e, p, ..)| p)
-        .collect();
+    let any_chord_note = note_events.iter().any(|&(s, e, _p, _a, part)| sounding(s, e) && part != Part::Vocal);
     let pitch_classes: Vec<i32> = active.iter().map(|p| p.rem_euclid(12)).collect();
-    if chord_notes.is_empty() {
+    if !any_chord_note {
         let recently_sounding = note_events
             .iter()
             .any(|&(s, e, _p, _a, part)| part != Part::Vocal && s <= t + 1e-6 && e >= t - SILENCE_HOLD_S);
@@ -352,9 +397,8 @@ fn evaluate_active(note_events: &[NoteEvent], t: f32) -> ActiveNow {
             chord: if recently_sounding { None } else { Some(ChordAt::Silence) },
         };
     }
-    let bass_pc = chord_notes.iter().min().map(|p| p.rem_euclid(12));
-    let chord_pitch_classes: Vec<i32> = chord_notes.iter().map(|p| p.rem_euclid(12)).collect();
-    let chord = match_chord(&chord_pitch_classes, bass_pc).map(ChordAt::Match);
+    let (all, bass) = window_chroma(note_events, t);
+    let chord = match_chroma(&all, &bass, key).map(ChordAt::Match);
     ActiveNow { active_pitch_classes: pitch_classes, chord }
 }
 
@@ -369,8 +413,15 @@ fn evaluate_active(note_events: &[NoteEvent], t: f32) -> ActiveNow {
 // prescribes this for real-time chord tracking (the classic template-
 // matching literature scores fixed, already-segmented chords, not a live
 // stream) -- start here and tune empirically against sample_audio and
-// live playing, same as WINDOW_S/SWITCH_MARGIN in key_estimator.rs.
-const CHORD_MIN_HOLD_S: f32 = 0.15;
+// live playing, same as WINDOW_S/SWITCH_MARGIN in key_estimator.rs. 0.25 s (was 0.15 s before
+// the chord was named from a window) after a sweep on RWC-Pop: it removed a third of the
+// too-short segments; 0.3 s lost root accuracy.
+const CHORD_MIN_HOLD_S: f32 = 0.25;
+
+// A chord that just began only wins once it fills about half of the `CHORD_WINDOW_S` window, so
+// the time it first led is that much later than the notes' real onset; its displayed start is
+// moved back by this (swept on RWC-Pop: 0.25-0.35 s were equally good, 0 lost .07 majmin).
+const CHORD_BACKDATE_S: f32 = 0.3;
 
 // A committed chord's (backdated) onset is snapped to the nearest point on this subdivision
 // of the current `BeatGrid` (see `BeatTracker::beat_grid`), once one is known -- fine enough
@@ -502,7 +553,7 @@ impl ChordStabilizer {
                             // reports a note's true onset despite arriving once it ends).
                             // `commit` then snaps it to the beat grid on top of that.
                             if t - since >= CHORD_MIN_HOLD_S {
-                                self.commit(candidate, since, current_key, accidental, beat_grid, &mut on_event);
+                                self.commit(candidate, since - CHORD_BACKDATE_S, current_key, accidental, beat_grid, &mut on_event);
                             }
                         }
                         _ => self.pending = Some((candidate, t)),
@@ -604,7 +655,7 @@ pub fn report_new_chords(
             }
         }
         chord_display.relabel(current_key, accidental, &mut on_event);
-        let evaluated = evaluate_active(note_events, t);
+        let evaluated = evaluate_active(note_events, t, current_key.as_ref());
         chord_display.observe(evaluated, t, current_key, accidental, beat_grid, &mut on_event);
     }
 }

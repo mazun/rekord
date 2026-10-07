@@ -103,8 +103,8 @@ npm run tauri dev
     the chord is named from bass + other only -- **vocal notes feed only the
     tensions** (`evaluate_active` in `pipeline.rs`), because sung melody is
     mostly non-chord tones. Vocal-only moments read as chord silence.
-    Slash chords are unchanged (lowest chord note, shown whenever it differs
-    from the root): a bass-part-only slash rule was designed (harmonica-repro
+    Slash chords show the window's dominant bass (see "Chord naming"), whenever it differs
+    from the root: a bass-part-only slash rule was designed (harmonica-repro
     measured `majmin_inv` .769 -> .779 for the offline version) but the user
     chose to leave it, since chord display beyond tensions is going to be
     rebuilt around a separate chord model.
@@ -151,6 +151,40 @@ npm run tauri dev
     `85d1b355`; `mix_large_v1.onnx` stays in the repo for older revisions, and
     the model card was updated for v2 in the same commit). Its training data also include the user's own commercial CDs
     (328 h, mixes + pseudo-labels), which the model card's license text says.
+
+- **Chord naming is a windowed pitch-class-energy match, not the instant's note set**
+  (2026-10-07, user; `match_chroma` in `chord_templates.rs`, `window_chroma` in
+  `pipeline.rs`). For each checkpoint `t` the non-vocal notes overlapping
+  `[t - 0.5 s, t]` are summed per pitch class by overlap length (`CHORD_WINDOW_S`), a template's
+  score is inside share - 0.7 x outside share - 3 x (shortfall of each tone below a 6% share) -
+  0.1 per tone - a per-quality prior + 0.3 x the bass part's share on the root. The prior is 0 for
+  maj/m, .1 for the 7ths, .2 for 6/m6 and the 9/11/13 family, .5 for sus/dim/aug/m7b5/dim7, and .15
+  for the power chord `5` -- the rarer the chord, the more evidence it needs. The bass (and the
+  slash bass, `ChordMatch::bass_pc`) is the bass part's dominant pitch class in the window (the
+  lowest note per moment for single-part models), no longer the lowest note at `t`. A committed
+  chord's start is backdated by `CHORD_BACKDATE_S` (0.3 s) because a new chord only wins once it
+  fills about half the window; `CHORD_MIN_HOLD_S` is 0.25 s. With a known key, a winner `5` on a
+  diatonic root whose 3rd is not sounding (< 12% share) is renamed to the key's major/minor triad.
+  Every number was swept on RWC-Pop (odd songs to tune, even songs to check; the evaluation tools
+  and the whole story are in harmonica-repro's `tools/chord_eval/` and `runs/chord_rwc_v2/`), so
+  they are this project's own, like the key estimator's. Result, 100 songs, mix condition,
+  file input (no beat snapping): majmin .680 -> .769, majmin_inv .615 -> .702, sevenths .547 ->
+  .642, tetrads .513 -> .587 (BTC .815 is the offline reference, not a target). Known costs:
+  RWC's labels contain almost no add9/9/11/sus2/power chords, so everything ornate scores as
+  wrong there (the drop from the 5-chord vocabulary's ceiling is expected); `5` costs about
+  .03 majmin against disabling it; a longer window (1 s+) blurs changes. Not done, on purpose:
+  correcting the chord lane after a bar or so (fixed-lag Viterbi over these scores measured
+  majmin .797 / tetrads .593 on the 5-chord vocabulary, +.03 over the windowed match alone;
+  needs the chord display to be revisable like `BeatLines`, to be designed in its own session).
+  Confirmed by sample_audio (same sequences as before incl. G6). Checked live by the user
+  (2026-10-07): accuracy is fine, but the chord display is noticeably less real-time (the 0.5 s
+  window + 0.25 s hold delay each change). Accepted for now; the next session is meant to trade
+  this the other way: confirm chords after listening ~2 s and tune the display for that, ideally
+  as three revisable stages (one of them confirmed at 0.5 s, like `BeatLines`' layers; the exact
+  stages are to be settled in that session).
+  Quick loop without the model: `cargo run --release -p rekord_core --example chord_replay --
+  <raw_dir> <out_dir>` replays the chord logic over a `rekord_engine` file-mode stdout
+  (harmonica-repro's `runs/chord_replay.sh`), matching the real exe to +-.001 majmin.
 
 - **Beat/downbeat tracking (`beat_model.rs`, `beat_tracker.rs`, and the DBN
   decoder in its own crate `rust/beat_dbn/`) is Beat This! small0 + madmom's
