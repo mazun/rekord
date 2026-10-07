@@ -1,7 +1,9 @@
 <script lang="ts">
   import settingsGearIconSvg from "../assets/settings-gear-icon.svg?raw";
   import { pipeline, startCapture, stopCapture } from "../pipeline.svelte";
+  import { togglePlayback, transport } from "../transport.svelte";
   import { t } from "../i18n.svelte";
+  import PlaybackVolume from "./PlaybackVolume.svelte";
 
   let { onOpenSettings }: { onOpenSettings: () => void } = $props();
 
@@ -15,8 +17,14 @@
     if (pipeline.status === "running") stopCapture();
     else if (pipeline.status === "idle") startCapture();
   }
+
+  // Replays what was just recorded (see transport.svelte.ts): play / pause toggle. Not while
+  // capturing -- the loopback would record the playback -- or when there is nothing recorded.
+  const playing = $derived(transport.state === "playing");
+  const playLabel = $derived(playing ? t("toolbar.pause") : t("toolbar.play"));
 </script>
 
+<div class="left-controls">
 <button
   id="capture-btn"
   class="capture-btn"
@@ -35,9 +43,29 @@
     {/if}
   </svg>
 </button>
+<button
+  id="play-btn"
+  class="play-btn"
+  type="button"
+  title={playLabel}
+  aria-label={playLabel}
+  disabled={pipeline.status !== "idle" || !pipeline.hasRecording}
+  onclick={togglePlayback}
+>
+  <svg viewBox="0 0 16 16" aria-hidden="true">
+    {#if playing}
+      <rect x="3.5" y="3" width="3" height="10" rx="0.8" />
+      <rect x="9.5" y="3" width="3" height="10" rx="0.8" />
+    {:else}
+      <path d="M4.5 2.5v11l9-5.5z" />
+    {/if}
+  </svg>
+</button>
+<PlaybackVolume />
 {#if pipeline.bpm !== null}
   <span class="bpm">{pipeline.bpm} BPM</span>
 {/if}
+</div>
 <button
   id="settings-btn"
   class="icon-btn"
@@ -82,8 +110,23 @@
     cursor: default;
   }
 
-  .capture-btn {
+  /* The record, play and volume buttons and the tempo, in one row pinned to the left edge. */
+  .left-controls {
+    position: absolute;
+    z-index: 1;
     left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+  }
+
+  .left-controls button {
+    position: static;
+    transform: none;
+  }
+
+  .capture-btn {
     display: flex;
     align-items: center;
     padding: 0.4rem 0.8rem;
@@ -98,20 +141,30 @@
     color: var(--text);
   }
 
-  .capture-btn svg {
+  .capture-btn svg,
+  .play-btn svg {
     display: block;
     width: 1.1rem;
     height: 1.1rem;
     fill: currentColor;
   }
 
-  /* Just right of the capture button (0.8rem padding + 1.1rem icon + 0.8rem padding). */
+  .play-btn {
+    display: flex;
+    align-items: center;
+    padding: 0.4rem 0.8rem;
+    border: none;
+    background: none;
+    color: var(--text);
+  }
+
+  .play-btn:hover:not(:disabled) {
+    background: none;
+    color: #fff;
+  }
+
   .bpm {
-    position: absolute;
-    z-index: 1;
-    left: 2.7rem;
-    top: 50%;
-    transform: translateY(-50%);
+    margin-left: 0.4rem;
     color: var(--text-dim);
     font-size: 0.85rem;
     font-variant-numeric: tabular-nums;

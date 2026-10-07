@@ -3,6 +3,7 @@
   import { PianoRoll } from "../pianoroll";
   import { connectPipeline, pipeline, startCapture, stopCapture } from "../pipeline.svelte";
   import { settings } from "../settings.svelte";
+  import { connectTransport, setPlaybackPartVisible } from "../transport.svelte";
   import { t } from "../i18n.svelte";
 
   const PARTS = ["vocal", "bass", "other"] as const;
@@ -15,6 +16,8 @@
   function togglePart(part: (typeof PARTS)[number]) {
     hiddenParts[part] = !hiddenParts[part];
     roll?.setPartVisible(part, !hiddenParts[part]);
+    // A part hidden on the roll is not sounded in playback either.
+    setPlaybackPartVisible(part, !hiddenParts[part]);
   }
 
   // No separate checkbox -- the legend row itself is the button, and its
@@ -27,6 +30,7 @@
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
+    let unlistenTransport: (() => void) | null = null;
     (async () => {
       const created = await PianoRoll.create(container);
       if (disposed) {
@@ -40,7 +44,10 @@
         onNoteStarted: (note) => roll?.startNote(note),
         onNote: (note) => roll?.addNote(note),
         onBeatLines: (lines) => roll?.setBeatLines(lines),
-        onStopped: () => roll?.stop(),
+        onStopped: (info) => {
+          roll?.stop();
+          if (info) roll?.setPlayableEnd(info.end_s);
+        },
         onChordChange: (t, label, romanNumeral) => roll?.addChordChange(t, label, romanNumeral),
         onChordRelabel: (label) => roll?.relabelCurrentChord(label),
       });
@@ -49,6 +56,12 @@
         return;
       }
       unlisten = off;
+      const offTransport = await connectTransport(roll);
+      if (disposed) {
+        offTransport();
+        return;
+      }
+      unlistenTransport = offTransport;
 
       // Capture starts on launch rather than waiting for a click. Stop
       // first: if the webview reloaded while capture kept running on the
@@ -61,6 +74,7 @@
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenTransport?.();
       roll?.destroy();
       roll = null;
     };

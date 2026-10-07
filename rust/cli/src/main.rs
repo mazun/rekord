@@ -56,7 +56,7 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
             let suffix = roman_numeral.map(|r| format!("  ({r})")).unwrap_or_default();
             println!("  t={t:6.2}s  chord: {label}{suffix}");
         }
-        PipelineEvent::TensionsChanged { tensions } => {
+        PipelineEvent::TensionsChanged { tensions, .. } => {
             if !tensions.is_empty() {
                 println!("    tensions: {}", tensions.join(", "));
             }
@@ -64,7 +64,7 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
         PipelineEvent::ChordRelabel { label } => {
             println!("  chord (respelled): {label}");
         }
-        PipelineEvent::KeyChange { key_name } => {
+        PipelineEvent::KeyChange { key_name, .. } => {
             println!("  key: {key_name}");
         }
         // the CLI prints a note once, when it ends
@@ -154,7 +154,7 @@ fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>, 
     let key_mode = std::sync::Arc::new(std::sync::Mutex::new(pipeline::KeyMode::Auto));
     let accidental_setting = std::sync::Arc::new(std::sync::Mutex::new(accidental));
     let mut printed_until = f32::NEG_INFINITY;
-    pipeline::run_live_session(config, hop_seconds, duration_s, never_stop, key_mode, accidental_setting, move |event| {
+    pipeline::run_live_session(config, hop_seconds, duration_s, never_stop, key_mode, accidental_setting, None, move |event| {
         if let PipelineEvent::BeatLines { committed, .. } = &event {
             let from = printed_until;
             for line in committed.iter().filter(|l| l.t > from) {

@@ -2,12 +2,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use rekord_core::audio_ring::{RecordingInfo, RingTap, SharedRing};
 use rekord_core::harmonica_model::ModelSize;
 use rekord_core::key_estimator::{KeyEstimate, Mode};
+use rekord_core::live_capture::CaptureTap;
 use rekord_core::spelling::Accidental;
 use rekord_core::pipeline::{
     KeyMode, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
 };
+use rekord_core::playback::{self, PlaybackParams, PlaybackSession, SynthNote};
 use tauri::{AppHandle, Emitter, State};
 
 #[derive(Default)]
@@ -22,14 +25,45 @@ struct CaptureState {
     accidental: Arc<Mutex<Accidental>>,
 }
 
+// The playback of the recording (see `rekord_core::playback`), if any. The
+// recording itself is the managed `SharedRing`: it outlives capture sessions
+// (it is replaced when the next one begins), so it can be played after stop.
+#[derive(Default)]
+struct PlaybackState {
+    session: Option<PlaybackSession>,
+}
+
+// Dropping the session stops the audio and joins its thread; that is done after
+// the state lock is released.
+fn stop_playback(state: &Mutex<PlaybackState>) -> Result<(), String> {
+    let session = state.lock().map_err(|e| e.to_string())?.session.take();
+    drop(session);
+    Ok(())
+}
+
+// Runs `f` on the playback in progress, if it hasn't ended.
+fn with_playback<T>(state: &Mutex<PlaybackState>, f: impl FnOnce(&PlaybackSession) -> Result<T, String>) -> Result<T, String> {
+    let guard = state.lock().map_err(|e| e.to_string())?;
+    match guard.session.as_ref() {
+        Some(session) if !session.is_finished() => f(session),
+        _ => Err("no playback".into()),
+    }
+}
+
 #[tauri::command]
 fn start_capture(
     app: AppHandle,
     state: State<Mutex<CaptureState>>,
+    playback_state: State<Mutex<PlaybackState>>,
+    ring: State<SharedRing>,
     model_size: String,
     future_frames: usize,
     accidental: String,
 ) -> Result<(), String> {
+    // A playing output would be captured by the loopback (and the capture
+    // clears the recording being played anyway).
+    stop_playback(&playback_state)?;
+
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     if guard.handle.is_some() {
         return Ok(()); // already running
@@ -52,6 +86,7 @@ fn start_capture(
     *guard.accidental.lock().map_err(|e| e.to_string())? = accidental.parse().unwrap_or_default();
     let accidental_thread = Arc::clone(&guard.accidental);
     let app_for_thread = app.clone();
+    let tap: Box<dyn CaptureTap> = Box::new(RingTap::new(Arc::clone(&ring)));
 
     let handle = std::thread::spawn(move || {
         let result = rekord_core::pipeline::run_live_session(
@@ -61,6 +96,7 @@ fn start_capture(
             stop_flag_thread,
             key_mode_thread,
             accidental_thread,
+            Some(tap),
             |event| {
                 let _ = app_for_thread.emit("pipeline-event", &event);
             },
@@ -100,8 +136,10 @@ fn set_accidental(state: State<Mutex<CaptureState>>, accidental: String) -> Resu
     Ok(())
 }
 
+// Returns what the recording now covers (`None` if nothing was ever recorded),
+// which is what playback can use.
 #[tauri::command]
-fn stop_capture(state: State<Mutex<CaptureState>>) -> Result<(), String> {
+fn stop_capture(state: State<Mutex<CaptureState>>, ring: State<SharedRing>) -> Result<Option<RecordingInfo>, String> {
     let (stop_flag, handle) = {
         let mut guard = state.lock().map_err(|e| e.to_string())?;
         (guard.stop_flag.take(), guard.handle.take())
@@ -114,7 +152,61 @@ fn stop_capture(state: State<Mutex<CaptureState>>) -> Result<(), String> {
         // notices the stop flag and flushes any pending notes/chord.
         let _ = handle.join();
     }
+    let info = ring.lock().map_err(|e| e.to_string())?.as_ref().map(|r| r.info());
+    Ok(info)
+}
+
+// The playback commands are `async` so that opening the output device and
+// waiting for a fade don't block the main thread. `gen` is chosen by the
+// frontend and tags every position report that follows from the command (see
+// `PlaybackEvent`); `notes` are all the notes of the recording, `params`
+// says which parts are hidden and how loud things are.
+#[tauri::command]
+async fn playback_start(
+    app: AppHandle,
+    capture: State<'_, Mutex<CaptureState>>,
+    playback_state: State<'_, Mutex<PlaybackState>>,
+    ring: State<'_, SharedRing>,
+    from_s: f64,
+    notes: Vec<SynthNote>,
+    params: PlaybackParams,
+    gen: u32,
+) -> Result<(), String> {
+    if capture.lock().map_err(|e| e.to_string())?.handle.is_some() {
+        return Err("capture is running".into());
+    }
+    stop_playback(&playback_state)?;
+    let session = playback::start(Arc::clone(&ring), notes, from_s, params, gen, move |event| {
+        let _ = app.emit("playback-event", &event);
+    })
+    .map_err(|e| format!("{e:#}"))?;
+    playback_state.lock().map_err(|e| e.to_string())?.session = Some(session);
     Ok(())
+}
+
+// Returns the recording time playback will resume from.
+#[tauri::command]
+async fn playback_pause(playback_state: State<'_, Mutex<PlaybackState>>) -> Result<f64, String> {
+    with_playback(&playback_state, |session| Ok(session.pause()))
+}
+
+// Plays from `pos_s`, resuming a paused playback. Fails once the recording has
+// been played to its end; the frontend then starts a fresh playback instead.
+#[tauri::command]
+fn playback_seek(playback_state: State<Mutex<PlaybackState>>, pos_s: f64, gen: u32) -> Result<(), String> {
+    with_playback(&playback_state, |session| session.seek(pos_s, gen).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+fn playback_set_params(playback_state: State<Mutex<PlaybackState>>, params: PlaybackParams) -> Result<(), String> {
+    // Nothing to change when nothing is playing.
+    let _ = with_playback(&playback_state, |session| Ok(session.set_params(&params)));
+    Ok(())
+}
+
+#[tauri::command]
+async fn playback_stop(playback_state: State<'_, Mutex<PlaybackState>>) -> Result<(), String> {
+    stop_playback(&playback_state)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -122,7 +214,19 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(CaptureState::default()))
-        .invoke_handler(tauri::generate_handler![start_capture, stop_capture, set_key_mode, set_accidental])
+        .manage(Mutex::new(PlaybackState::default()))
+        .manage::<SharedRing>(Arc::new(Mutex::new(None)))
+        .invoke_handler(tauri::generate_handler![
+            start_capture,
+            stop_capture,
+            set_key_mode,
+            set_accidental,
+            playback_start,
+            playback_pause,
+            playback_seek,
+            playback_set_params,
+            playback_stop
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

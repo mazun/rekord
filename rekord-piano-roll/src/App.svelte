@@ -1,5 +1,6 @@
 <script lang="ts">
   import { pipeline, startCapture, stopCapture } from "./pipeline.svelte";
+  import { stopPlayback } from "./transport.svelte";
   import { enterSettingsWindowSize, leaveSettingsWindowSize } from "./windowSize";
   import Toolbar from "./components/Toolbar.svelte";
   import KeyPicker from "./components/KeyPicker.svelte";
@@ -21,6 +22,8 @@
   let resumeOnClose = false;
 
   async function openSettings() {
+    // The settings page is a separate view and the roll behind it can't be heard being adjusted.
+    await stopPlayback();
     resumeOnClose = pipeline.status === "running";
     if (resumeOnClose) {
       await stopCapture();

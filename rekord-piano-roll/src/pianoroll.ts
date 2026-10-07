@@ -1,4 +1,6 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
+import { HeldClock, LiveClock, PlaybackClock, type RollClock } from "./clock";
+import { HISTORY_S } from "./recording";
 
 const MIN_PITCH = 21; // A0
 const MAX_PITCH = 108; // C8
@@ -91,9 +93,6 @@ const KEY_BORDER_COLOR = 0x0c0d12;
 // color, same as a real keyboard's frame between/behind the keys.
 const KEYBOARD_BACKING_COLOR = 0x2a2e3a;
 
-// How much of the past is kept (notes, chords, beat lines) so a stopped roll can be scrolled back
-// through it; anything that ended longer ago than this is dropped. Untuned.
-const HISTORY_S = 300;
 // While stopped, the wheel/trackpad scrolls this many times faster than the content moves under
 // the pointer when dragging, since a wheel notch is only ~100 px and the history is minutes long.
 const WHEEL_SCROLL_SPEED = 4;
@@ -107,6 +106,15 @@ const SCROLLBAR_MIN_THUMB_PX = 24;
 const SCROLLBAR_TRACK_COLOR = 0x1a1c22;
 const SCROLLBAR_THUMB_COLOR = 0x5a6580;
 const SCROLLBAR_THUMB_ACTIVE_COLOR = 0x9aaad8;
+// A press that moves less than this (px) and is released within CLICK_MAX_MS is a click -- it sets
+// the playback position -- not a drag that scrolls.
+const CLICK_SLOP_PX = 4;
+const CLICK_MAX_MS = 500;
+// The playback position marker: a line the full height of the roll, with a small flag on the chord
+// lane.
+const MARKER_COLOR = 0xffd166;
+const MARKER_LINE_WIDTH = 2;
+const MARKER_FLAG_SIZE = 6;
 
 function isBlackKey(pitch: number): boolean {
   return [1, 3, 6, 8, 10].includes(pitch % 12);
@@ -156,12 +164,6 @@ interface NoteSprite extends ConfirmedNote {
 // capture hop plus compute behind the wall clock (the rest of total_latency_s is the
 // structural wait for a note's end, which an open note doesn't have).
 const OPEN_NOTE_LAG_S = 0.15;
-
-// The display lag is measured from the NoteStarted notes of the first LAG_MEASURE_S of a session
-// (it locks at the first tick after that with at least one sample, so silence just delays it),
-// plus a small safety margin. Untuned.
-const LAG_MEASURE_S = 4;
-const LAG_MARGIN_S = 0.01;
 
 // Bottom to top: when notes of different parts overlap at the same pitch, the vocal is drawn
 // over the bass over the rest.
@@ -224,30 +226,16 @@ interface KeySprite {
   active: boolean;
 }
 
-/** Falling-note piano roll driven by note events. A note is first reported
+/** Scrolling piano roll driven by note events. A note is first reported
  * when its onset is decided (`NoteStarted`, drawn growing with the clock) and
  * again with its end known (`NoteConfirmed`, which fixes its length); the
  * rest is just positioning each one along the time axis.
  *
- * The pipeline's confirm delay (window-advance stride + capture hop +
- * NoteStitcher's confirm margin) is a fixed length for a given session, not
- * something that needs continuous correction or runtime estimation --
- * three earlier approaches all treated it as something to discover/track
- * dynamically and all looked wrong: snapping the displayed clock to each
- * new event read as a visible "warp"; continuously adjusting its playback
- * rate to chase the latest event read as a visible, repeating acceleration;
- * and estimating the delay from the smallest observed (wall-clock-since-
- * reset minus event timestamp) gap left the same dead zone the rate-based
- * version had, because NoteConfirmed's end_s was itself capped at
- * (covered - confirm_margin) under the basic-pitch note model -- a little
- * behind the freshest data a ChordChange event reports -- so "smallest
- * observed gap" doesn't reliably converge on the true figure. The backend
- * computes this figure itself (it's the one side that actually knows the
- * stride/hop it settled on) and
- * sends it as `total_latency_s` on the pipeline's `Started` event; this
- * class just uses it directly and runs the displayed clock at a constant,
- * exact 1x rate offset by that fixed figure -- never sped up, slowed down,
- * or re-anchored again. */
+ * What time the playhead is at comes from a `RollClock` (clock.ts): while capture
+ * runs, a constant-rate function of the wall clock offset by a display lag that is
+ * measured once per session and never re-estimated (chasing each event instead
+ * read as visible warping; see CLAUDE.md); once stopped, a fixed position the user
+ * can scroll and click; during playback, the position of the audio being heard. */
 export class PianoRoll {
   private app: Application;
   // One layer per part inside the note layer, so a part can be hidden as a whole and
@@ -261,15 +249,23 @@ export class PianoRoll {
   private keyboardBacking = new Graphics();
   private keys = new Map<number, KeySprite>();
   private notes: NoteSprite[] = [];
+  // Whether a session has ever started (nothing is drawn before that).
   private running = false;
-  private resetAtMs = 0;
-  private stoppedAtMs: number | null = null;
-  // How far back from the stop position the view is scrolled (seconds, >= 0; always 0 while
-  // running), and the most it can be: far enough that the oldest retained item reaches the left edge.
-  private viewOffsetS = 0;
-  private maxViewOffsetS = 0;
+  // What time the playhead is at (see clock.ts): the live clock while capture runs, a held one
+  // once it stops (scrollable), a playback one while replaying the recording.
+  private live = new LiveClock();
+  private clock: RollClock = this.live;
+  // The range a held view can be scrolled over, recomputed every tick: from where the oldest
+  // retained item reaches the left edge to the end of the recorded audio.
+  private minViewS = 0;
+  private maxViewS = 0;
+  // The end of the audio the backend recorded (set when capture stops); playback and the held view
+  // can reach it.
+  private rangeEndS = 0;
   // What a pointer drag moves: the notes themselves, or the scrollbar thumb.
   private dragMode: "none" | "content" | "thumb" = "none";
+  // The press in progress, until it moves too far or is released; released in time it is a click.
+  private press: { x: number; clientX: number; clientY: number; ms: number; tS: number; moved: boolean } | null = null;
   private scrollbarLayer = new Container();
   private scrollbarTrack = new Graphics();
   private scrollbarThumb = new Graphics();
@@ -278,9 +274,14 @@ export class PianoRoll {
   private drawnThumb = { w: -1, active: false };
   // Start time of the oldest retained note/chord/beat line, recomputed every tick.
   private oldestS = Infinity;
-  private displayLagS = 0;
-  private displayLagLocked = false;
-  private lagSampleMinS = Infinity;
+  private markerS: number | null = null;
+  private markerLayer = new Container();
+  private markerLine = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
+  private markerFlag = new Graphics();
+  /** The user clicked the roll at audio time `t` (stopped or playing, not while capturing). */
+  onSeekRequest: ((t: number) => void) | null = null;
+  /** Called every frame while the roll is not live, with the time at the playhead. */
+  onPlayheadTime: ((t: number) => void) | null = null;
   // Whether newly-added notes get the melody/bass color treatment (see
   // addNote) or just the default coloring, as if every note were an inner
   // voice. Toggling only affects notes added from here on -- notes already
@@ -312,6 +313,11 @@ export class PianoRoll {
     app.stage.addChild(roll.beatLayer);
     app.stage.addChild(noteLayer);
     app.stage.addChild(roll.chordLayer);
+    app.stage.addChild(roll.markerLayer);
+    roll.markerLayer.addChild(roll.markerLine, roll.markerFlag);
+    roll.markerLine.tint = MARKER_COLOR;
+    roll.markerFlag.poly([-MARKER_FLAG_SIZE, 0, MARKER_FLAG_SIZE, 0, 0, MARKER_FLAG_SIZE * 1.2]).fill({ color: MARKER_COLOR });
+    roll.markerLayer.visible = false;
     app.stage.addChild(roll.scrollbarLayer);
     roll.scrollbarLayer.addChild(roll.scrollbarTrack, roll.scrollbarThumb);
     roll.scrollbarLayer.visible = false;
@@ -337,13 +343,14 @@ export class PianoRoll {
   }
 
   /** Lets a stopped roll be scrolled back through its history: the wheel/trackpad (down = later,
-   * like any scrolled view) or dragging the notes. Ignored while capture is running. */
+   * like any scrolled view) or dragging the notes. A click (a press that hardly moves) asks for
+   * the playback position (`onSeekRequest`), also while playing. Ignored while capture is running. */
   private attachScrollInput(canvas: HTMLCanvasElement): void {
     canvas.style.touchAction = "none";
     canvas.addEventListener(
       "wheel",
       (e) => {
-        if (this.stoppedAtMs === null) return;
+        if (!this.held) return;
         e.preventDefault();
         const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINE_PX : 1;
         this.scrollBy(-((e.deltaY + e.deltaX) * unit * WHEEL_SCROLL_SPEED) / PIXELS_PER_SECOND);
@@ -351,11 +358,16 @@ export class PianoRoll {
       { passive: false },
     );
     canvas.addEventListener("pointerdown", (e) => {
-      if (this.stoppedAtMs === null) return;
+      if (this.clock.kind === "live") return;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       canvas.setPointerCapture(e.pointerId);
+      this.press =
+        e.button === 0
+          ? { x, clientX: e.clientX, clientY: e.clientY, ms: performance.now(), tS: this.timeAtX(x), moved: false }
+          : null;
+      if (!this.held) return;
       if (this.scrollbarLayer.visible && y >= this.app.screen.height - SCROLLBAR_HIT_HEIGHT && x < this.playheadX()) {
         // Clicking the track outside the thumb centers the thumb there first, then drags it.
         if (x < this.thumbX || x > this.thumbX + this.thumbW) this.setThumbX(x - this.thumbW / 2);
@@ -365,18 +377,44 @@ export class PianoRoll {
       }
     });
     canvas.addEventListener("pointermove", (e) => {
+      if (this.press && !this.press.moved && Math.hypot(e.clientX - this.press.clientX, e.clientY - this.press.clientY) > CLICK_SLOP_PX) {
+        this.press.moved = true;
+      }
       if (this.dragMode === "content") {
         this.scrollBy(e.movementX / PIXELS_PER_SECOND);
       } else if (this.dragMode === "thumb") {
         const span = this.playheadX() - this.thumbW;
-        if (span > 0) this.scrollBy((-e.movementX * this.maxViewOffsetS) / span);
+        if (span > 0) this.scrollBy((-e.movementX * this.scrollSpanS()) / span);
       }
     });
-    const endDrag = () => {
+    canvas.addEventListener("pointerup", () => {
+      const press = this.press;
+      const mode = this.dragMode;
+      this.press = null;
       this.dragMode = "none";
-    };
-    canvas.addEventListener("pointerup", endDrag);
-    canvas.addEventListener("pointercancel", endDrag);
+      const isClick = press && !press.moved && mode !== "thumb" && performance.now() - press.ms < CLICK_MAX_MS;
+      // Not on the keyboard: its keys aren't positions.
+      if (isClick && press.x < this.playheadX()) this.onSeekRequest?.(press.tS);
+    });
+    canvas.addEventListener("pointercancel", () => {
+      this.press = null;
+      this.dragMode = "none";
+    });
+  }
+
+  /** The audio time at horizontal position `x` of the canvas. */
+  private timeAtX(x: number): number {
+    return this.displayS() + (x - this.playheadX()) / PIXELS_PER_SECOND;
+  }
+
+  private get held(): HeldClock | null {
+    return this.clock instanceof HeldClock ? this.clock : null;
+  }
+
+  /** How far back from the stop position a held view can be scrolled: until the oldest retained
+   * item reaches the left edge. */
+  private scrollSpanS(): number {
+    return Math.max(0, this.clock.headS() - this.minViewS);
   }
 
   /** Scrolls so the scrollbar thumb's left edge sits at `x` (clamped to the track). */
@@ -384,12 +422,19 @@ export class PianoRoll {
     const span = this.playheadX() - this.thumbW;
     if (span <= 0) return;
     const frac = Math.min(1, Math.max(0, x / span));
-    this.viewOffsetS = (1 - frac) * this.maxViewOffsetS;
+    this.held?.setView(this.clock.headS() - (1 - frac) * this.scrollSpanS());
   }
 
-  /** Moves the view `deltaS` further into the past (negative: back towards the stop position). */
+  /** Moves the held view `deltaS` further into the past (negative: towards the end). It stays within
+   * the scrollable range, except that a view already outside it (playback paused before the oldest
+   * note, say) can only move back in. */
   private scrollBy(deltaS: number): void {
-    this.viewOffsetS = Math.min(this.maxViewOffsetS, Math.max(0, this.viewOffsetS + deltaS));
+    const held = this.held;
+    if (!held) return;
+    const before = held.displayS();
+    const lo = Math.min(this.minViewS, before);
+    const hi = Math.max(this.maxViewS, before);
+    held.setView(Math.min(hi, Math.max(lo, before - deltaS)));
   }
 
   // Tears down the renderer and removes its canvas -- only needed so a
@@ -487,15 +532,14 @@ export class PianoRoll {
    * session (from the pipeline's `Started { total_latency_s }` event). */
   reset(_totalLatencyS: number): void {
     this.running = true;
-    this.resetAtMs = performance.now();
-    this.stoppedAtMs = null;
-    this.viewOffsetS = 0;
-    this.maxViewOffsetS = 0;
+    this.live.reset();
+    this.clock = this.live;
+    this.rangeEndS = 0;
+    this.markerS = null;
     this.dragMode = "none";
+    this.press = null;
     this.scrollbarLayer.visible = false;
-    this.displayLagS = 0;
-    this.displayLagLocked = false;
-    this.lagSampleMinS = Infinity;
+    this.markerLayer.visible = false;
     for (const n of this.notes) n.graphic.destroy();
     this.notes = [];
     for (const b of this.beatLines) b.graphic.destroy();
@@ -513,25 +557,66 @@ export class PianoRoll {
   /** Freezes the scroll where it is (capture stopped) and makes the history scrollable; the next
    * reset() resumes it. */
   stop(): void {
-    if (this.stoppedAtMs === null) this.stoppedAtMs = performance.now();
+    if (this.clock.kind !== "live") return;
+    this.live.freeze();
+    const stopS = this.live.displayS();
+    this.clock = new HeldClock(stopS, stopS);
   }
 
-  private wallClockS(): number {
-    return ((this.stoppedAtMs ?? performance.now()) - this.resetAtMs) / 1000;
+  /** What the backend recorded (once capture has stopped): playback and the view can reach its end. */
+  setPlayableEnd(endS: number): void {
+    this.rangeEndS = endS;
   }
 
-  // The playhead (keyboard's left edge) shows the audio clock minus `displayLagS`, the measured
-  // delay between a note's onset and its NoteStarted arriving (see startNote). It is measured once,
-  // in the first LAG_MEASURE_S of a session, and then fixed -- never re-estimated -- so the scroll
-  // stays a constant-rate function of the wall clock. total_latency_s (the wait for a note's
-  // *end*) is not used: a note is drawn from its onset.
-  private liveDisplayS(): number {
-    return this.wallClockS() - this.displayLagS;
+  /** The playhead's time (what is at the keyboard's left edge). */
+  playheadS(): number {
+    return this.clock.displayS();
   }
 
-  // What the playhead shows: the live position, minus how far a stopped roll is scrolled back.
+  /** The time at the roll's left edge: the oldest thing currently on screen. */
+  leftEdgeS(): number {
+    return this.timeAtX(0);
+  }
+
+  /** The playback position marker (null: none). Drawn while the roll isn't playing. */
+  setMarker(t: number | null): void {
+    this.markerS = t;
+  }
+
+  get marker(): number | null {
+    return this.markerS;
+  }
+
+  /** Starts following the audio being played from `fromS` (see PlaybackClock). */
+  startPlayback(fromS: number): void {
+    if (this.clock.kind === "live") return;
+    this.clock = new PlaybackClock(fromS, this.rangeEndS, this.clock.headS());
+  }
+
+  onPlaybackPosition(posS: number, atEpochMs: number): void {
+    if (this.clock instanceof PlaybackClock) this.clock.onPosition(posS, atEpochMs);
+  }
+
+  /** Playback paused with the audio stopping at `posS`: the roll runs on to there, then holds. */
+  holdPlayback(posS: number): void {
+    if (this.clock instanceof PlaybackClock) this.clock.holdAt(posS);
+  }
+
+  /** Playback is over (or stopped): the view stays where it is, or at `posS`, and can be scrolled
+   * again. */
+  stopPlayback(posS?: number): void {
+    if (this.clock.kind === "live") return;
+    this.clock = new HeldClock(this.clock.headS(), posS ?? this.clock.displayS());
+  }
+
+  // The live playhead (keyboard's left edge) shows the audio clock minus the display lag, the
+  // measured delay between a note's onset and its NoteStarted arriving (see startNote). It is
+  // measured once, in the first seconds of a session, and then fixed -- never re-estimated -- so
+  // the scroll stays a constant-rate function of the wall clock. total_latency_s (the wait for a
+  // note's *end*) is not used: a note is drawn from its onset. A held clock is a fixed (scrollable)
+  // position, a playback clock follows the audio being heard; all three are in clock.ts.
   private displayS(): number {
-    return this.liveDisplayS() - this.viewOffsetS;
+    return this.clock.displayS();
   }
 
   private xForTime(t: number): number {
@@ -558,10 +643,8 @@ export class PianoRoll {
 
   /** Draws a note from its onset; it grows with the clock until addNote() delivers its end. */
   startNote(note: StartedNote): void {
-    // Smallest onset-to-arrival delay seen so far: the freshest notes then land exactly on the
-    // keyboard edge, later-detected ones a little to its left.
-    if (this.displayLagLocked === false) this.lagSampleMinS = Math.min(this.lagSampleMinS, this.wallClockS() - note.start_s);
-    this.addSprite({ ...note, end_s: this.wallClockS() - OPEN_NOTE_LAG_S, melody: false, bass: false }, true);
+    this.live.sampleOnset(note.start_s);
+    this.addSprite({ ...note, end_s: this.live.wallS() - OPEN_NOTE_LAG_S, melody: false, bass: false }, true);
   }
 
   addNote(note: ConfirmedNote): void {
@@ -629,9 +712,9 @@ export class PianoRoll {
    * time it's current -- the same reasoning a sticky table header uses. */
   private tickChordSegments(): void {
     const kept: ChordSegment[] = [];
-    const liveS = this.liveDisplayS();
+    const headS = this.clock.headS();
     for (const seg of this.chordSegments) {
-      if (seg.endS !== null && seg.endS < liveS - HISTORY_S) {
+      if (seg.endS !== null && seg.endS < headS - HISTORY_S) {
         seg.band.destroy();
         seg.boundary.destroy();
         seg.label.destroy();
@@ -640,9 +723,9 @@ export class PianoRoll {
       }
       this.oldestS = Math.min(this.oldestS, seg.startS);
       const leftX = this.xForTime(seg.startS);
-      // The still-current chord runs up to the live position, which a scrolled-back stopped roll
-      // has moved away from the playhead.
-      const rightX = this.xForTime(seg.endS ?? liveS);
+      // The still-current chord runs up to the newest position, which a scrolled-back stopped roll
+      // has moved away from the playhead; replaying the last stretch of the recording goes past it.
+      const rightX = this.xForTime(seg.endS ?? Math.max(headS, this.displayS()));
       const onScreen = rightX >= 0 && leftX <= this.app.screen.width;
       for (const g of [seg.boundary, seg.label, seg.roman]) g.visible = onScreen;
       seg.band.visible = onScreen && seg.label.text !== SILENCE_LABEL; // silence has no band
@@ -718,7 +801,7 @@ export class PianoRoll {
       b.bar += (b.targetBar - b.bar) * k;
       const width = 1 + (BAR_LINE_WIDTH - 1) * b.bar;
       const x = this.xForTime(b.t) - width / 2;
-      if ((b.dying && b.alpha < 0.01) || b.t < this.liveDisplayS() - HISTORY_S) {
+      if ((b.dying && b.alpha < 0.01) || b.t < this.clock.headS() - HISTORY_S) {
         b.graphic.destroy();
         continue;
       }
@@ -735,24 +818,26 @@ export class PianoRoll {
 
   private onTick(): void {
     if (!this.running) return;
-    if (!this.displayLagLocked && this.wallClockS() >= LAG_MEASURE_S && Number.isFinite(this.lagSampleMinS)) {
-      this.displayLagS = this.lagSampleMinS + LAG_MARGIN_S;
-      this.displayLagLocked = true;
+    this.live.update();
+    // A paused playback holds where the audio stopped once the display gets there.
+    if (this.clock instanceof PlaybackClock && this.clock.holdReached()) {
+      this.clock = new HeldClock(this.clock.headS(), this.clock.displayS());
     }
     this.oldestS = Infinity;
     this.tickBeatLines(this.app.ticker.deltaMS / 1000);
     this.tickChordSegments();
     const displayS = this.displayS();
-    const liveS = this.liveDisplayS();
+    const headS = this.clock.headS();
+    const live = this.clock.kind === "live";
     const activePitches = new Set<number>();
     const retained: NoteSprite[] = [];
-    const openEndS = this.wallClockS() - OPEN_NOTE_LAG_S;
+    const openEndS = this.live.wallS() - OPEN_NOTE_LAG_S;
     const screenWidth = this.app.screen.width;
     for (const n of this.notes) {
       if (n.open) {
         n.end_s = Math.max(n.end_s, openEndS);
       }
-      if (!n.open && n.end_s < liveS - HISTORY_S) {
+      if (!n.open && n.end_s < headS - HISTORY_S) {
         // Older than the retained history -- drop it so the note list
         // (and the number of display objects) doesn't grow forever over
         // a long session.
@@ -769,34 +854,52 @@ export class PianoRoll {
       if (!onScreen) continue;
       if (n.open) this.drawNote(n.graphic, n);
       n.graphic.x = x;
-      // An open note's end_s only trails the clock; it is still sounding.
-      if (displayS >= n.start_s && (n.open || displayS <= n.end_s)) activePitches.add(n.pitch_midi);
+      // An open note's end_s only trails the clock; it is still sounding (while capture runs --
+      // once it has stopped, an unconfirmed note ends where its end_s froze).
+      if (displayS >= n.start_s && ((n.open && live) || displayS <= n.end_s)) activePitches.add(n.pitch_midi);
     }
     this.notes = retained;
+    // Highlighted at the playhead whatever moves it: the live clock, a scrolled-back stopped roll
+    // or playback.
     for (const pitch of this.keys.keys()) {
-      this.setKeyActive(pitch, this.stoppedAtMs === null && activePitches.has(pitch));
+      this.setKeyActive(pitch, activePitches.has(pitch));
     }
 
-    // Scrolling back is limited to where the oldest retained item reaches the left edge, and only
-    // exists while stopped (the live roll always follows the clock).
-    this.maxViewOffsetS =
-      this.stoppedAtMs === null || !Number.isFinite(this.oldestS)
-        ? 0
-        : Math.max(0, liveS - this.oldestS - this.playheadX() / PIXELS_PER_SECOND);
-    this.viewOffsetS = Math.min(this.viewOffsetS, this.maxViewOffsetS);
+    // A held view can be scrolled back until the oldest retained item reaches the left edge, and
+    // forward to the end of the recorded audio (a little past where the live roll stopped, which
+    // runs behind the audio by the display lag). The live roll always follows the clock.
+    this.minViewS = Number.isFinite(this.oldestS)
+      ? Math.min(headS, this.oldestS + this.playheadX() / PIXELS_PER_SECOND)
+      : headS;
+    this.maxViewS = Math.max(headS, this.rangeEndS);
+    this.tickMarker();
+    if (!live) this.onPlayheadTime?.(this.displayS());
     this.tickScrollbar();
   }
 
+  /** The playback position marker, wherever its time is on screen. */
+  private tickMarker(): void {
+    const x = this.markerS === null ? NaN : this.xForTime(this.markerS);
+    const show = this.clock.kind !== "playing" && x >= 0 && x <= this.playheadX(); // NaN: no marker
+    this.markerLayer.visible = show;
+    if (!show) return;
+    this.markerLine.x = x - MARKER_LINE_WIDTH / 2;
+    this.markerLine.scale.set(MARKER_LINE_WIDTH, this.app.screen.height);
+    this.markerFlag.x = x;
+  }
+
   /** The thumb spans the visible window (playheadX / PIXELS_PER_SECOND seconds) out of the whole
-   * scrollable history; at offset 0 it sits at the right end, at the maximum at the left end. */
+   * scrollable history; at the stop position it sits at the right end, at the oldest at the left end. */
   private tickScrollbar(): void {
-    const show = this.stoppedAtMs !== null && this.maxViewOffsetS > 0;
+    const span = this.scrollSpanS();
+    const show = this.clock.kind === "held" && span > 0;
     this.scrollbarLayer.visible = show;
     if (!show) return;
     const trackW = this.playheadX();
     const visibleS = trackW / PIXELS_PER_SECOND;
-    this.thumbW = Math.min(trackW, Math.max(SCROLLBAR_MIN_THUMB_PX, (trackW * visibleS) / (this.maxViewOffsetS + visibleS)));
-    this.thumbX = (1 - this.viewOffsetS / this.maxViewOffsetS) * (trackW - this.thumbW);
+    const offsetS = Math.min(span, Math.max(0, this.clock.headS() - this.clock.displayS()));
+    this.thumbW = Math.min(trackW, Math.max(SCROLLBAR_MIN_THUMB_PX, (trackW * visibleS) / (span + visibleS)));
+    this.thumbX = (1 - offsetS / span) * (trackW - this.thumbW);
     const active = this.dragMode === "thumb";
     if (this.drawnThumb.w !== this.thumbW || this.drawnThumb.active !== active) {
       this.drawnThumb = { w: this.thumbW, active };

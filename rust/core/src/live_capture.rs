@@ -25,6 +25,25 @@ use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
+/// The capture device's native format, as handed to a `CaptureTap`.
+#[derive(Clone, Copy, Debug)]
+pub struct CaptureFormat {
+    pub sample_rate: u32,
+    pub channels: usize,
+}
+
+/// Sees the raw native-rate interleaved audio before it is downmixed and
+/// resampled (the recording for playback is taken here). Called on the capture
+/// worker thread -- never inside the real-time audio callback -- from the same
+/// chunk stream the pipeline is fed, so a chunk the pipeline never sees (see
+/// `dropped_chunks`) is never seen here either, and the two stay time-aligned.
+pub trait CaptureTap: Send + 'static {
+    /// Once, before the first chunk of a capture.
+    fn begin(&mut self, format: CaptureFormat);
+    /// Interleaved f32 frames, in capture order.
+    fn chunk(&mut self, interleaved: &[f32]);
+}
+
 /// Captures loopback audio and returns a receiver of `N`-tuples of mono f32
 /// chunks (resampled to each of `rates`, in order), each covering
 /// approximately `hop_seconds` of audio. Every element of a given tuple
@@ -36,11 +55,14 @@ use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolat
 /// stage's error/latency on top of the first for whichever rate would
 /// otherwise be secondary.
 ///
+/// `tap`, if given, additionally sees every native-rate chunk first.
+///
 /// The returned Stream must be kept alive for as long as capture should
 /// continue -- dropping it stops the audio callback.
 pub fn spawn_loopback_capture<const N: usize>(
     hop_seconds: f32,
     rates: [usize; N],
+    mut tap: Option<Box<dyn CaptureTap>>,
 ) -> Result<(cpal::Stream, Receiver<[Vec<f32>; N]>)> {
     let host = cpal::default_host();
     let device = host
@@ -54,9 +76,9 @@ pub fn spawn_loopback_capture<const N: usize>(
 
     let (tx, rx) = sync_channel::<[Vec<f32>; N]>(50);
 
-    // The audio callback must never block or do heavy work -- it just
-    // downmixes to mono and hands raw native-rate samples off through a
-    // channel. Resampling (and everything downstream) happens on the
+    // The audio callback must never block or do heavy work -- it just hands
+    // the raw interleaved native-rate samples off through a channel.
+    // Downmixing, resampling (and everything downstream) happen on the
     // receiving thread instead.
     let (raw_tx, raw_rx) = sync_channel::<Vec<f32>>(200);
 
@@ -86,8 +108,7 @@ pub fn spawn_loopback_capture<const N: usize>(
         cpal::SampleFormat::F32 => device.build_input_stream(
             stream_config.clone(),
             move |data: &[f32], _| {
-                let mono = downmix(data, channels);
-                if raw_tx.try_send(mono).is_err() {
+                if raw_tx.try_send(data.to_vec()).is_err() {
                     dropped_chunks_cb.fetch_add(1, Ordering::Relaxed);
                 }
             },
@@ -98,8 +119,7 @@ pub fn spawn_loopback_capture<const N: usize>(
             stream_config.clone(),
             move |data: &[i16], _| {
                 let floats: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
-                let mono = downmix(&floats, channels);
-                if raw_tx.try_send(mono).is_err() {
+                if raw_tx.try_send(floats).is_err() {
                     dropped_chunks_cb2.fetch_add(1, Ordering::Relaxed);
                 }
             },
@@ -117,7 +137,10 @@ pub fn spawn_loopback_capture<const N: usize>(
             std::array::from_fn(|i| make_resampler(source_rate, rates[i], hop_frames_target));
         let mut pending: Vec<f32> = Vec::new();
         let mut last_reported_drops = 0usize;
-        while let Ok(mono_chunk) = raw_rx.recv() {
+        if let Some(tap) = tap.as_mut() {
+            tap.begin(CaptureFormat { sample_rate: source_rate as u32, channels });
+        }
+        while let Ok(raw_chunk) = raw_rx.recv() {
             let total_drops = dropped_chunks.load(Ordering::Relaxed);
             if total_drops != last_reported_drops {
                 eprintln!(
@@ -127,7 +150,10 @@ pub fn spawn_loopback_capture<const N: usize>(
                 last_reported_drops = total_drops;
             }
 
-            pending.extend(mono_chunk);
+            if let Some(tap) = tap.as_mut() {
+                tap.chunk(&raw_chunk);
+            }
+            pending.extend(downmix(&raw_chunk, channels));
             while pending.len() >= hop_frames_target {
                 let chunk: Vec<f32> = pending.drain(..hop_frames_target).collect();
                 // Every resampler consumes the same native-rate chunk, so

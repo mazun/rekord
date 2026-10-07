@@ -29,11 +29,14 @@ Originally prototyped in Python (deleted once Rust reached parity — see
     around `rekord_core`.
 - `rekord-piano-roll/` — Tauri + Svelte 5 (Bits UI for headless widgets) +
   Pixi.js piano-roll UI, **live mode only** (no file-input UI; use the CLI
-  for that). UI state lives in runes modules (`pipeline.svelte.ts`,
-  `settings.svelte.ts`); `pianoroll.ts` stays a plain imperative Pixi class
-  wrapped by `PianoRollView.svelte`, and note/`Started` events go straight
-  to it rather than through reactive state. Capture starts automatically
-  on launch.
+  for that), plus replay of the last 5 minutes recorded while capturing (see
+  "Recording playback" below). UI state lives in runes modules
+  (`pipeline.svelte.ts`, `settings.svelte.ts`, `transport.svelte.ts` for
+  playback); `pianoroll.ts` stays a plain imperative Pixi class wrapped by
+  `PianoRollView.svelte`, and note/`Started` events go straight to it rather
+  than through reactive state (they are also logged, with their times, in the
+  framework-free `recording.ts`). What time the playhead is at comes from the
+  clocks in `clock.ts`. Capture starts automatically on launch.
 
 See `TODO.md` for the current backlog of planned features — remove an
 item from it once it's actually implemented, rather than leaving it to
@@ -186,27 +189,78 @@ npm run tauri dev
   is the keyboard's left edge and shows the audio clock minus
   `displayLagS` = the smallest `wall - start_s` over the `NoteStarted`
   events of the first 4 s (`LAG_MEASURE_S`) + 0.01 s, measured in
-  `pianoroll.ts` and then never re-estimated. This replaced the earlier
+  `LiveClock` (`clock.ts`) and then never re-estimated. This replaced the earlier
   `total_latency_s` offset (~0.88 s, the wait for a note's *end*), which
   drew every new note off-screen to the right / under the keyboard for
   its first ~0.6 s. `total_latency_s` is still sent on `Started` but the
   piano roll ignores it. The delay is structural (block length +
   look-ahead + capture hop), not jitter, so
   anchor-and-extrapolate or rate-correction approaches both produce
-  visible warping/acceleration; a fixed offset anchored to the `Started`
+  visible warping/acceleration (for the *live* clock; playback has no such
+  delay to hide -- see "Recording playback"); a fixed offset anchored to the `Started`
   event (fired once the pipeline truly begins, not on button click —
   model load + WASAPI init add unpredictable delay) is the correct model
   and was reached only after several rounds of live-app testing. The
   window (156 frames, 5 s) and the ONNX input shapes are fixed at export;
   only the look-ahead `f` is configurable.
-- **The piano roll keeps the last 5 minutes** (`HISTORY_S` in `pianoroll.ts`:
+- **The piano roll keeps the last 5 minutes** (`HISTORY_S` in `recording.ts`:
   notes, chord lane, beat lines; off-screen items are only hidden, not
   destroyed). While capture is stopped, the wheel/trackpad, dragging the
   notes, or a draggable scrollbar along the bottom edge scrolls back through
-  it (`viewOffsetS`, subtracted in `displayS()`; the live
-  clock itself is untouched and the offset is always 0 while running).
+  it (the stopped view is a `HeldClock` whose position the user scrolls; the
+  live clock is untouched and is the only clock while running).
   Added 2026-10-07, user; the scroll speed/retention are untuned and it has
   not been tried with a real 5-minute session in the live app.
+- **Recording playback** (2026-10-07, user: a play button next to the record
+  button replays the last 5 minutes, recorded audio plus the roll's notes as
+  sine waves). Built and checked live against the sample files (a second
+  `--live` CLI hears the playback and reads the same chords, also with the
+  recorded audio muted), not yet judged by ear/eye by the user.
+  - **The recording** is a `StereoRing` (`audio_ring.rs`): native-rate stereo
+    i16, `RECORDING_HISTORY_S` = `HISTORY_S` = 300 s (~57 MB at 48 kHz), indexed
+    by absolute frame so frame `n` is pipeline time `n / rate`, i.e. a note's
+    `start_s` maps straight to a frame. It is filled by a `CaptureTap`
+    (`live_capture.rs`) on the capture worker thread -- the same chunk stream
+    the pipeline gets, so chunks lost before that are lost to both -- which is
+    why the cpal callback now sends the raw interleaved audio and the
+    downmix moved to that thread. It lives in Tauri managed state
+    (`SharedRing`), outlives `stop_capture` (which returns its
+    `RecordingInfo`) and is replaced when the next capture begins. The
+    time base is audio delivered, not wall time: loopback sends no packets
+    during silence, so a silent stretch is absent from the recording (and
+    the live roll's wall clock drifts against it -- pre-existing).
+  - **Playback** (`playback/engine.rs`): an engine thread owns the cpal output
+    stream and renders 10 ms blocks ahead; the callback only pops them and
+    applies a 5 ms fade on pause/seek. The recorded audio is copied as is
+    (linear interpolation only if the default device's rate changed), the
+    sines come from `playback/synth.rs` (pure, analytic phase, so seeking and
+    block boundaries don't matter), gains are slider values squared. The
+    frontend sends all notes at Play; which parts are heard (the legend's
+    hidden ones are muted) and the volumes can change live
+    (`playback_set_params`). Capture and playback exclude each other (the
+    loopback would record the playback): `start_capture` stops playback, and
+    Play is disabled while capturing.
+  - **Sync**: the callback reports `(pos_s, at_epoch_ms)` -- the recording
+    time audible at a wall-clock instant, from cpal's own playback latency --
+    every 50 ms, tagged with the `gen` of the play/seek command (reports of an
+    older `gen` are dropped). `PlaybackClock` anchors on the first report and
+    extrapolates at exactly 1x (`performance.timeOrigin + now()` is the same
+    wall clock as the backend's), re-anchoring only after three reports 40 ms
+    off, so the roll doesn't change speed; there is no display lag in
+    playback, the playhead is the audio being heard. Untuned: `RESYNC_S`, the
+    fade, the sine envelope/amplitude, the default volumes; a Bluetooth
+    output's latency is probably only partly reported by WASAPI.
+  - **UI**: clicking the stopped roll sets a marker (`roll.setMarker`); Play
+    starts at the marker, else at the playhead (so pause/resume and scrolling
+    work), and a recording whose playhead is within 1.5 s of its end plays
+    from the roll's left edge instead. Play/pause toggles; clicking while
+    playing seeks; the chord/key/tension/BPM readouts follow the playhead
+    (`Recording.stateAt`; `KeyChange`/`TensionsChanged` therefore carry a
+    time `t`, and the BPM is stamped with the time its beats describe). The
+    volume sliders are a popover next to Play rather than in settings, since
+    opening settings stops playback. Piano keys are highlighted at the
+    playhead in every non-live mode, including while scrolling a stopped
+    roll (previously only live).
 - **`directml` ort feature has no Linux prebuilt binary** — the full
   workspace does not link on WSL (the `core` lib alone builds fine). User
   explicitly declined making it `cfg(windows)`-conditional; this is a
@@ -388,7 +442,9 @@ instance worked; a restart fixed it, cause unknown.)
 The beat-tracking and note-transcription code are the exceptions: both have
 golden-vector tests against their Python reference in harmonica-repro (see
 Key design decisions), and beat tracking also has the replay tools above.
-Everything else has no unit test suite — validation is empirical, against the real recordings
+Everything else has no unit test suite -- except small pure-function tests for
+the playback pieces (`cargo test -p rekord_core --release --lib`: the ring buffer,
+the sine synth and the block renderer) -- validation is empirical, against the real recordings
 in `sample_audio/` (`piano_progression_C_Am_F_G.wav`,
 `piano_progression_ConG_A7sus4_FM7add9_G6.wav`,
 `piano_complex_progression_ConG_A7sus4_FM7add9_G6.wav`; with the Mix model

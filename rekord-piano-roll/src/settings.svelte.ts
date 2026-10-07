@@ -29,6 +29,19 @@ function loadAccidental(): Accidental {
   return stored === "sharp" || stored === "flat" ? stored : "auto";
 }
 
+// Playback volumes (0..1 slider positions; the backend squares them): the recorded audio, and the
+// notes sounded as sine waves on top of it. Untuned defaults.
+const VOLUME_ORIGINAL_STORAGE_KEY = "chord.volumeOriginal";
+const VOLUME_SINE_STORAGE_KEY = "chord.volumeSine";
+const DEFAULT_VOLUME_ORIGINAL = 0.8;
+const DEFAULT_VOLUME_SINE = 0.5;
+
+function loadVolume(key: string, fallback: number): number {
+  const stored = localStorage.getItem(key);
+  const value = stored === null ? NaN : Number(stored);
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
+}
+
 function loadFutureFrames(): number {
   const stored = Number(localStorage.getItem(FUTURE_FRAMES_STORAGE_KEY));
   return stored === 8 || stored === 16 ? stored : DEFAULT_FUTURE_FRAMES;
@@ -39,7 +52,14 @@ export const settings = $state({
   futureFrames: loadFutureFrames(),
   pianorollVisible: localStorage.getItem(PIANOROLL_VISIBLE_STORAGE_KEY) !== "false",
   accidental: loadAccidental(),
+  volumeOriginal: loadVolume(VOLUME_ORIGINAL_STORAGE_KEY, DEFAULT_VOLUME_ORIGINAL),
+  volumeSine: loadVolume(VOLUME_SINE_STORAGE_KEY, DEFAULT_VOLUME_SINE),
 });
+
+export function saveVolumes(): void {
+  localStorage.setItem(VOLUME_ORIGINAL_STORAGE_KEY, String(settings.volumeOriginal));
+  localStorage.setItem(VOLUME_SINE_STORAGE_KEY, String(settings.volumeSine));
+}
 
 export function saveModelSize(): void {
   localStorage.setItem(MODEL_SIZE_STORAGE_KEY, settings.modelSize);

@@ -1,4 +1,5 @@
 pub mod audio_io;
+pub mod audio_ring;
 pub mod beat_model;
 pub mod beat_tracker;
 pub mod chord_templates;
@@ -9,4 +10,5 @@ pub mod key_estimator;
 pub mod live_capture;
 pub mod melody_bass;
 pub mod pipeline;
+pub mod playback;
 pub mod spelling;

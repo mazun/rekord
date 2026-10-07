@@ -5,7 +5,8 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+use std::time::Duration;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -26,6 +27,9 @@ use crate::melody_bass::{LineTracker, NoteRoles};
 // has a small safety margin baked in (matches the figure the piano-roll UI
 // used to hardcode for this purpose).
 const LATENCY_SAFETY_MARGIN_S: f32 = 0.3;
+
+// How often a capture that is receiving no audio looks at the stop flag.
+const STOP_POLL: Duration = Duration::from_millis(100);
 
 /// Which note-transcription model to run and how. `future_frames` trades
 /// confirm latency for accuracy (see `FUTURE_FRAME_CHOICES`); `allow_directml`
@@ -168,12 +172,16 @@ pub enum PipelineEvent {
     /// the full current set (not a delta) in `extra_tensions`'s fixed
     /// canonical order (b9, 9, #9, 11, #11, b13, 13), so the frontend can
     /// diff/render directly without re-sorting.
-    TensionsChanged { tensions: Vec<String> },
+    ///
+    /// `t` is the checkpoint time this set was read at (audio time, like every
+    /// other timestamp here), so a replay can show it at the right position.
+    TensionsChanged { t: f32, tensions: Vec<String> },
     /// Fired independently of `ChordChange`: a key estimate can update
     /// mid-chord, and the display needs to track a modulation even across
     /// a single held chord's duration, not just at the next chord
-    /// boundary.
-    KeyChange { key_name: String },
+    /// boundary. `t` is the checkpoint time of the estimate (see
+    /// `TensionsChanged`).
+    KeyChange { t: f32, key_name: String },
     /// Every beat line at or after `from_s`, replacing the previous `BeatLines` over that
     /// range (lines before `from_s` are unchanged and already final). Three layers of the
     /// same beats at increasing delay and confidence (see beat_tracker.rs):
@@ -514,6 +522,7 @@ impl ChordStabilizer {
         };
         if new_tensions != self.tensions {
             on_event(PipelineEvent::TensionsChanged {
+                t,
                 tensions: new_tensions.iter().map(|s| s.to_string()).collect(),
             });
             self.tensions = new_tensions;
@@ -590,7 +599,7 @@ pub fn report_new_chords(
         if let Some(key) = current_key {
             let key_name = key.name(accidental);
             if Some(&key_name) != last_key_name.as_ref() {
-                on_event(PipelineEvent::KeyChange { key_name: key_name.clone() });
+                on_event(PipelineEvent::KeyChange { t, key_name: key_name.clone() });
                 *last_key_name = Some(key_name);
             }
         }
@@ -637,7 +646,9 @@ pub fn emit_confirmed_notes(
 /// `Started` event. Shared by the CLI's `--live` mode and any other
 /// frontend driving the same pipeline (e.g. a GUI, which can flip `stop`
 /// from a "Stop" button to end the session early -- checked once per hop,
-/// so it stops within about one hop's worth of latency).
+/// so it stops within about one hop's worth of latency). `tap`, if given,
+/// also sees the raw native-rate stereo audio (the GUI records it for
+/// playback; see `audio_ring`).
 pub fn run_live_session(
     config: NoteModelConfig,
     hop_seconds: f32,
@@ -645,6 +656,7 @@ pub fn run_live_session(
     stop: Arc<AtomicBool>,
     key_mode: Arc<Mutex<KeyMode>>,
     accidental: Arc<Mutex<Accidental>>,
+    tap: Option<Box<dyn live_capture::CaptureTap>>,
     on_event: impl FnMut(PipelineEvent) + Send,
 ) -> Result<()> {
     let on_event = Mutex::new(on_event);
@@ -656,7 +668,7 @@ pub fn run_live_session(
         let beat_grid_ref = &beat_grid;
         scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref, beat_grid_ref));
         let mut emit = |event| (on_event.lock().unwrap())(event);
-        let result = run_note_pipeline(config, hop_seconds, duration_s, &stop, &key_mode, &accidental, &beat_grid, |chunk| {
+        let result = run_note_pipeline(config, hop_seconds, duration_s, &stop, &key_mode, &accidental, &beat_grid, tap, |chunk| {
             let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
         }, &mut emit);
         drop(beat_tx); // lets the beat thread flush and exit; the scope joins it
@@ -672,6 +684,7 @@ fn run_note_pipeline(
     key_mode: &Mutex<KeyMode>,
     accidental: &Mutex<Accidental>,
     beat_grid: &Mutex<Option<BeatGrid>>,
+    tap: Option<Box<dyn live_capture::CaptureTap>>,
     mut on_chunk: impl FnMut(&[f32]),
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
@@ -686,10 +699,22 @@ fn run_note_pipeline(
     let mut elapsed = 0.0f32;
 
     let (_stream, rx) =
-        live_capture::spawn_loopback_capture(hop_seconds, [harmonica_model::SAMPLE_RATE, beat_model::SAMPLE_RATE])?;
+        live_capture::spawn_loopback_capture(hop_seconds, [harmonica_model::SAMPLE_RATE, beat_model::SAMPLE_RATE], tap)?;
     let total_latency_s = transcriber.max_note_delay_s() + hop_seconds + LATENCY_SAFETY_MARGIN_S;
     on_event(PipelineEvent::Started { total_latency_s, note_model });
-    while let Ok([note_chunk, beat_chunk]) = rx.recv() {
+    loop {
+        // Loopback delivers no packets while nothing is playing, so the stop flag is polled
+        // while waiting too -- otherwise stopping in silence would hang until sound resumed.
+        let [note_chunk, beat_chunk] = match rx.recv_timeout(STOP_POLL) {
+            Ok(chunks) => chunks,
+            Err(RecvTimeoutError::Timeout) => {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         on_chunk(&beat_chunk);
         let blocks_before = transcriber.blocks_done();
         let notes = transcriber.push(&note_chunk)?;
