@@ -1,12 +1,14 @@
 use anyhow::{bail, Context, Result};
 
 use rekord_core::audio_io;
+use rekord_core::chord_layers::{ChordEngine, ChordLayerId};
+use rekord_core::chord_templates::{extra_tensions, ChordMatch};
 use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelSize, Part};
 use rekord_core::harmonica_stream::NoteTranscriber;
 use rekord_core::key_estimator::KeyEstimator;
 use rekord_core::melody_bass::LineTracker;
 use rekord_core::pipeline::{
-    self, midi_to_name, ChordStabilizer, NoteModelConfig, NoteModelInfo, PipelineEvent, CAPTURE_HOP_S,
+    self, midi_to_name, NoteModelConfig, NoteModelInfo, PipelineEvent, CAPTURE_HOP_S,
     DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
 };
 use rekord_core::spelling::Accidental;
@@ -27,9 +29,69 @@ fn print_model_info(note_model: NoteModelInfo) {
     );
 }
 
+/// Prints the pipeline's events. Of the chord layers only `layers` are printed (the tensions
+/// are those of the first of them); the default, the settled layer, prints exactly what the
+/// single chord logic printed before the layers.
+struct Printer {
+    accidental: Accidental,
+    layers: Vec<ChordLayerId>,
+    chord: Option<ChordMatch>,
+    pcs: u16,
+    tensions: Vec<&'static str>,
+}
+
+impl Printer {
+    fn new(accidental: Accidental, layers: Vec<ChordLayerId>) -> Self {
+        Self { accidental, layers, chord: None, pcs: 0, tensions: Vec::new() }
+    }
+
+    fn update_tensions(&mut self) {
+        let now = match self.chord {
+            Some(chord) => {
+                let pcs: Vec<i32> = (0..12).filter(|pc| self.pcs & (1 << pc) != 0).collect();
+                extra_tensions(&pcs, &chord)
+            }
+            None => Vec::new(),
+        };
+        if now != self.tensions {
+            if !now.is_empty() {
+                println!("    tensions: {}", now.join(", "));
+            }
+            self.tensions = now;
+        }
+    }
+
+    fn print(&mut self, event: PipelineEvent) {
+        let accidental = self.accidental;
+        match event {
+            PipelineEvent::ChordLayer { layer, changes, .. } => {
+                if !self.layers.contains(&layer) {
+                    return;
+                }
+                let tag = if self.layers.len() > 1 { format!("  [{layer:?}]") } else { String::new() };
+                for c in changes {
+                    let suffix = c.roman_numeral.map(|r| format!("  ({r})")).unwrap_or_default();
+                    println!("  t={:6.2}s  chord: {}{suffix}{tag}", c.t, c.label);
+                    if layer == self.layers[0] {
+                        self.chord = c.root_pc.zip(c.quality).map(|(root_pc, quality)| ChordMatch { root_pc, quality, bass_pc: None });
+                    }
+                }
+                self.update_tensions();
+            }
+            PipelineEvent::ActiveNotes { changes } => {
+                if let Some(last) = changes.last() {
+                    self.pcs = last.pcs;
+                    self.update_tensions();
+                }
+            }
+            other => print_event(other, accidental),
+        }
+    }
+}
+
 fn print_event(event: PipelineEvent, accidental: Accidental) {
     match event {
-        PipelineEvent::Started { total_latency_s, note_model } => {
+        PipelineEvent::Started { total_latency_s, note_model, .. } => {
             println!(
                 "(model: {} on {}, look-ahead {} frames; confirm latency: {total_latency_s:.2}s)\n",
                 note_model.size,
@@ -52,18 +114,6 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
                 midi_to_name(pitch_midi, accidental)
             );
         }
-        PipelineEvent::ChordChange { t, label, roman_numeral } => {
-            let suffix = roman_numeral.map(|r| format!("  ({r})")).unwrap_or_default();
-            println!("  t={t:6.2}s  chord: {label}{suffix}");
-        }
-        PipelineEvent::TensionsChanged { tensions, .. } => {
-            if !tensions.is_empty() {
-                println!("    tensions: {}", tensions.join(", "));
-            }
-        }
-        PipelineEvent::ChordRelabel { label } => {
-            println!("  chord (respelled): {label}");
-        }
         PipelineEvent::KeyChange { key_name, .. } => {
             println!("  key: {key_name}");
         }
@@ -71,6 +121,8 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
         PipelineEvent::NoteStarted { .. } => {}
         // snapshots of a moving window; run_live prints each committed line once instead
         PipelineEvent::BeatLines { .. } => {}
+        // the chord events are the Printer's
+        PipelineEvent::ChordLayer { .. } | PipelineEvent::ActiveNotes { .. } => {}
     }
 }
 
@@ -81,6 +133,7 @@ fn run_file(
     allow_directml: bool,
     hop_seconds: f32,
     accidental: Accidental,
+    chord_layers: Vec<ChordLayerId>,
 ) -> Result<()> {
     println!("Loading {audio_path} ...");
     let audio = audio_io::load_audio(audio_path, harmonica_model::SAMPLE_RATE)?;
@@ -92,7 +145,8 @@ fn run_file(
     let mut transcriber = NoteTranscriber::new(model, future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut lines = LineTracker::new();
-    let mut chord_display = ChordStabilizer::new();
+    let mut chords = ChordEngine::standard();
+    let mut printer = Printer::new(accidental, chord_layers);
     let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
 
@@ -106,18 +160,17 @@ fn run_file(
         if transcriber.blocks_done() != blocks_before {
             let note_events = transcriber.note_events();
             let covered = transcriber.covered_seconds();
-            pipeline::emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, |e| print_event(e, accidental));
-            pipeline::report_new_chords(
+            pipeline::emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, |e| printer.print(e));
+            chords.advance(
                 &note_events,
                 last_covered,
                 covered,
-                &mut chord_display,
                 &mut key_estimator,
                 &pipeline::KeyMode::Auto,
                 accidental,
                 None, // file mode has no beat tracker to snap chord onsets to
                 &mut last_key_name,
-                |e| print_event(e, accidental),
+                |e| printer.print(e),
             );
             last_covered = covered;
         }
@@ -127,24 +180,30 @@ fn run_file(
     // note, exactly as the reference does over a whole file.
     let final_notes = transcriber.finish()?;
     let final_note_events = transcriber.note_events();
-    pipeline::emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, |e| print_event(e, accidental));
-    pipeline::report_new_chords(
+    pipeline::emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, |e| printer.print(e));
+    chords.advance(
         &final_note_events,
         last_covered,
         transcriber.covered_seconds(),
-        &mut chord_display,
         &mut key_estimator,
         &pipeline::KeyMode::Auto,
         accidental,
         None,
         &mut last_key_name,
-        |e| print_event(e, accidental),
+        |e| printer.print(e),
     );
+    chords.finish(transcriber.covered_seconds(), accidental, |e| printer.print(e));
 
     Ok(())
 }
 
-fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>, accidental: Accidental) -> Result<()> {
+fn run_live(
+    config: NoteModelConfig,
+    hop_seconds: f32,
+    duration_s: Option<f32>,
+    accidental: Accidental,
+    chord_layers: Vec<ChordLayerId>,
+) -> Result<()> {
     println!("Listening to default speaker output via loopback capture ...");
     match duration_s {
         Some(d) => println!("Will stop after {d:.1}s (Ctrl+C to stop earlier)\n"),
@@ -154,6 +213,7 @@ fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>, 
     let key_mode = std::sync::Arc::new(std::sync::Mutex::new(pipeline::KeyMode::Auto));
     let accidental_setting = std::sync::Arc::new(std::sync::Mutex::new(accidental));
     let mut printed_until = f32::NEG_INFINITY;
+    let mut printer = Printer::new(accidental, chord_layers);
     pipeline::run_live_session(config, hop_seconds, duration_s, never_stop, key_mode, accidental_setting, None, move |event| {
         if let PipelineEvent::BeatLines { committed, .. } = &event {
             let from = printed_until;
@@ -162,7 +222,7 @@ fn run_live(config: NoteModelConfig, hop_seconds: f32, duration_s: Option<f32>, 
                 printed_until = line.t;
             }
         }
-        print_event(event, accidental)
+        printer.print(event)
     })
 }
 
@@ -176,6 +236,7 @@ fn main() -> Result<()> {
     let mut accidental = Accidental::Auto;
     let mut live = false;
     let mut duration: Option<f32> = None;
+    let mut chord_layers = vec![ChordLayerId::Settled];
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -206,6 +267,16 @@ fn main() -> Result<()> {
                 let value = args.get(i).context("--accidental expects auto, sharp or flat")?;
                 accidental = value.parse()?;
             }
+            "--chord-layer" => {
+                i += 1;
+                let value = args.get(i).context("--chord-layer expects instant, settled or all")?;
+                chord_layers = match value.as_str() {
+                    "instant" => vec![ChordLayerId::Instant],
+                    "settled" => vec![ChordLayerId::Settled],
+                    "all" => vec![ChordLayerId::Settled, ChordLayerId::Instant],
+                    other => bail!("--chord-layer expects instant, settled or all, got {other}"),
+                };
+            }
             "--cpu" => allow_directml = false,
             "--live" => live = true,
             "--duration" => {
@@ -224,11 +295,11 @@ fn main() -> Result<()> {
 
     if live {
         let config = NoteModelConfig { size, future_frames, allow_directml };
-        run_live(config, hop, duration, accidental)
+        run_live(config, hop, duration, accidental, chord_layers)
     } else {
         let audio_file = audio_file.context(
-            "usage: rekord_engine <audio_file> [--size small|medium|large|mix] [--future 8|16] [--accidental auto|sharp|flat] [--cpu] [--hop 0.064]",
+            "usage: rekord_engine <audio_file> [--size small|medium|large|mix] [--future 8|16] [--accidental auto|sharp|flat] [--chord-layer instant|settled|all] [--cpu] [--hop 0.064]",
         )?;
-        run_file(&audio_file, size, future_frames, allow_directml, hop, accidental)
+        run_file(&audio_file, size, future_frames, allow_directml, hop, accidental, chord_layers)
     }
 }

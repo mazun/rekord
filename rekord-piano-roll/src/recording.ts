@@ -1,5 +1,7 @@
 import { BpmTracker } from "./bpm";
+import { ChordLane, type ChordLayerEvent } from "./chordlane";
 import type { BeatLines, ConfirmedNote, NotePart, StartedNote } from "./pianoroll";
+import { tensionsFor, type ChordVocabulary } from "./tensions";
 
 // How much of the past is kept (notes, chords, beat lines, and on the backend the audio itself:
 // RECORDING_HISTORY_S in audio_ring.rs) so a stopped roll can be scrolled back through it and
@@ -52,12 +54,11 @@ export class Timeline<T> {
 
 /** The pipeline events a recording is made of (see `PipelineEvent` in pipeline.svelte.ts). */
 export type RecordableEvent =
-  | { type: "Started" }
+  | { type: "Started"; chord_vocabulary: ChordVocabulary }
   | ({ type: "NoteStarted" } & StartedNote)
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
-  | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
-  | { type: "ChordRelabel"; label: string }
-  | { type: "TensionsChanged"; t: number; tensions: string[] }
+  | ({ type: "ChordLayer" } & ChordLayerEvent)
+  | { type: "ActiveNotes"; changes: { t: number; pcs: number }[] }
   | { type: "KeyChange"; t: number; key_name: string }
   | ({ type: "BeatLines" } & BeatLines);
 
@@ -102,13 +103,18 @@ const MIN_PLAYABLE_S = 0.2;
 const PRUNE_EVERY = 256;
 
 /** Everything a session reported, with times, so it can be replayed: the notes (what the
- * piano roll draws and the synth plays) and the chord/key/tension/tempo readouts at any time.
+ * piano roll draws and the synth plays) and the chord/key/tension/tempo readouts at any time. The
+ * chords are the lane composed from the chord layers (`ChordLane`); the readout shows its newest
+ * segment live and the one at the playhead when replaying.
  * The one reducer for all of it is `apply`; the live display and the replay read the same
  * logs through `stateAt`. (The beat lines and the drawn notes themselves stay in the roll.) */
 export class Recording {
-  private chords = new Timeline<{ label: string; roman: string | null }>();
+  readonly lane = new ChordLane();
   private keys = new Timeline<string>();
-  private tensions = new Timeline<string[]>();
+  /** The pitch classes sounding (bit `pc` set), from the backend's `ActiveNotes`. */
+  private actives = new Timeline<number>();
+  /** The chord table the tensions are computed from, sent on `Started`. */
+  private vocabulary: ChordVocabulary | null = null;
   private bpms = new Timeline<number | null>();
   private bpmTracker = new BpmTracker();
   private notes: RecordedNote[] = [];
@@ -124,6 +130,7 @@ export class Recording {
     switch (event.type) {
       case "Started":
         this.clear();
+        this.vocabulary = event.chord_vocabulary;
         break;
       case "NoteStarted": {
         const note: RecordedNote = { ...event, end_s: null };
@@ -144,18 +151,13 @@ export class Recording {
         this.see(event.end_s);
         break;
       }
-      case "ChordChange":
-        this.chords.append(event.t, { label: event.label, roman: event.roman_numeral });
-        this.see(event.t);
+      case "ChordLayer":
+        this.lane.apply(event);
+        this.see(event.decided_s);
         break;
-      case "ChordRelabel": {
-        const last = this.chords.last();
-        if (last) this.chords.replaceLast({ ...last, label: event.label });
-        break;
-      }
-      case "TensionsChanged":
-        this.tensions.append(event.t, event.tensions);
-        this.see(event.t);
+      case "ActiveNotes":
+        for (const c of event.changes) this.actives.append(c.t, c.pcs);
+        this.see(event.changes[event.changes.length - 1]?.t ?? 0);
         break;
       case "KeyChange":
         this.keys.append(event.t, event.key_name);
@@ -179,9 +181,9 @@ export class Recording {
   }
 
   private clear(): void {
-    this.chords.clear();
+    this.lane.clear();
     this.keys.clear();
-    this.tensions.clear();
+    this.actives.clear();
     this.bpms.clear();
     this.bpmTracker.reset();
     this.notes = [];
@@ -195,12 +197,16 @@ export class Recording {
 
   /** The readouts as they were at audio time `t` (Infinity: the latest). */
   stateAt(t: number): DisplayState {
-    const chord = this.chords.at(t);
+    const chord = this.lane.at(t)?.chord;
+    const tensions =
+      chord && this.vocabulary && chord.root_pc !== null && chord.quality !== null
+        ? tensionsFor(this.vocabulary, this.actives.at(t) ?? 0, chord.root_pc, chord.quality)
+        : [];
     return {
       chord: chord?.label ?? null,
-      roman: chord?.roman ?? null,
+      roman: chord?.roman_numeral ?? null,
       keyName: this.keys.at(t) ?? null,
-      tensions: this.tensions.at(t) ?? [],
+      tensions,
       bpm: this.bpms.at(t) ?? null,
     };
   }
@@ -223,9 +229,9 @@ export class Recording {
     this.sincePrune = 0;
     const cut = this.newestS - HISTORY_S;
     this.notes = this.notes.filter((n) => n.end_s === null || n.end_s >= cut);
-    this.chords.pruneBefore(cut);
+    this.lane.pruneBefore(cut);
     this.keys.pruneBefore(cut);
-    this.tensions.pruneBefore(cut);
+    this.actives.pruneBefore(cut);
     this.bpms.pruneBefore(cut);
   }
 }

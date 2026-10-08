@@ -3,7 +3,6 @@
 //! `--live` mode, a future GUI) can drive the exact same logic without
 //! duplicating it -- only what happens with each event differs.
 
-use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::time::Duration;
@@ -13,14 +12,17 @@ use anyhow::Result;
 
 use crate::beat_model::{self, BeatModel};
 use crate::beat_tracker::{BeatGrid, BeatTracker};
-use crate::chord_templates::{extra_tensions, match_chroma, ChordMatch};
+use crate::chord_layers::{ActiveChange, ChordEngine, ChordLayerId, LayerChord};
+use crate::chord_templates::{self, ChordVocabulary};
 use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
 use crate::harmonica_model::{self, Device, HarmonicaModel, ModelSize, Part};
 use crate::harmonica_stream::NoteTranscriber;
-use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
+use crate::key_estimator::{KeyEstimate, KeyEstimator};
 use crate::spelling::{note_name, Accidental};
 use crate::live_capture;
 use crate::melody_bass::{LineTracker, NoteRoles};
+
+pub use crate::chord_layers::ChordAt;
 
 // Extra fudge for IPC/processing overhead and jitter on top of the
 // pipeline's own structural confirm delay, so the reported total_latency_s
@@ -120,7 +122,10 @@ pub enum PipelineEvent {
     /// anchor its display clock at this event using this figure directly,
     /// not hardcode or re-derive it. `note_model` is the model actually
     /// loaded, after any DirectML->CPU fallback (see `HarmonicaModel::load`).
-    Started { total_latency_s: f32, note_model: NoteModelInfo },
+    ///
+    /// `chord_vocabulary` is the chord table the tensions are computed from on the frontend (see
+    /// `ActiveNotes`), so that table lives in one place, `chord_templates.rs`.
+    Started { total_latency_s: f32, note_model: NoteModelInfo, chord_vocabulary: ChordVocabulary },
     /// A note whose onset is decided but which is still sounding (as far as
     /// the decoder knows); `NoteConfirmed` follows with the same `start_s`,
     /// `pitch_midi` and `part` once it ends. Lets the piano roll draw the note
@@ -146,41 +151,26 @@ pub enum PipelineEvent {
         melody: bool,
         bass: bool,
     },
-    /// `roman_numeral` is the chord's degree name relative to the most
-    /// recently estimated key (see `key_estimator`), or `None` if no key
-    /// estimate is confident yet (e.g. near session start).
-    ///
-    /// `t` is backdated to the earliest checkpoint consistent with this
-    /// chord already sounding (see `ChordStabilizer::observe`), not the
-    /// (later) time the hold-time gate actually let it commit, and then
-    /// snapped to the current beat grid if one is known (see
-    /// `snap_to_beat_grid`) -- so the event fires late but the rectangle
-    /// it draws doesn't start late, and lands on a clean subdivision
-    /// instead of visibly floating a few ms off of one.
-    ChordChange { t: f32, label: String, roman_numeral: Option<String> },
-    /// The still-current chord spelled again after the user switched the sharp/flat
-    /// setting mid-session (its time and Roman numeral are unchanged); chords already
-    /// scrolled into the past keep the spelling they had.
-    ChordRelabel { label: String },
-    /// Notes currently sounding that fall outside the chord named by the
-    /// last `ChordChange` -- e.g. a melodic passing tone over a held
-    /// chord. Unlike `ChordChange` (gated by `CHORD_MIN_HOLD_S`'s hold-time
-    /// hysteresis so melody notes can't pull the label around), this
-    /// reacts immediately to the raw active-note set: flagging a
-    /// transient extension *as* transient, rather than either hiding it
-    /// or letting it hijack the main label, is the whole point. Always
-    /// the full current set (not a delta) in `extra_tensions`'s fixed
-    /// canonical order (b9, 9, #9, 11, #11, b13, 13), so the frontend can
-    /// diff/render directly without re-sorting.
-    ///
-    /// `t` is the checkpoint time this set was read at (audio time, like every
-    /// other timestamp here), so a replay can show it at the right position.
-    TensionsChanged { t: f32, tensions: Vec<String> },
-    /// Fired independently of `ChordChange`: a key estimate can update
+    /// What one chord layer newly decided (see `chord_layers` and docs/chord-layers.md): the chords
+    /// it says begin at the given times, and `decided_s`, the time up to which it has decided
+    /// everything (all `changes` are at or before it, and nothing before it is ever revised).
+    /// Layers differ in how long they wait before deciding, so a later layer corrects an earlier
+    /// one; the frontend shows each layer's decisions for the span only it has decided. A change
+    /// with the same `t` as the layer's previous one replaces it (the chord respelled after the
+    /// sharp/flat setting changed).
+    ChordLayer { layer: ChordLayerId, changes: Vec<LayerChord>, decided_s: f32 },
+    /// The pitch classes sounding (every part, the sung melody included) from each `t` on, sent
+    /// when the set changes. The tensions over the shown chord are read from this: the notes
+    /// outside the chord's own template, in the fixed canonical order (b9, 9, #9, 11, #11, b13,
+    /// 13). Unlike the chord (decided only after a window and a hold), a melody note shows up as a
+    /// tension at once -- flagging a transient extension *as* transient, rather than either hiding
+    /// it or letting it hijack the label, is the point.
+    ActiveNotes { changes: Vec<ActiveChange> },
+    /// Fired independently of the chords: a key estimate can update
     /// mid-chord, and the display needs to track a modulation even across
     /// a single held chord's duration, not just at the next chord
-    /// boundary. `t` is the checkpoint time of the estimate (see
-    /// `TensionsChanged`).
+    /// boundary. `t` is the checkpoint time of the estimate (audio time,
+    /// like every other timestamp here).
     KeyChange { t: f32, key_name: String },
     /// Every beat line at or after `from_s`, replacing the previous `BeatLines` over that
     /// range (lines before `from_s` are unchanged and already final). Three layers of the
@@ -284,382 +274,6 @@ pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(
     }
 }
 
-// A brief gap with no active note (both hands lifting between chords, a
-// note ending slightly early) shouldn't flash "(silence)" -- only declare
-// real silence once nothing has sounded for this long. Chosen independently
-// of Harmonica's own note-emission delay (see
-// `NoteTranscriber::max_note_delay_s`), not derived from it -- just an
-// empirically reasonable gap length.
-const SILENCE_HOLD_S: f32 = 0.5;
-
-/// What's sounding at time t, if anything conclusive can be said. Kept as
-/// the matched `ChordMatch` (not just its formatted label) so a caller can
-/// also derive a Roman-numeral degree from `root_pc`/`quality` without
-/// reparsing a display string.
-#[derive(Clone, Copy, PartialEq)]
-pub enum ChordAt {
-    Silence,
-    Match(ChordMatch),
-}
-
-impl ChordAt {
-    pub fn label(&self, key: Option<&KeyEstimate>, mode: Accidental) -> String {
-        match self {
-            ChordAt::Silence => "(silence)".to_string(),
-            ChordAt::Match(m) => m.label(key, mode),
-        }
-    }
-}
-
-/// One checkpoint's raw reading: every currently-active pitch class (used
-/// for tension detection regardless of whether a chord could be named),
-/// plus the chord signal itself: Some(Silence) if nothing has sounded
-/// recently, None if notes are present (or sounded within SILENCE_HOLD_S)
-/// but nothing matched well enough / it's just a brief gap (ambiguous --
-/// the caller should just keep showing the prior label).
-struct ActiveNow {
-    active_pitch_classes: Vec<i32>,
-    chord: Option<ChordAt>,
-}
-
-// The chord is named from the notes of the last this-many seconds (weighted by how long each
-// sounded), not from the instant's set: a passing tone or a half-released chord no longer
-// flips the name, while the stabilizer's hold and the weighting still let a real change win
-// within about half a window. Swept on RWC-Pop (0.5 s beat 0.25 and 1 s).
-const CHORD_WINDOW_S: f32 = 0.5;
-// Sub-steps over the window when there is no bass part and the bass is taken as the lowest
-// sounding note at each of them.
-const BASS_FALLBACK_STEPS: usize = 10;
-
-/// How long each pitch class sounded in `[t - CHORD_WINDOW_S, t]` among the non-vocal notes, and
-/// the same for the bass: the bass part's notes if it has any in the window, otherwise (single-part
-/// models) the lowest sounding note at evenly spaced moments.
-fn window_chroma(note_events: &[NoteEvent], t: f32) -> ([f32; 12], [f32; 12]) {
-    let t0 = t - CHORD_WINDOW_S;
-    let mut all = [0.0f32; 12];
-    let mut bass = [0.0f32; 12];
-    let mut has_bass_part = false;
-    for &(s, e, p, _a, part) in note_events {
-        if part == Part::Vocal {
-            continue;
-        }
-        let overlap = e.min(t) - s.max(t0);
-        if overlap <= 0.0 {
-            continue;
-        }
-        let pc = p.rem_euclid(12) as usize;
-        all[pc] += overlap;
-        if part == Part::Bass {
-            bass[pc] += overlap;
-            has_bass_part = true;
-        }
-    }
-    if !has_bass_part {
-        let step = CHORD_WINDOW_S / BASS_FALLBACK_STEPS as f32;
-        for k in 0..BASS_FALLBACK_STEPS {
-            let tau = t0 + (k as f32 + 0.5) * step;
-            let lowest = note_events
-                .iter()
-                .filter(|&&(s, e, _p, _a, part)| part != Part::Vocal && s <= tau && e >= tau)
-                .map(|&(_s, _e, p, ..)| p)
-                .min();
-            if let Some(p) = lowest {
-                bass[p.rem_euclid(12) as usize] += step;
-            }
-        }
-    }
-    (all, bass)
-}
-
-/// Notes sounding at time t. Note ends are taken as exact: Harmonica's
-/// decode closes a note on the frame its sustain drops, so there's no
-/// grace period after it (basic-pitch needed 0.2 s for its ragged ends,
-/// which with Harmonica only let the previous chord linger into the next
-/// as a mixed chord, e.g. Am7 for C -> Am).
-///
-/// With the Mix model the chord is named from the accompaniment only (bass
-/// and other): the sung melody is mostly non-chord tones, so it's kept out
-/// of the match and only reaches `active_pitch_classes`, i.e. shows up as a
-/// tension over the displayed chord. Vocal-only moments therefore read as
-/// silence for the chord lane. Single-part models have no vocal part, so
-/// they behave as before.
-fn evaluate_active(note_events: &[NoteEvent], t: f32, key: Option<&KeyEstimate>) -> ActiveNow {
-    let sounding = |s: f32, e: f32| s <= t + 1e-6 && e >= t;
-    let active: Vec<i32> = note_events.iter().filter(|&&(s, e, ..)| sounding(s, e)).map(|&(_s, _e, p, ..)| p).collect();
-    let any_chord_note = note_events.iter().any(|&(s, e, _p, _a, part)| sounding(s, e) && part != Part::Vocal);
-    let pitch_classes: Vec<i32> = active.iter().map(|p| p.rem_euclid(12)).collect();
-    if !any_chord_note {
-        let recently_sounding = note_events
-            .iter()
-            .any(|&(s, e, _p, _a, part)| part != Part::Vocal && s <= t + 1e-6 && e >= t - SILENCE_HOLD_S);
-        return ActiveNow {
-            active_pitch_classes: pitch_classes,
-            chord: if recently_sounding { None } else { Some(ChordAt::Silence) },
-        };
-    }
-    let (all, bass) = window_chroma(note_events, t);
-    let chord = match_chroma(&all, &bass, key).map(ChordAt::Match);
-    ActiveNow { active_pitch_classes: pitch_classes, chord }
-}
-
-// A candidate chord must be the best match continuously for this long
-// before it actually replaces the displayed one -- otherwise a fast
-// melodic passing tone (typically shorter than this: roughly a 16th note
-// at a brisk tempo) would flip the label to whatever it briefly forms
-// with the held chord, then flip back, for every such note. Deliberately
-// far shorter than KeyEstimator's MIN_HOLD_S (2.0s): a real chord change
-// legitimately happens every beat or faster, so this only needs to
-// outlast a single passing note, not a phrase. No published source
-// prescribes this for real-time chord tracking (the classic template-
-// matching literature scores fixed, already-segmented chords, not a live
-// stream) -- start here and tune empirically against sample_audio and
-// live playing, same as WINDOW_S/SWITCH_MARGIN in key_estimator.rs. 0.25 s (was 0.15 s before
-// the chord was named from a window) after a sweep on RWC-Pop: it removed a third of the
-// too-short segments; 0.3 s lost root accuracy.
-const CHORD_MIN_HOLD_S: f32 = 0.25;
-
-// A chord that just began only wins once it fills about half of the `CHORD_WINDOW_S` window, so
-// the time it first led is that much later than the notes' real onset; its displayed start is
-// moved back by this (swept on RWC-Pop: 0.25-0.35 s were equally good, 0 lost .07 majmin).
-const CHORD_BACKDATE_S: f32 = 0.3;
-
-// A committed chord's (backdated) onset is snapped to the nearest point on this subdivision
-// of the current `BeatGrid` (see `BeatTracker::beat_grid`), once one is known -- fine enough
-// (a sixteenth of a beat) that a legitimate off-beat onset (an eighth-note anticipation, a
-// syncopated pickup) still lands on its own grid line rather than being dragged all the way
-// to the nearest beat, but coarse enough to absorb the residual onset-detection/hold-time
-// slop `since` still carries. No published source prescribes this either -- start here and
-// tune empirically against live playing, same as CHORD_MIN_HOLD_S/WINDOW_S/SWITCH_MARGIN.
-const CHORD_SNAP_SUBDIVISIONS_PER_BEAT: f64 = 4.0; // sixteenth notes
-
-/// Nearest point on `grid`'s subdivision lattice (see `CHORD_SNAP_SUBDIVISIONS_PER_BEAT`) to
-/// `t`, or `t` unchanged if no grid is known yet (session start, or beat tracking disabled/
-/// unavailable -- matches file mode, which never has one). Snapped once, at commit time, and
-/// never revised afterward even if the grid estimate is later corrected: such corrections are
-/// rare in practice (confirmed live, 2026-09-27), and letting a displayed chord's start move
-/// after the fact would reintroduce the same kind of visible jitter the piano-roll clock's
-/// fixed-offset design (see CLAUDE.md, "Piano-roll clock") already avoids elsewhere.
-fn snap_to_beat_grid(t: f32, grid: Option<BeatGrid>) -> f32 {
-    let Some(grid) = grid else { return t };
-    if !(grid.period_s > 0.0) {
-        return t; // guards against a degenerate/zero period rather than trusting it blindly
-    }
-    let step = grid.period_s / CHORD_SNAP_SUBDIVISIONS_PER_BEAT;
-    let k = ((t as f64 - grid.anchor_s) / step).round();
-    (grid.anchor_s + k * step) as f32
-}
-
-/// Stabilizes the displayed chord against brief melodic interference
-/// (`CHORD_MIN_HOLD_S` hold-time hysteresis, mirroring the proven
-/// margin/hold pattern in `KeyEstimator`) while separately surfacing
-/// whatever's sounding outside that stabilized chord as `TensionsChanged`
-/// events -- so a melody note doesn't just get silently absorbed or
-/// briefly hijack the label, it shows up as what it is.
-pub struct ChordStabilizer {
-    displayed: Option<ChordAt>,
-    // The best-scoring challenger to `displayed`, and when it first took
-    // the lead -- reset whenever the leader changes, so a switch only
-    // commits once the *same* candidate has led continuously for
-    // CHORD_MIN_HOLD_S, not just cumulatively (same reasoning as
-    // KeyEstimator::pending).
-    pending: Option<(ChordAt, f32)>,
-    tensions: Vec<&'static str>,
-    // The sharp/flat setting `displayed` was last labeled with (see `relabel`).
-    labeled_with: Option<Accidental>,
-}
-
-impl ChordStabilizer {
-    pub fn new() -> Self {
-        Self { displayed: None, pending: None, tensions: Vec::new(), labeled_with: None }
-    }
-
-    fn commit(
-        &mut self,
-        candidate: ChordAt,
-        t: f32,
-        current_key: Option<KeyEstimate>,
-        accidental: Accidental,
-        beat_grid: Option<BeatGrid>,
-        on_event: &mut impl FnMut(PipelineEvent),
-    ) {
-        let roman = match (&candidate, current_key) {
-            (ChordAt::Match(m), Some(key)) => Some(roman_numeral(&key, m)),
-            _ => None,
-        };
-        let t = snap_to_beat_grid(t, beat_grid);
-        let label = candidate.label(current_key.as_ref(), accidental);
-        on_event(PipelineEvent::ChordChange { t, label, roman_numeral: roman });
-        self.displayed = Some(candidate);
-        self.labeled_with = Some(accidental);
-        self.pending = None;
-    }
-
-    /// Re-announces the displayed chord when the sharp/flat setting changed since it was
-    /// labeled, so the live display follows a mid-session switch immediately instead of at
-    /// the next chord change.
-    fn relabel(&mut self, current_key: Option<KeyEstimate>, accidental: Accidental, on_event: &mut impl FnMut(PipelineEvent)) {
-        if self.labeled_with.is_none() || self.labeled_with == Some(accidental) {
-            return;
-        }
-        if let Some(chord @ ChordAt::Match(_)) = self.displayed {
-            on_event(PipelineEvent::ChordRelabel { label: chord.label(current_key.as_ref(), accidental) });
-        }
-        self.labeled_with = Some(accidental);
-    }
-
-    /// Feed one checkpoint's active-pitch-class reading (see
-    /// `evaluate_active`), applying hold-time hysteresis before switching
-    /// the displayed chord and emitting `TensionsChanged` for whatever's
-    /// active outside it. Call once per checkpoint, in timestamp order.
-    fn observe(
-        &mut self,
-        evaluated: ActiveNow,
-        t: f32,
-        current_key: Option<KeyEstimate>,
-        accidental: Accidental,
-        beat_grid: Option<BeatGrid>,
-        mut on_event: impl FnMut(PipelineEvent),
-    ) {
-        // A chord's notes don't release simultaneously -- confirmed via
-        // real-world testing (2026-09-04): as a chord decays, an inner
-        // voice (the 3rd) commonly fades out first, briefly leaving just
-        // root+5th audible before the rest follows. That bare dyad is
-        // definitionally the tail of the *same* chord, not a new one, so
-        // (unlike an ordinary candidate) no amount of hold-time should
-        // ever let it overwrite the display -- it can legitimately
-        // outlast CHORD_MIN_HOLD_S by persisting for the rest of the
-        // chord's decay. Only guards a same-root downgrade to "5"; a
-        // different root (or an actual power chord struck from silence,
-        // where `self.displayed` is still `None`) is unaffected.
-        let is_decay_to_bare_fifth = matches!(
-            (self.displayed, evaluated.chord),
-            (Some(ChordAt::Match(cur)), Some(ChordAt::Match(cand)))
-                if cand.quality == "5" && cand.root_pc == cur.root_pc && cur.quality != "5"
-        );
-        if let Some(candidate) = evaluated.chord {
-            if !is_decay_to_bare_fifth {
-                match self.displayed {
-                    None => self.commit(candidate, t, current_key, accidental, beat_grid, &mut on_event),
-                    Some(cur) if cur == candidate => self.pending = None,
-                    Some(_) => match self.pending {
-                        Some((cand, since)) if cand == candidate => {
-                            // Backdated to `since`, not `t`: `since` is the earliest
-                            // checkpoint at which this exact candidate already won every
-                            // re-evaluation, i.e. the earliest time consistent with the
-                            // notes actually sounding -- CHORD_MIN_HOLD_S is a decision
-                            // gate against melodic flicker, not a claim about when the
-                            // chord itself began, so it shouldn't also push back the
-                            // displayed start time (mirrors NoteConfirmed, which already
-                            // reports a note's true onset despite arriving once it ends).
-                            // `commit` then snaps it to the beat grid on top of that.
-                            if t - since >= CHORD_MIN_HOLD_S {
-                                self.commit(candidate, since - CHORD_BACKDATE_S, current_key, accidental, beat_grid, &mut on_event);
-                            }
-                        }
-                        _ => self.pending = Some((candidate, t)),
-                    },
-                }
-            }
-        }
-
-        // Tensions are judged against whatever's actually displayed right
-        // now -- including mid-hold, before `pending` has won. That's
-        // deliberate: it's exactly what keeps a melody note that's
-        // "losing" the hold-time race visible as a tension instead of
-        // vanishing until (if ever) it wins outright.
-        let new_tensions = match self.displayed {
-            Some(ChordAt::Match(chord)) => extra_tensions(&evaluated.active_pitch_classes, &chord),
-            _ => Vec::new(),
-        };
-        if new_tensions != self.tensions {
-            on_event(PipelineEvent::TensionsChanged {
-                t,
-                tensions: new_tensions.iter().map(|s| s.to_string()).collect(),
-            });
-            self.tensions = new_tensions;
-        }
-    }
-}
-
-// A held chord needs a *later* checkpoint to exist at all before
-// CHORD_MIN_HOLD_S's hold-time can ever be judged satisfied -- onset-only
-// checkpoints sufficed before that hold-time existed (a genuine change
-// was always self-evidently onset-triggered), but a clean block chord
-// (every note onsetting together, then nothing else until the next
-// chord's onset) generates only one tightly-clustered checkpoint and
-// then silence until whatever triggers the next one. Harmonica's streaming
-// blocks complete every 0.256s (BLOCK_FRAMES in harmonica_model.rs) -- far
-// finer than the basic-pitch extractor's old windows (which completed in
-// jumps up to ~1.6s, where this was originally found and fixed) -- but a
-// solid block chord with no follow-up onset before the next chord could
-// still go unconfirmed for the rest of its duration without this grid. The
-// grid step just needs to be smaller than CHORD_MIN_HOLD_S; this has ample
-// margin either way.
-const CHORD_CHECKPOINT_GRID_S: f32 = 0.05;
-
-/// Re-evaluate the chord at every note onset within the newly covered
-/// span, plus a periodic grid (see `CHORD_CHECKPOINT_GRID_S`) so a held
-/// chord always gets enough checkpoints to clear `CHORD_MIN_HOLD_S`.
-/// `beat_grid` is the beat tracker's current grid, if any is known yet
-/// (see `BeatTracker::beat_grid`) -- `None` in file mode, which has no
-/// beat tracker at all, and early in a live session before one settles.
-pub fn report_new_chords(
-    note_events: &[NoteEvent],
-    prev_covered: f32,
-    covered: f32,
-    chord_display: &mut ChordStabilizer,
-    key_estimator: &mut KeyEstimator,
-    key_mode: &KeyMode,
-    accidental: Accidental,
-    beat_grid: Option<BeatGrid>,
-    last_key_name: &mut Option<String>,
-    mut on_event: impl FnMut(PipelineEvent),
-) {
-    let mut checkpoints: BTreeSet<i64> = note_events
-        .iter()
-        .map(|&(s, ..)| s)
-        .filter(|&s| s > prev_covered && s <= covered)
-        .map(|s| (s * 1000.0).round() as i64)
-        .collect();
-    let mut grid_t = (prev_covered / CHORD_CHECKPOINT_GRID_S).floor() * CHORD_CHECKPOINT_GRID_S;
-    loop {
-        grid_t += CHORD_CHECKPOINT_GRID_S;
-        if grid_t > covered {
-            break;
-        }
-        if grid_t > prev_covered {
-            checkpoints.insert((grid_t * 1000.0).round() as i64);
-        }
-    }
-    checkpoints.insert((covered * 1000.0).round() as i64);
-
-    for t_key in checkpoints {
-        let t = t_key as f32 / 1000.0;
-        // Re-evaluate the key first: it can update mid-chord, and doing
-        // this before the chord check lets a just-updated key inform this
-        // same checkpoint's Roman-numeral label instead of lagging a step.
-        // The estimator is still fed/advanced in Manual mode (its history
-        // and hysteresis stay warm for whenever the user switches back to
-        // Auto) -- only its output is ignored while a manual pick is in
-        // effect.
-        let auto_key = key_estimator.estimate(t);
-        let current_key = match key_mode {
-            KeyMode::Auto => auto_key,
-            KeyMode::Manual(key) => Some(*key),
-        };
-        if let Some(key) = current_key {
-            let key_name = key.name(accidental);
-            if Some(&key_name) != last_key_name.as_ref() {
-                on_event(PipelineEvent::KeyChange { t, key_name: key_name.clone() });
-                *last_key_name = Some(key_name);
-            }
-        }
-        chord_display.relabel(current_key, accidental, &mut on_event);
-        let evaluated = evaluate_active(note_events, t, current_key.as_ref());
-        chord_display.observe(evaluated, t, current_key, accidental, beat_grid, &mut on_event);
-    }
-}
-
 /// Emit one `NoteConfirmed` per finished note (whatever a `NoteTranscriber`
 /// `push`/`finish` returned -- each note comes out exactly once), feeding
 /// each through `key_estimator` first. Shared by the per-block path and the
@@ -744,7 +358,7 @@ fn run_note_pipeline(
     let mut transcriber = NoteTranscriber::new(model, config.future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut lines = LineTracker::new();
-    let mut chord_display = ChordStabilizer::new();
+    let mut chords = ChordEngine::standard();
     let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
     let mut elapsed = 0.0f32;
@@ -752,7 +366,7 @@ fn run_note_pipeline(
     let (_stream, rx) =
         live_capture::spawn_loopback_capture(hop_seconds, [harmonica_model::SAMPLE_RATE, beat_model::SAMPLE_RATE], tap)?;
     let total_latency_s = transcriber.max_note_delay_s() + hop_seconds + LATENCY_SAFETY_MARGIN_S;
-    on_event(PipelineEvent::Started { total_latency_s, note_model });
+    on_event(PipelineEvent::Started { total_latency_s, note_model, chord_vocabulary: chord_templates::vocabulary() });
     loop {
         // Loopback delivers no packets while nothing is playing, so the stop flag is polled
         // while waiting too -- otherwise stopping in silence would hang until sound resumed.
@@ -780,11 +394,10 @@ fn run_note_pipeline(
             let current_key_mode = *key_mode.lock().unwrap();
             let current_accidental = *accidental.lock().unwrap();
             let current_beat_grid = *beat_grid.lock().unwrap();
-            report_new_chords(
+            chords.advance(
                 &note_events,
                 last_covered,
                 covered,
-                &mut chord_display,
                 &mut key_estimator,
                 &current_key_mode,
                 current_accidental,
@@ -815,11 +428,10 @@ fn run_note_pipeline(
     let current_key_mode = *key_mode.lock().unwrap();
     let current_accidental = *accidental.lock().unwrap();
     let current_beat_grid = *beat_grid.lock().unwrap();
-    report_new_chords(
+    chords.advance(
         &final_note_events,
         last_covered,
         transcriber.covered_seconds(),
-        &mut chord_display,
         &mut key_estimator,
         &current_key_mode,
         current_accidental,
@@ -827,6 +439,7 @@ fn run_note_pipeline(
         &mut last_key_name,
         &mut on_event,
     );
+    chords.finish(transcriber.covered_seconds(), current_accidental, &mut on_event);
 
     Ok(())
 }

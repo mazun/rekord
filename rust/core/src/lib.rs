@@ -2,6 +2,7 @@ pub mod audio_io;
 pub mod audio_ring;
 pub mod beat_model;
 pub mod beat_tracker;
+pub mod chord_layers;
 pub mod chord_templates;
 pub mod harmonica_decode;
 pub mod harmonica_model;

@@ -48,8 +48,7 @@
           roll?.stop();
           if (info) roll?.setPlayableEnd(info.end_s);
         },
-        onChordChange: (t, label, romanNumeral) => roll?.addChordChange(t, label, romanNumeral),
-        onChordRelabel: (label) => roll?.relabelCurrentChord(label),
+        onChordLane: (update) => roll?.setChordSegments(update),
       });
       if (disposed) {
         off();

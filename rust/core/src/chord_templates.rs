@@ -115,7 +115,10 @@ fn pitch_class_set(pitches: &[i32]) -> u16 {
 /// definite 3rd, is that diatonic chord with its 3rd missing: no 3rd of either kind sounds at
 /// least `STRONG_THIRD_SHARE` strong, so it reads as the key's own major or minor triad instead.
 /// (Kept in front of the key-less result so that without a key, or on a root outside the scale,
-/// a power chord is still named as one.)
+/// a power chord is still named as one.) Without the key this guess is worth .036 majmin on
+/// RWC-Pop; while the key estimate lags a modulation it names the old key's triad instead (see
+/// `KeyEstimator::naming_key`). A 3rd read from the sung melody, or a major 7th taken as a major
+/// 3rd, overruled the key on too few chords to matter (+.001, docs/chord-layers.md section 11).
 fn diatonic_triad_for_bare_fifth(m: &mut ChordMatch, share: &[f32], key: &KeyEstimate) {
     if m.quality != "5" {
         return;
@@ -139,6 +142,19 @@ fn diatonic_triad_for_bare_fifth(m: &mut ChordMatch, share: &[f32], key: &KeyEst
 /// bass part alone (or the lowest note at each moment where there is no bass part). `None` if
 /// fewer than two pitch classes are really present, or nothing sounded at all.
 pub fn match_chroma(all: &[f32; 12], bass: &[f32; 12], key: Option<&KeyEstimate>) -> Option<ChordMatch> {
+    match_chroma_biased(all, bass, key, None, 0.0)
+}
+
+/// `match_chroma` with a bias towards the chord already shown: `prefer` (its root and quality)
+/// keeps the win unless the best template beats its score by more than `margin`. This damps
+/// flicker without waiting any time, unlike a hold. `margin <= 0` is plain `match_chroma`.
+pub fn match_chroma_biased(
+    all: &[f32; 12],
+    bass: &[f32; 12],
+    key: Option<&KeyEstimate>,
+    prefer: Option<(i32, &str)>,
+    margin: f32,
+) -> Option<ChordMatch> {
     let total: f32 = all.iter().sum();
     if total <= 0.0 {
         return None;
@@ -153,6 +169,7 @@ pub fn match_chroma(all: &[f32; 12], bass: &[f32; 12], key: Option<&KeyEstimate>
         .then(|| (0..12usize).max_by(|&a, &b| bass[a].partial_cmp(&bass[b]).unwrap()).unwrap() as i32);
 
     let mut best: Option<(ChordMatch, f32)> = None;
+    let mut preferred: Option<(ChordMatch, f32)> = None;
     for root in 0..12usize {
         for tpl in CHORD_TEMPLATES {
             let mut inside = 0.0;
@@ -170,6 +187,14 @@ pub fn match_chroma(all: &[f32; 12], bass: &[f32; 12], key: Option<&KeyEstimate>
             if best.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
                 best = Some((ChordMatch { root_pc: root as i32, quality: tpl.quality, bass_pc }, score));
             }
+            if margin > 0.0 && prefer == Some((root as i32, tpl.quality)) {
+                preferred = Some((ChordMatch { root_pc: root as i32, quality: tpl.quality, bass_pc }, score));
+            }
+        }
+    }
+    if let (Some((_, best_score)), Some((_, preferred_score))) = (best.as_ref(), preferred.as_ref()) {
+        if best_score - preferred_score < margin {
+            best = preferred;
         }
     }
     if let (Some((m, _)), Some(key)) = (best.as_mut(), key) {
@@ -214,4 +239,33 @@ pub fn extra_tensions(active_pitch_classes: &[i32], chord: &ChordMatch) -> Vec<&
         })
         .map(|&(_, name)| name)
         .collect()
+}
+
+/// The chord table as data: what the frontend needs to name the tensions over a shown chord
+/// (`extra_tensions`' computation) without keeping a copy of it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ChordVocabulary {
+    pub templates: Vec<TemplateInfo>,
+    pub tensions: Vec<TensionInfo>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct TemplateInfo {
+    pub quality: &'static str,
+    /// Semitones above the root.
+    pub intervals: Vec<i32>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct TensionInfo {
+    /// Semitones above the root.
+    pub interval: i32,
+    pub name: &'static str,
+}
+
+pub fn vocabulary() -> ChordVocabulary {
+    ChordVocabulary {
+        templates: CHORD_TEMPLATES.iter().map(|t| TemplateInfo { quality: t.quality, intervals: t.intervals.to_vec() }).collect(),
+        tensions: TENSION_NAMES.iter().map(|&(interval, name)| TensionInfo { interval, name }).collect(),
+    }
 }

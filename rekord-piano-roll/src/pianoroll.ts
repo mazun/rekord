@@ -1,4 +1,5 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
+import { planChordUpdate, type LaneSegment, type LaneUpdate } from "./chordlane";
 import { HeldClock, LiveClock, PlaybackClock, type RollClock } from "./clock";
 import { HISTORY_S } from "./recording";
 
@@ -52,15 +53,24 @@ const BEAT_MATCH_TOLERANCE_S = 0.1;
 // Time constant of every beat-line transition (layer, bar/beat, position, fade in/out).
 const BEAT_ANIM_TAU_S = 0.15;
 
-// Chord history lane (rekord_core::pipeline::ChordStabilizer, via PipelineEvent::ChordChange):
-// a strip along the top showing each stabilized chord as it scrolls past, like the notes below
-// it -- a chord's rectangle starts at its ChordChange time and, unlike a note, has no known end
-// until the *next* ChordChange arrives, so the still-current chord's right edge is redrawn at
-// the playhead every tick instead of a fixed value. Bands alternate tint solely so consecutive
-// chords read as distinct spans; it carries no other meaning. The roman numeral is repeated here
-// (already shown big in ChordDisplay.svelte) because the point of putting chords on the roll at
-// all is seeing the *progression* scroll past, and the numeral is the part of that worth reading
-// after the chord itself has scrolled away from the always-current ChordDisplay.
+// Chord history lane (rekord_core::chord_layers, composed by chordlane.ts): a strip along the top
+// showing each chord as it scrolls past, like the notes below it. The chord layers decide at
+// different delays and a later one corrects an earlier one, so the lane is not append-only: an
+// update (LaneUpdate) says "from here on, the lane is these segments", and each segment is
+// matched to the one already drawn with the same chord (planChordUpdate). A chord that is still
+// there only slides to its new span; one that appeared or disappeared fades in or out. So where the
+// layers agree nothing moves, and the look carries no trace of which layer a chord came from. The
+// still-current chord's right edge is redrawn at the playhead every tick instead of a fixed value.
+// Bands alternate tint solely so consecutive chords read as distinct spans; it carries no other
+// meaning. The roman numeral is repeated here (already shown big in ChordDisplay.svelte) because the
+// point of putting chords on the roll at all is seeing the *progression* scroll past, and the
+// numeral is the part of that worth reading after the chord itself has scrolled away from the
+// always-current ChordDisplay.
+// How fast a chord that kept its identity slides to its corrected span, and how fast a chord the
+// correction added fades in / one it took away fades out (all untuned).
+const CHORD_ANIM_TAU_S = 0.15;
+const CHORD_FADE_IN_TAU_S = 0.12;
+const CHORD_FADE_OUT_TAU_S = 0.08;
 const CHORD_LANE_HEIGHT = 34;
 const CHORD_FONT_FAMILY = '"Accidentals", "Segoe UI", sans-serif'; // same stack as styles.css
 const CHORD_LABEL_FONT_SIZE = 13;
@@ -213,15 +223,28 @@ interface BeatSprite {
   dying: boolean; // absent from the latest snapshot: fading out, then destroyed
 }
 
-// endS is null for the still-current chord -- its right edge is computed fresh from the
-// playhead each tick instead (see tickChordSegments).
-interface ChordSegment {
+// startS/endS are where the chord should be (endS is null for the still-current chord -- its right
+// edge is computed fresh from the playhead each tick instead, see tickChordSegments); shownStartS/
+// shownEndS ease towards them, alpha towards targetAlpha, tint towards targetTint.
+interface ChordSprite {
+  label: string;
   startS: number;
   endS: number | null;
+  shownStartS: number;
+  shownEndS: number | null;
+  alpha: number;
+  targetAlpha: number;
+  fadeTau: number;
+  tint: number;
+  targetTint: number;
+  /** Taken away by a correction: fading out, then destroyed. */
+  dying: boolean;
+  /** Not yet given its tint. */
+  fresh: boolean;
   band: Graphics;
   boundary: Graphics;
-  label: Text;
-  roman: Text;
+  labelText: Text;
+  romanText: Text;
 }
 
 interface KeySprite {
@@ -248,7 +271,12 @@ export class PianoRoll {
   private beatLayer = new Container();
   private beatLines: BeatSprite[] = [];
   private chordLayer = new Container();
-  private chordSegments: ChordSegment[] = [];
+  // Chords fading out, under the ones that replace them.
+  private chordGhostLayer = new Container();
+  private chordSegments: ChordSprite[] = [];
+  // The newest time the lane knew of at the previous update (a new chord starting near it is the
+  // progression moving on, see planChordUpdate).
+  private chordPrevHeadS = -Infinity;
   private guides = new Graphics();
   private keyboardBacking = new Graphics();
   private keys = new Map<number, KeySprite>();
@@ -318,6 +346,7 @@ export class PianoRoll {
     app.stage.addChild(roll.guides);
     app.stage.addChild(roll.beatLayer);
     app.stage.addChild(noteLayer);
+    app.stage.addChild(roll.chordGhostLayer);
     app.stage.addChild(roll.chordLayer);
     app.stage.addChild(roll.markerLayer);
     roll.markerLayer.addChild(roll.markerLine, roll.markerFlag);
@@ -555,13 +584,9 @@ export class PianoRoll {
     this.notes = [];
     for (const b of this.beatLines) b.graphic.destroy();
     this.beatLines = [];
-    for (const c of this.chordSegments) {
-      c.band.destroy();
-      c.boundary.destroy();
-      c.label.destroy();
-      c.roman.destroy();
-    }
+    for (const c of this.chordSegments) this.destroyChordSprite(c);
     this.chordSegments = [];
+    this.chordPrevHeadS = -Infinity;
     for (const pitch of this.keys.keys()) this.setKeyActive(pitch, false);
   }
 
@@ -688,66 +713,127 @@ export class PianoRoll {
     this.notes.push({ ...note, graphic, open });
   }
 
-  /** Appends a newly stabilized chord (rekord_core's ChordStabilizer already debounced it --
-   * this never revises or removes a segment, only closes the previous one off at `t` and opens
-   * a new one). `t` is the pipeline's own clock, positioned with xForTime like everything else. */
-  addChordChange(t: number, label: string, romanNumeral: string | null): void {
-    const previous = this.chordSegments[this.chordSegments.length - 1];
-    if (previous) previous.endS = t;
+  private destroyChordSprite(c: ChordSprite): void {
+    c.band.destroy();
+    c.boundary.destroy();
+    c.labelText.destroy();
+    c.romanText.destroy();
+  }
 
+  private makeChordSprite(seg: LaneSegment, alpha: number): ChordSprite {
     const band = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
-    band.tint = this.chordSegments.length % 2 === 0 ? CHORD_BAND_COLOR_A : CHORD_BAND_COLOR_B;
     const boundary = new Graphics().rect(0, 0, 1, 1).fill({ color: CHORD_BOUNDARY_COLOR });
+    const label = seg.chord.label;
     const isSilence = label === SILENCE_LABEL;
     const labelText = new Text({
       text: label,
       style: { fontFamily: CHORD_FONT_FAMILY, fontSize: CHORD_LABEL_FONT_SIZE, fontWeight: "600", fill: isSilence ? CHORD_SILENCE_COLOR : CHORD_TEXT_COLOR },
     });
     const romanText = new Text({
-      text: romanNumeral ?? "",
+      text: seg.chord.roman_numeral ?? "",
       style: { fontFamily: CHORD_FONT_FAMILY, fontSize: CHORD_ROMAN_FONT_SIZE, fill: CHORD_ROMAN_COLOR },
     });
-    band.visible = !isSilence;
     this.chordLayer.addChild(band, boundary, labelText, romanText);
-    this.chordSegments.push({ startS: t, endS: null, band, boundary, label: labelText, roman: romanText });
+    return {
+      label,
+      startS: seg.startS,
+      endS: seg.endS,
+      shownStartS: seg.startS,
+      shownEndS: seg.endS,
+      alpha,
+      targetAlpha: 1,
+      fadeTau: CHORD_FADE_IN_TAU_S,
+      tint: CHORD_BAND_COLOR_A,
+      targetTint: CHORD_BAND_COLOR_A,
+      dying: false,
+      fresh: true,
+      band,
+      boundary,
+      labelText,
+      romanText,
+    };
   }
 
-  /** Respells the still-current chord (the accidental setting changed mid-session); chords that
-   * already scrolled into the past keep the spelling they were drawn with. */
-  relabelCurrentChord(label: string): void {
-    const current = this.chordSegments[this.chordSegments.length - 1];
-    if (current && current.label.text !== SILENCE_LABEL) current.label.text = label;
+  /** Applies a lane update (chordlane.ts): from `update.fromS` on, the chord lane is
+   * `update.segments`. A chord that is still there (same name, overlapping) slides to its new
+   * span; one the update adds fades in (or just appears, if it is the progression moving on), one
+   * it takes away fades out. `t` is the pipeline's own clock, positioned with xForTime like
+   * everything else. */
+  setChordSegments(update: LaneUpdate): void {
+    const segs = update.segments;
+    const plan = planChordUpdate(this.chordSegments, update, this.chordPrevHeadS);
+    this.chordPrevHeadS = update.headS;
+    const openEdgeS = Math.max(this.clock.headS(), this.displayS());
+    for (const [o, n] of plan.matched) {
+      const sprite = this.chordSegments[o];
+      const seg = segs[n];
+      sprite.startS = seg.startS;
+      sprite.endS = seg.endS;
+      // a chord that was open (running to the playhead) and now has an end slides there from the playhead
+      if (seg.endS === null) sprite.shownEndS = null;
+      else if (sprite.shownEndS === null) sprite.shownEndS = openEdgeS;
+      sprite.romanText.text = seg.chord.roman_numeral ?? "";
+    }
+    for (const o of plan.removed) {
+      const sprite = this.chordSegments[o];
+      sprite.dying = true;
+      sprite.targetAlpha = 0;
+      sprite.fadeTau = CHORD_FADE_OUT_TAU_S;
+      this.chordGhostLayer.addChild(sprite.band, sprite.boundary, sprite.labelText, sprite.romanText);
+    }
+    for (const { index, kind } of plan.created) {
+      this.chordSegments.push(this.makeChordSprite(segs[index], kind === "head" ? 1 : 0));
+    }
+    this.chordSegments.sort((x, y) => x.startS - y.startS);
+    // Bands alternate in tint along the lane; what a correction changed is recolored, softly.
+    let tint = CHORD_BAND_COLOR_B;
+    for (const sprite of this.chordSegments) {
+      if (sprite.dying) continue;
+      tint = tint === CHORD_BAND_COLOR_A ? CHORD_BAND_COLOR_B : CHORD_BAND_COLOR_A;
+      sprite.targetTint = tint;
+      if (sprite.fresh) {
+        sprite.tint = tint; // a new band starts in its color; only a recolor of an existing one eases
+        sprite.fresh = false;
+      }
+    }
   }
 
-  /** Positions every chord segment for the current displayS(), same as onTick does for notes,
-   * and prunes ones fully scrolled past the left edge. The label/roman text sticks to the
-   * visible left edge of its segment (clamped between the segment's own bounds) rather than
-   * scrolling off with its start time, so a long-held chord's name stays readable the whole
-   * time it's current -- the same reasoning a sticky table header uses. */
-  private tickChordSegments(): void {
-    const kept: ChordSegment[] = [];
+  /** Positions every chord for the current displayS(), same as onTick does for notes, and prunes
+   * ones fully scrolled past the left edge. The label/roman text sticks to the visible left edge
+   * of its segment (clamped between the segment's own bounds) rather than scrolling off with its
+   * start time, so a long-held chord's name stays readable the whole time it's current -- the same
+   * reasoning a sticky table header uses. */
+  private tickChordSegments(dtS: number): void {
+    const kept: ChordSprite[] = [];
     const headS = this.clock.headS();
+    const openEdgeS = Math.max(headS, this.displayS());
+    const slide = 1 - Math.exp(-dtS / CHORD_ANIM_TAU_S);
     for (const seg of this.chordSegments) {
-      if (seg.endS !== null && seg.endS < headS - HISTORY_S) {
-        seg.band.destroy();
-        seg.boundary.destroy();
-        seg.label.destroy();
-        seg.roman.destroy();
+      seg.shownStartS += (seg.startS - seg.shownStartS) * slide;
+      if (seg.endS === null) seg.shownEndS = null;
+      else seg.shownEndS = (seg.shownEndS ?? openEdgeS) + (seg.endS - (seg.shownEndS ?? openEdgeS)) * slide;
+      seg.alpha += (seg.targetAlpha - seg.alpha) * (1 - Math.exp(-dtS / seg.fadeTau));
+      seg.tint = lerpColor(seg.tint, seg.targetTint, slide);
+      if ((seg.dying && seg.alpha < 0.02) || (!seg.dying && seg.endS !== null && seg.endS < headS - HISTORY_S)) {
+        this.destroyChordSprite(seg);
         continue;
       }
-      this.oldestS = Math.min(this.oldestS, seg.startS);
-      const leftX = this.xForTime(seg.startS);
+      if (!seg.dying) this.oldestS = Math.min(this.oldestS, seg.startS);
+      const leftX = this.xForTime(seg.shownStartS);
       // The still-current chord runs up to the newest position, which a scrolled-back stopped roll
       // has moved away from the playhead; replaying the last stretch of the recording goes past it.
-      const rightX = this.xForTime(seg.endS ?? Math.max(headS, this.displayS()));
+      const rightX = this.xForTime(seg.shownEndS ?? openEdgeS);
       const onScreen = rightX >= 0 && leftX <= this.app.screen.width;
-      for (const g of [seg.boundary, seg.label, seg.roman]) g.visible = onScreen;
-      seg.band.visible = onScreen && seg.label.text !== SILENCE_LABEL; // silence has no band
+      const isSilence = seg.label === SILENCE_LABEL;
+      for (const g of [seg.boundary, seg.labelText, seg.romanText]) g.visible = onScreen;
+      seg.band.visible = onScreen && !isSilence; // silence has no band
       if (!onScreen) {
         kept.push(seg);
         continue;
       }
+      for (const g of [seg.band, seg.boundary, seg.labelText, seg.romanText]) g.alpha = seg.alpha;
       const width = Math.max(0, rightX - leftX);
+      seg.band.tint = seg.tint;
       seg.band.x = leftX;
       seg.band.scale.set(width, CHORD_LANE_HEIGHT);
       seg.boundary.x = leftX;
@@ -755,13 +841,13 @@ export class PianoRoll {
 
       // Widest of the label/roman text decides how much room the sticky clamp gives itself --
       // a short label like "C" shouldn't get pinned any further right than a wide one would.
-      const textWidth = Math.max(seg.label.width, seg.roman.width);
+      const textWidth = Math.max(seg.labelText.width, seg.romanText.width);
       const maxTextX = rightX - textWidth - CHORD_LABEL_PADDING;
       const textX = Math.max(leftX + CHORD_LABEL_PADDING, Math.min(CHORD_LABEL_PADDING, maxTextX));
-      seg.label.x = textX;
-      seg.label.y = 2;
-      seg.roman.x = textX;
-      seg.roman.y = CHORD_LANE_HEIGHT - seg.roman.height - 2;
+      seg.labelText.x = textX;
+      seg.labelText.y = 2;
+      seg.romanText.x = textX;
+      seg.romanText.y = CHORD_LANE_HEIGHT - seg.romanText.height - 2;
       kept.push(seg);
     }
     this.chordSegments = kept;
@@ -839,7 +925,7 @@ export class PianoRoll {
     }
     this.oldestS = Infinity;
     this.tickBeatLines(this.app.ticker.deltaMS / 1000);
-    this.tickChordSegments();
+    this.tickChordSegments(this.app.ticker.deltaMS / 1000);
     const cursorS = this.clock.cursorS();
     const headS = this.clock.headS();
     const live = this.clock.kind === "live";

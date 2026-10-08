@@ -186,6 +186,43 @@ npm run tauri dev
   <raw_dir> <out_dir>` replays the chord logic over a `rekord_engine` file-mode stdout
   (harmonica-repro's `runs/chord_replay.sh`), matching the real exe to +-.001 majmin.
 
+- **Chord layers** (2026-10-08, user; the whole design, the step-2 numbers and the step-3 notes
+  are in `docs/chord-layers.md`; five steps with a confirmation after each): the chord estimate
+  runs as append-only layers of increasing delay -- **instant**, **settled** (~0.5 s: the chord
+  naming that used to be the only one, effective delay 0.55 s) and, to come, **confirmed** (2 s) --
+  each reporting where its chord changes plus how far it has decided (`decided_s`; a layer never
+  revises what it reported). Backend: `rust/core/src/chord_layers/` -- `hold.rs` (`HoldLayer`: the
+  window match + hold + backdate + score margin; the two layers are `HoldParams::instant()` and
+  `::settled()`), `evidence.rs`, `engine.rs` (`ChordEngine`: runs the layers at the same
+  checkpoints, emits `PipelineEvent::ChordLayer { layer, changes, decided_s }` per block per
+  layer, `ActiveNotes` (the sounding pitch classes) and `KeyChange`; `Started` carries the chord
+  vocabulary). Frontend: `chordlane.ts` composes the layers into the lane by **splicing change
+  events** (each layer owns the span only it has decided, with a 0.25 s grace for the faster
+  layer's changes just before the hand-over; a "state of the slowest decided layer" composition made
+  slivers and false fades there), `planChordUpdate` pairs the old and new segments by name and
+  overlap so that only chords that really appeared or disappeared fade (a chord that merely moved
+  slides; no per-layer styling), `tensions.ts` computes the tensions from `ActiveNotes` and the
+  **shown** chord, and the top readout follows the lane, live too. Checked with
+  `node rekord-piano-roll/dev/chordlane.test.ts` and, for rendering, `dev/chords.html` (a log
+  written by `chord_replay` with `REKORD_CHORD_EVENTS_OUT`, see its header). Parameters can be
+  tried in the running app with the environment variables `REKORD_CHORD_TUNE_INSTANT` /
+  `REKORD_CHORD_TUNE_SETTLED` (`h=0.05,c=0`: see `HoldParams::apply_tune`); the CLI prints one
+  layer by default (`--chord-layer instant|settled|all`). **Status: step 3 of 5 done** (the user
+  has tried it live and made the changes below on 2026-10-09; step 4 is not started).
+  The instant layer (window 0.4 s with 0.1 s exponential decay, 0.05 s hold, 0.4 score margin for
+  the shown chord, **slash chords on, a change of the bass alone held 0.4 s**) names a chord
+  ~0.16 s after the notes show it (settled: 0.55 s), with ~19 lane corrections a minute. The user
+  chose `c=0,h=0.05` after trying it live; on its own that made 71 corrections a minute, because
+  the score margin does not cover the slash bass, hence `bass_hold_s` (`bh`). The settled layer is
+  the old naming plus a 0.2 score margin (identical to the old output with `m=0`: 100 RWC songs,
+  20990 chords); the margin does not weaken major/minor (the 3rd comes out reversed on 3.3% of the
+  time instead of 3.7%). Finding: the instant layer is about as accurate as the settled one (RWC
+  majmin .791 vs .783, tetrads .586 vs .601), so what a correction adds is mostly the ornate
+  names; a real accuracy gain is for step 4's 2 s layer (fixed-lag Viterbi over the template
+  scores). A wrong major/minor on a chord whose 3rd the transcription lacks comes from the
+  **key**: a bare fifth gets the key's triad (`chord_templates.rs`), and the key lags a modulation;
+  see the key estimation bullet and `docs/chord-layers.md` section 11.
+
 - **Beat/downbeat tracking (`beat_model.rs`, `beat_tracker.rs`, and the DBN
   decoder in its own crate `rust/beat_dbn/`) is Beat This! small0 + madmom's
   DBN, ported from the Python reference in the separate `harmonica-repro` project**
@@ -303,8 +340,9 @@ npm run tauri dev
     work), and a recording whose playhead is within 1.5 s of its end plays
     from the roll's left edge instead. Play/pause toggles; clicking while
     playing seeks; the chord/key/tension/BPM readouts follow the playhead
-    (`Recording.stateAt`; `KeyChange`/`TensionsChanged` therefore carry a
-    time `t`, and the BPM is stamped with the time its beats describe). The
+    (`Recording.stateAt`; the chord lane, the active-notes stream and
+    `KeyChange` therefore carry times, and the BPM is stamped with the time its
+    beats describe). The
     mix (recorded audio and notes volumes, plus per-part wave pickers and
     volumes for the 3-part model, each with a mute button) is a popover next
     to Play rather than in settings, since opening settings stops playback;
@@ -339,6 +377,19 @@ npm run tauri dev
   real-time adaptations with no canonical prescription, since the
   original algorithm has no streaming formulation at all — don't treat
   those as sacred the way the scoring itself should be.
+  **Re-tuned 2026-10-09 (user's modulating song cdex:2c6693d2bd4f; docs/chord-layers.md section 11):** an
+  8 s window with 2 s exponential decay, a 0.1 penalty on minor keys' correlation (a bare-fifth
+  riff has no 3rd and read as the minor key sharing the old key's scale), and switching by
+  accumulated evidence over the 12 relative-major classes (`estimate_cusum`: a challenger must gain
+  `cusum_s` = 1, correlation x seconds, on the shown key) instead of the margin / hold rule (still
+  there with `REKORD_KEY_TUNE="l=0,w=12,d=0,mp=0"`). Chord naming asks `naming_key()`, which goes
+  with a challenger already after half that gain, because a bare fifth named after the old key's
+  scale is the main way a modulation shows as wrong major/minor. Against reference keys read off
+  RWC-Pop's chord annotations (`harmonica-repro/tools/chord_eval/key_eval.py`): agreement .691 ->
+  .754, delay 8.7 -> 7.0 s, switches 2.3 -> 2.8 a minute (reference 1.0); the 0.5 s layer's majmin
+  .778 -> .783. Not fixable from the notes: the first chord of a modulated section (the notes
+  have no 3rd and the key has not caught up yet). A 3rd read from the vocal part or a major 7th
+  overruling the key was tried and does nothing (+.001).
 - **Roman numerals are always spelled against the key's governing major
   scale** (a minor key's relative major, not its own tonic), and the key
   name always **shows both readings of the major/minor pair** (e.g.
@@ -349,9 +400,9 @@ npm run tauri dev
   surfacing as a flickering label.
 - **Chord/key spelling (`spelling.rs`) has three user modes -- Auto / always ♯ /
   always ♭** (`Accidental`, setting `chord.accidental`, live-switchable via
-  `set_accidental`; the pipeline re-announces the current chord as
-  `ChordRelabel` and the key as a normal `KeyChange`, past chords on the roll
-  keep their spelling). Auto = "most natural on a piano score" (2026-10-02,
+  `set_accidental`; each chord layer re-announces its latest chord, at its own
+  start time, in the new spelling and the key goes out as a normal `KeyChange`;
+  past chords on the roll keep their spelling). Auto = "most natural on a piano score" (2026-10-02,
   user): dim/dim7/m7b5 roots are always ♯; otherwise a root is spelled as a
   scale degree of the estimated key (so A major gets C♯m/F♯m, D major a
   borrowed B♭), with a fixed table while there is no key (flats, but F♯ and

@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { ChordLayerEvent, LaneUpdate } from "./chordlane";
 import type { BeatLines, ConfirmedNote, StartedNote } from "./pianoroll";
 import { recording, type DisplayState, type RecordingInfo } from "./recording";
 import { settings, type Accidental, type ModelSize } from "./settings.svelte";
+import type { ChordVocabulary } from "./tensions";
 import { stopPlayback } from "./transport.svelte";
 
 // The model actually running, after any DirectML->CPU fallback the backend
@@ -15,12 +17,11 @@ export interface NoteModel {
 }
 
 type PipelineEvent =
-  | { type: "Started"; total_latency_s: number; note_model: NoteModel }
+  | { type: "Started"; total_latency_s: number; note_model: NoteModel; chord_vocabulary: ChordVocabulary }
   | ({ type: "NoteStarted" } & StartedNote)
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
-  | { type: "ChordChange"; t: number; label: string; roman_numeral: string | null }
-  | { type: "ChordRelabel"; label: string }
-  | { type: "TensionsChanged"; t: number; tensions: string[] }
+  | ({ type: "ChordLayer" } & ChordLayerEvent)
+  | { type: "ActiveNotes"; changes: { t: number; pcs: number }[] }
   | { type: "KeyChange"; t: number; key_name: string }
   | ({ type: "BeatLines" } & BeatLines);
 
@@ -107,9 +108,9 @@ export interface PipelineHandlers {
   /** Capture was stopped; the piano roll should freeze. `info` is the audio now available to
    * play back (null if none). */
   onStopped(info: RecordingInfo | null): void;
-  onChordChange(t: number, label: string, romanNumeral: string | null): void;
-  /** The current chord spelled again after the accidental setting changed. */
-  onChordRelabel(label: string): void;
+  /** The chord lane changed (a layer decided something): from `update.fromS` on it is
+   * `update.segments`. */
+  onChordLane(update: LaneUpdate): void;
 }
 
 // Note, beat-line and clock events bypass reactive state entirely and go straight to
@@ -150,10 +151,9 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
         melody: payload.melody,
         bass: payload.bass,
       });
-    } else if (payload.type === "ChordChange") {
-      handlers.onChordChange(payload.t, payload.label, payload.roman_numeral);
-    } else if (payload.type === "ChordRelabel") {
-      handlers.onChordRelabel(payload.label);
+    } else if (payload.type === "ChordLayer") {
+      const update = recording.lane.takeUpdate();
+      if (update) handlers.onChordLane(update);
     } else if (payload.type === "BeatLines") {
       handlers.onBeatLines(payload);
     }
