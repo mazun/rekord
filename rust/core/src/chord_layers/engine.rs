@@ -3,6 +3,7 @@
 //! it has decided), plus the key (`KeyChange`) and which pitch classes sound (`ActiveNotes`).
 //! The frontend composes the layers into the piano roll's chord lane (docs/chord-layers.md).
 
+use super::confirmed::{ConfirmedLayer, ConfirmedParams};
 use super::evidence::{active_mask, chord_checkpoints};
 use super::hold::{HoldLayer, HoldParams};
 use super::{ChordAt, ChordLayer, ChordLayerId, LayerChange, StepCtx};
@@ -101,7 +102,7 @@ impl ChordEngine {
         Self { slots, last_accidental: None, last_key: None, last_mask: None, active: Vec::new() }
     }
 
-    /// The layers a session runs so far: the instant one and the settled one.
+    /// The instant layer and the settled one.
     pub fn with_params(instant: HoldParams, settled: HoldParams) -> Self {
         Self::new(vec![
             (ChordLayerId::Instant, Box::new(HoldLayer::new(instant))),
@@ -109,20 +110,37 @@ impl ChordEngine {
         ])
     }
 
-    /// `with_params` with the default numbers. For trying other numbers in the running app, the
-    /// environment variables `REKORD_CHORD_TUNE_INSTANT` / `REKORD_CHORD_TUNE_SETTLED` hold a
-    /// `HoldParams::apply_tune` list each (e.g. `h=0.05,c=0`).
+    /// The two layers and the one that waits 2 s as well.
+    pub fn with_confirmed(instant: HoldParams, settled: HoldParams, confirmed: ConfirmedParams) -> Self {
+        Self::new(vec![
+            (ChordLayerId::Instant, Box::new(HoldLayer::new(instant))),
+            (ChordLayerId::Settled, Box::new(HoldLayer::new(settled))),
+            (ChordLayerId::Confirmed, Box::new(ConfirmedLayer::new(confirmed))),
+        ])
+    }
+
+    /// The layers a session runs: all three, with the default numbers. For trying other numbers in
+    /// the running app, the environment variables `REKORD_CHORD_TUNE_INSTANT` /
+    /// `REKORD_CHORD_TUNE_SETTLED` hold a `HoldParams::apply_tune` list each (e.g. `h=0.05,c=0`) and
+    /// `REKORD_CHORD_TUNE_CONFIRMED` a `ConfirmedParams::apply_tune` list (e.g. `D=1.5`), or `off`
+    /// to run without the 2 s layer.
     pub fn standard() -> Self {
-        let tuned = |mut params: HoldParams, var: &str| {
+        fn tuned<P: Copy + std::fmt::Debug>(mut params: P, var: &str, apply: fn(&mut P, &str) -> Result<(), String>) -> P {
             if let Ok(tune) = std::env::var(var) {
-                match params.apply_tune(&tune) {
+                match apply(&mut params, &tune) {
                     Ok(()) => eprintln!("{var}: {params:?}"),
                     Err(e) => eprintln!("{var} ignored: {e}"),
                 }
             }
             params
-        };
-        Self::with_params(tuned(HoldParams::instant(), "REKORD_CHORD_TUNE_INSTANT"), tuned(HoldParams::settled(), "REKORD_CHORD_TUNE_SETTLED"))
+        }
+        let instant = tuned(HoldParams::instant(), "REKORD_CHORD_TUNE_INSTANT", HoldParams::apply_tune);
+        let settled = tuned(HoldParams::settled(), "REKORD_CHORD_TUNE_SETTLED", HoldParams::apply_tune);
+        if std::env::var("REKORD_CHORD_TUNE_CONFIRMED").is_ok_and(|v| v.trim().eq_ignore_ascii_case("off")) {
+            eprintln!("REKORD_CHORD_TUNE_CONFIRMED: off (no 2 s layer)");
+            return Self::with_params(instant, settled);
+        }
+        Self::with_confirmed(instant, settled, tuned(ConfirmedParams::standard(), "REKORD_CHORD_TUNE_CONFIRMED", ConfirmedParams::apply_tune))
     }
 
     /// Runs all layers over the checkpoints in `(prev_covered, covered]` (see `chord_checkpoints`)
@@ -236,17 +254,20 @@ mod tests {
         let mut notes = chord(0.0, 2.0, &[48, 52, 55, 60]);
         notes.extend(chord(2.0, 4.0, &[45, 52, 57, 60]));
         notes.extend(chord(4.0, 6.0, &[41, 53, 57, 60]));
-        let mut engine = ChordEngine::with_params(HoldParams::instant(), HoldParams::settled());
+        run_engine(ChordEngine::with_params(HoldParams::instant(), HoldParams::settled()), &notes, 6.5)
+    }
+
+    fn run_engine(mut engine: ChordEngine, notes: &[NoteEvent], end_s: f32) -> Vec<PipelineEvent> {
         let mut key = KeyEstimator::new();
         let mut events = Vec::new();
         let mut last_key_name = None;
         let (mut prev, mut k) = (0.0f32, 1);
         loop {
-            let covered = (k as f32 * 0.256).min(6.5);
+            let covered = (k as f32 * 0.256).min(end_s);
             let visible: Vec<NoteEvent> = notes.iter().filter(|n| n.0 <= covered).map(|&(s, e, p, v, part)| (s, e.min(covered), p, v, part)).collect();
             engine.advance(&visible, prev, covered, &mut key, &KeyMode::Auto, Accidental::Sharp, None, &mut last_key_name, |e| events.push(e));
             prev = covered;
-            if covered >= 6.5 {
+            if covered >= end_s {
                 engine.finish(covered, Accidental::Sharp, |e| events.push(e));
                 break;
             }
@@ -299,6 +320,33 @@ mod tests {
         for ((_, a), (_, b)) in instant.iter().zip(&settled).skip(1) {
             assert!(a < b);
         }
+    }
+
+    #[test]
+    fn the_confirmed_layer_decides_last_and_agrees_on_a_clean_progression() {
+        let mut notes = chord(0.0, 4.0, &[48, 52, 55, 60]);
+        notes.extend(chord(4.0, 8.0, &[45, 52, 57, 60]));
+        notes.extend(chord(8.0, 12.0, &[41, 53, 57, 60]));
+        let engine = ChordEngine::with_confirmed(HoldParams::instant(), HoldParams::settled(), ConfirmedParams::standard());
+        let events = run_engine(engine, &notes, 14.0);
+        let labels = |id| -> Vec<(String, f32)> {
+            layer_events(&events, id).into_iter().flat_map(|(cs, _)| cs.iter().map(|c| (c.label.clone(), c.emit_s))).collect()
+        };
+        let (settled, confirmed) = (labels(ChordLayerId::Settled), labels(ChordLayerId::Confirmed));
+        let names = |v: &[(String, f32)]| v.iter().map(|(l, _)| l.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&confirmed), ["C", "Am", "F", "(silence)"]);
+        assert_eq!(&names(&settled)[..3], ["C", "Am", "F"]);
+        for ((_, at_settled), (_, at_confirmed)) in settled.iter().zip(&confirmed) {
+            assert!(at_confirmed > at_settled);
+        }
+        // the layer's contract holds in the events, and it is settled at the end
+        let mut decided = f32::NEG_INFINITY;
+        for (changes, new_decided) in layer_events(&events, ChordLayerId::Confirmed) {
+            assert!(new_decided >= decided);
+            assert!(changes.iter().all(|c| c.t >= decided - 1e-4 && c.t <= new_decided + 1e-4));
+            decided = new_decided;
+        }
+        assert!(decided >= 14.0 - 1e-4);
     }
 
     #[test]

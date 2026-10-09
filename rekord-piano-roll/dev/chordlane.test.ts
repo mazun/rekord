@@ -169,7 +169,7 @@ for (const s of scenarios) {
   assert.equal(lane.takeUpdate()?.segments.length, 2);
   lane.apply({ layer: "instant", changes: [], decided_s: 3 });
   const u = lane.takeUpdate();
-  assert.deepEqual(u?.segments.map((s) => s.chord.label), ["Am"]); // only the newest moved
+  assert.deepEqual(u?.segments.map((s) => s.chord.label), ["C", "Am"]); // the newest one moved, and the one before it (its end may have)
   assert.equal(lane.takeUpdate(), null);
   lane.apply({ layer: "settled", changes: [chord(0, 0.6, "C"), chord(2.1, 2.7, "Am")], decided_s: 2.9 });
   assert.ok((lane.takeUpdate()?.fromS ?? 99) <= 0); // the settled layer's first decision may change anything from its start

@@ -269,12 +269,13 @@ fn main() -> Result<()> {
             }
             "--chord-layer" => {
                 i += 1;
-                let value = args.get(i).context("--chord-layer expects instant, settled or all")?;
+                let value = args.get(i).context("--chord-layer expects instant, settled, confirmed or all")?;
                 chord_layers = match value.as_str() {
                     "instant" => vec![ChordLayerId::Instant],
                     "settled" => vec![ChordLayerId::Settled],
-                    "all" => vec![ChordLayerId::Settled, ChordLayerId::Instant],
-                    other => bail!("--chord-layer expects instant, settled or all, got {other}"),
+                    "confirmed" => vec![ChordLayerId::Confirmed],
+                    "all" => vec![ChordLayerId::Settled, ChordLayerId::Instant, ChordLayerId::Confirmed],
+                    other => bail!("--chord-layer expects instant, settled, confirmed or all, got {other}"),
                 };
             }
             "--cpu" => allow_directml = false,
@@ -298,7 +299,7 @@ fn main() -> Result<()> {
         run_live(config, hop, duration, accidental, chord_layers)
     } else {
         let audio_file = audio_file.context(
-            "usage: rekord_engine <audio_file> [--size small|medium|large|mix] [--future 8|16] [--accidental auto|sharp|flat] [--chord-layer instant|settled|all] [--cpu] [--hop 0.064]",
+            "usage: rekord_engine <audio_file> [--size small|medium|large|mix] [--future 8|16] [--accidental auto|sharp|flat] [--chord-layer instant|settled|confirmed|all] [--cpu] [--hop 0.064]",
         )?;
         run_file(&audio_file, size, future_frames, allow_directml, hop, accidental, chord_layers)
     }

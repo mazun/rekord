@@ -123,16 +123,23 @@ fn diatonic_triad_for_bare_fifth(m: &mut ChordMatch, share: &[f32], key: &KeyEst
     if m.quality != "5" {
         return;
     }
-    let root = m.root_pc as usize;
+    if let Some(quality) = bare_fifth_triad(m.root_pc as usize, share, key) {
+        m.quality = quality;
+    }
+}
+
+/// The quality a bare fifth on `root` stands for in `key` (`"maj"` or `"m"`), if no 3rd sounds
+/// (`share` = each pitch class's share of the window) and the key's scale has a definite one.
+pub fn bare_fifth_triad(root: usize, share: &[f32], key: &KeyEstimate) -> Option<&'static str> {
     if share[(root + 3) % 12].max(share[(root + 4) % 12]) >= STRONG_THIRD_SHARE {
-        return;
+        return None;
     }
     let base = key.relative_major_pc();
     let in_scale = |pc: usize| matches!((pc as i32 - base).rem_euclid(12), 0 | 2 | 4 | 5 | 7 | 9 | 11);
     match (in_scale((root + 4) % 12), in_scale((root + 3) % 12)) {
-        (true, false) => m.quality = "maj",
-        (false, true) => m.quality = "m",
-        _ => {}
+        (true, false) => Some("maj"),
+        (false, true) => Some("m"),
+        _ => None,
     }
 }
 
@@ -155,35 +162,14 @@ pub fn match_chroma_biased(
     prefer: Option<(i32, &str)>,
     margin: f32,
 ) -> Option<ChordMatch> {
-    let total: f32 = all.iter().sum();
-    if total <= 0.0 {
-        return None;
-    }
-    let share: Vec<f32> = all.iter().map(|&x| x / total).collect();
-    if share.iter().filter(|&&c| c >= PRESENT_SHARE).count() < 2 {
-        return None;
-    }
-    let bass_total: f32 = bass.iter().sum();
-    let bass_share = |pc: usize| if bass_total > 0.0 { bass[pc] / bass_total } else { 0.0 };
-    let bass_pc = (bass_total >= MIN_BASS_ENERGY * total)
-        .then(|| (0..12usize).max_by(|&a, &b| bass[a].partial_cmp(&bass[b]).unwrap()).unwrap() as i32);
+    let scored = score_templates(all, bass)?;
+    let (share, bass_pc) = (&scored.share, scored.bass_pc);
 
     let mut best: Option<(ChordMatch, f32)> = None;
     let mut preferred: Option<(ChordMatch, f32)> = None;
     for root in 0..12usize {
-        for tpl in CHORD_TEMPLATES {
-            let mut inside = 0.0;
-            let mut missing = 0.0;
-            for &i in tpl.intervals {
-                let c = share[(root + i as usize) % 12];
-                inside += c;
-                missing += (MISSING_FLOOR - c).max(0.0);
-            }
-            let score = inside - OUTSIDE_WEIGHT * (1.0 - inside)
-                - MISSING_PENALTY * missing
-                - SIZE_PENALTY * tpl.intervals.len() as f32
-                - quality_prior(tpl.quality)
-                + BASS_ROOT_WEIGHT * bass_share(root);
+        for (index, tpl) in CHORD_TEMPLATES.iter().enumerate() {
+            let score = scored.scores[root * TEMPLATE_COUNT + index];
             if best.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
                 best = Some((ChordMatch { root_pc: root as i32, quality: tpl.quality, bass_pc }, score));
             }
@@ -198,9 +184,68 @@ pub fn match_chroma_biased(
         }
     }
     if let (Some((m, _)), Some(key)) = (best.as_mut(), key) {
-        diatonic_triad_for_bare_fifth(m, &share, key);
+        diatonic_triad_for_bare_fifth(m, share, key);
     }
     best.map(|(m, _)| m)
+}
+
+pub const TEMPLATE_COUNT: usize = CHORD_TEMPLATES.len();
+
+/// How well every template at every root explains one window (the numbers `match_chroma_biased`
+/// picks the best of), for a caller that wants more than the winner.
+pub struct TemplateScores {
+    /// Each pitch class's share of the window's note energy.
+    pub share: [f32; 12],
+    /// Each pitch class's share of the bass part's energy (all zero without a bass part).
+    pub bass_share: [f32; 12],
+    /// The bass part's dominant pitch class, if it has enough energy to be named.
+    pub bass_pc: Option<i32>,
+    /// `scores[root * TEMPLATE_COUNT + index into CHORD_TEMPLATES]`.
+    pub scores: [f32; 12 * TEMPLATE_COUNT],
+}
+
+/// The score of every (root, template) for a window (`all` / `bass`: see `match_chroma`). `None`
+/// if fewer than two pitch classes are really present, or nothing sounded at all.
+pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScores> {
+    let total: f32 = all.iter().sum();
+    if total <= 0.0 {
+        return None;
+    }
+    let mut share = [0.0f32; 12];
+    for (s, &x) in share.iter_mut().zip(all) {
+        *s = x / total;
+    }
+    if share.iter().filter(|&&c| c >= PRESENT_SHARE).count() < 2 {
+        return None;
+    }
+    let bass_total: f32 = bass.iter().sum();
+    let mut bass_share = [0.0f32; 12];
+    if bass_total > 0.0 {
+        for (s, &x) in bass_share.iter_mut().zip(bass) {
+            *s = x / bass_total;
+        }
+    }
+    let bass_pc = (bass_total >= MIN_BASS_ENERGY * total)
+        .then(|| (0..12usize).max_by(|&a, &b| bass[a].partial_cmp(&bass[b]).unwrap()).unwrap() as i32);
+
+    let mut scores = [0.0f32; 12 * TEMPLATE_COUNT];
+    for root in 0..12usize {
+        for (index, tpl) in CHORD_TEMPLATES.iter().enumerate() {
+            let mut inside = 0.0;
+            let mut missing = 0.0;
+            for &i in tpl.intervals {
+                let c = share[(root + i as usize) % 12];
+                inside += c;
+                missing += (MISSING_FLOOR - c).max(0.0);
+            }
+            scores[root * TEMPLATE_COUNT + index] = inside - OUTSIDE_WEIGHT * (1.0 - inside)
+                - MISSING_PENALTY * missing
+                - SIZE_PENALTY * tpl.intervals.len() as f32
+                - quality_prior(tpl.quality)
+                + BASS_ROOT_WEIGHT * bass_share[root];
+        }
+    }
+    Some(TemplateScores { share, bass_share, bass_pc, scores })
 }
 
 // Canonical upper-structure tension names by semitone offset from the

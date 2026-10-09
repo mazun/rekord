@@ -1,17 +1,21 @@
 //! The chord estimate in layers of increasing delay (see `docs/chord-layers.md`): an instant one,
-//! one that waits ~0.5 s (and, to come, one that waits 2 s). Each layer is append-only -- it
+//! one that waits ~0.5 s and one that waits 2 s. Each layer is append-only -- it
 //! reports the times its chord changes and how far it has decided -- and a later layer corrects an
 //! earlier one only by being shown in its place (that composition happens in the frontend).
 //!
 //! - `evidence`: what the layers read off the notes (windowed pitch-class energy, checkpoints).
 //! - `hold`: the layer that names the chord from a window and shows a different one only after it
 //!   has led for a while; the instant and the settled layer are this with different numbers.
+//! - `confirmed`: the layer that waits 2 s and searches the whole vocabulary for the chord
+//!   sequence that the notes before and after each moment explain best.
 //! - `engine`: runs the layers over the same checkpoints and emits their decisions as events.
 
+pub mod confirmed;
 pub mod engine;
 pub mod evidence;
 pub mod hold;
 
+pub use confirmed::{ConfirmedLayer, ConfirmedParams, Naming};
 pub use engine::{ActiveChange, ChordEngine, LayerChord};
 pub use hold::{HoldLayer, HoldParams};
 
@@ -47,7 +51,7 @@ pub enum ChordLayerId {
     Instant,
     /// Waits about 0.5 s: the window and hold keep a passing tone from flipping the name.
     Settled,
-    /// Waits 2 s (not built yet).
+    /// Waits 2 s and searches for the chord sequence the notes before and after explain best.
     Confirmed,
 }
 

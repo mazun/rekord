@@ -189,11 +189,11 @@ npm run tauri dev
 - **Chord layers** (2026-10-08, user; the whole design, the step-2 numbers and the step-3 notes
   are in `docs/chord-layers.md`; five steps with a confirmation after each): the chord estimate
   runs as append-only layers of increasing delay -- **instant**, **settled** (~0.5 s: the chord
-  naming that used to be the only one, effective delay 0.55 s) and, to come, **confirmed** (2 s) --
+  naming that used to be the only one, effective delay 0.55 s) and **confirmed** (2 s) --
   each reporting where its chord changes plus how far it has decided (`decided_s`; a layer never
   revises what it reported). Backend: `rust/core/src/chord_layers/` -- `hold.rs` (`HoldLayer`: the
   window match + hold + backdate + score margin; the two layers are `HoldParams::instant()` and
-  `::settled()`), `evidence.rs`, `engine.rs` (`ChordEngine`: runs the layers at the same
+  `::settled()`), `confirmed.rs` (`ConfirmedLayer`, below), `evidence.rs`, `engine.rs` (`ChordEngine`: runs the layers at the same
   checkpoints, emits `PipelineEvent::ChordLayer { layer, changes, decided_s }` per block per
   layer, `ActiveNotes` (the sounding pitch classes) and `KeyChange`; `Started` carries the chord
   vocabulary). Frontend: `chordlane.ts` composes the layers into the lane by **splicing change
@@ -206,9 +206,12 @@ npm run tauri dev
   `node rekord-piano-roll/dev/chordlane.test.ts` and, for rendering, `dev/chords.html` (a log
   written by `chord_replay` with `REKORD_CHORD_EVENTS_OUT`, see its header). Parameters can be
   tried in the running app with the environment variables `REKORD_CHORD_TUNE_INSTANT` /
-  `REKORD_CHORD_TUNE_SETTLED` (`h=0.05,c=0`: see `HoldParams::apply_tune`); the CLI prints one
-  layer by default (`--chord-layer instant|settled|all`). **Status: step 3 of 5 done** (the user
-  has tried it live and made the changes below on 2026-10-09; step 4 is not started).
+  `REKORD_CHORD_TUNE_SETTLED` (`h=0.05,c=0`: see `HoldParams::apply_tune`) and
+  `REKORD_CHORD_TUNE_CONFIRMED` (`D=1.5`, or `off` for no 2 s layer); the CLI prints one layer by
+  default (`--chord-layer instant|settled|confirmed|all`). **Status: all five steps done; the user checked the whole live and approved it
+  (2026-10-09).** (Step 3 was confirmed after a live try the same day; the 2 s layer below was
+  evaluated in step 4 and registered in `ChordEngine::standard()` in step 5 -- docs/chord-layers.md
+  section 13; the frontend needed no change.)
   The instant layer (window 0.4 s with 0.1 s exponential decay, 0.05 s hold, 0.4 score margin for
   the shown chord, **slash chords on, a change of the bass alone held 0.4 s**) names a chord
   ~0.16 s after the notes show it (settled: 0.55 s), with ~19 lane corrections a minute. The user
@@ -218,10 +221,23 @@ npm run tauri dev
   20990 chords); the margin does not weaken major/minor (the 3rd comes out reversed on 3.3% of the
   time instead of 3.7%). Finding: the instant layer is about as accurate as the settled one (RWC
   majmin .791 vs .783, tetrads .586 vs .601), so what a correction adds is mostly the ornate
-  names; a real accuracy gain is for step 4's 2 s layer (fixed-lag Viterbi over the template
-  scores). A wrong major/minor on a chord whose 3rd the transcription lacks comes from the
+  names; the accuracy gain is the 2 s layer's (below). A wrong major/minor on a chord whose 3rd the transcription lacks comes from the
   **key**: a bare fifth gets the key's triad (`chord_templates.rs`), and the key lags a modulation;
   see the key estimation bullet and `docs/chord-layers.md` section 11.
+  **The 2 s layer** (`confirmed.rs`, 2026-10-09; `docs/chord-layers.md` section 12): a fixed-lag
+  Viterbi over (root, quality, bass) + silence, one step per 0.1 s from the same template scores
+  (`score_templates`, shared with the other layers) of a 0.4 s window centred 0.07 s early, costs
+  2.5 for another chord and 3 for another bass, decided 2.0 s after `covered` (1.5 s is as
+  accurate). RWC-Pop 100 songs, pos: majmin .824 (settled .783), majmin_inv .801 (.705), sevenths
+  .693 (.657), tetrads .633 (.601), 36.5 chords a minute against settled's 48 (reference 33); it is
+  right where settled is wrong 7.4% of the time and wrong where settled is right 3.3%. A bare
+  fifth gets the 3rd the song has shown for that root, else the key's, but only as a tie-break
+  (`key_lift`): letting the key's triad outscore the notes (the other layers' rule) spread a stale
+  key over whole chords (the modulating song cdex:2c6693d2bd4f 20.7 s wrong against 10.4 s). Offline it runs with `chord_replay`
+  `REKORD_CHORD_TUNE="layer=confirmed,..."` (keys: `ConfirmedParams::apply_tune`). With it the
+  lane shows roughly 10-20 more chords a minute disappear and 4-16 more appear (settled's flicker
+  removed, ornate names changed): to be judged live. Not fixed: the lag of the key estimate itself (needs a layer that looks 8 s+
+  ahead).
 
 - **Beat/downbeat tracking (`beat_model.rs`, `beat_tracker.rs`, and the DBN
   decoder in its own crate `rust/beat_dbn/`) is Beat This! small0 + madmom's
