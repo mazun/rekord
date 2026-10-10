@@ -40,12 +40,13 @@ const WHITE_ROW_ALPHA = 0.08;
 // the display running total_latency_s (~0.9s at the default 0.26s look-ahead, ~1.1s at the
 // 0.51s look-ahead) behind the audio, predicted lines are still drawn before they reach the
 // playhead, but provisional ones mostly firm up just after passing it, and a line turns
-// committed a few seconds after that. Each layer is drawn a step stronger than the one before,
-// and a bar line (downbeat) stronger and wider than a beat.
+// committed a few seconds after that. All three layers look the same so a line firming up
+// doesn't pull the eye away from the newest notes. A bar line (downbeat) is stronger and
+// wider than a beat.
 type BeatLayer = "predicted" | "provisional" | "committed";
 const BEAT_LINE_COLOR = 0x5a6580;
 const BAR_LINE_COLOR = 0x9aaad8;
-const BEAT_LINE_ALPHA: Record<BeatLayer, number> = { predicted: 0.2, provisional: 0.4, committed: 0.65 };
+const BEAT_LINE_ALPHA: Record<BeatLayer, number> = { predicted: 0.4, provisional: 0.4, committed: 0.4 };
 const BAR_LINE_WIDTH = 2;
 // A new snapshot's line within this of a line already drawn is the same beat moving to its
 // next layer (its time can shift a little when it does); beats are >= 0.28s apart (215 BPM).
