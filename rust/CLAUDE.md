@@ -74,6 +74,9 @@ length; a template scores inside share − 0.7·outside share − 3·(shortfall 
 each tone below a 6% share) − 0.1 per tone − a per-quality prior (rarer chord =
 more evidence needed) + 0.3·bass part's share on the root. The slash bass
 (`ChordMatch::bass_pc`) is the bass part's dominant pitch class in the window.
+An `aug` triad reads the same from each of its three tones, so its root is a tie-break:
+the one with the bass a whole tone above it (B♭aug/C, the "Blackadder chord") gets a
+small bonus, else the root-position bass bonus decides.
 With a known key, a winning bare fifth `5` on a diatonic root whose 3rd isn't
 sounding is renamed to the key's major/minor triad. Constants are in code;
 every number was swept on RWC-Pop (odd songs to tune, even to check) with the

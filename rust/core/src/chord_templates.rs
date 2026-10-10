@@ -53,12 +53,20 @@ const MISSING_FLOOR: f32 = 0.06;
 const MISSING_PENALTY: f32 = 3.0;
 const SIZE_PENALTY: f32 = 0.1;
 const BASS_ROOT_WEIGHT: f32 = 0.3;
+// An augmented triad reads the same from each of its three tones, so the notes cannot say which
+// is the root (the first one tried won, always the lowest pitch class). The "Blackadder chord"
+// puts the bass a whole tone above the root (B♭aug/C), so an aug root with the bass there gets
+// this much per share of bass: a tie-break between the three readings, not evidence for aug.
+const AUG_WHOLE_TONE_BASS_WEIGHT: f32 = 0.05;
 // `quality_prior` tiers: 7th chords, then sus/6th/power/dim/aug, then the 9/11/13 family.
 const SEVENTH_PRIOR: f32 = 0.1;
 const ORNATE_PRIOR: f32 = 0.5;
 const EXTENDED_PRIOR: f32 = 0.2;
 const SIXTH_PRIOR: f32 = 0.2;
 const POWER_CHORD_PRIOR: f32 = 0.15;
+// Lower than the rest of the ornate tier: an augmented triad (Blackadder chord, B♭aug/C) that
+// sounds for under a second lost to its major triad at 0.5. On RWC-Pop 0.2 costs majmin .001.
+const AUG_PRIOR: f32 = 0.2;
 // A 3rd (major or minor) at least this share of the window counts as really sounding.
 const STRONG_THIRD_SHARE: f32 = 0.12;
 
@@ -70,7 +78,8 @@ fn quality_prior(quality: &str) -> f32 {
         "7" | "maj7" | "m7" => SEVENTH_PRIOR,
         "5" => POWER_CHORD_PRIOR,
         "6" | "m6" => SIXTH_PRIOR,
-        "sus2" | "sus4" | "sus4(7)" | "dim" | "aug" | "m7b5" | "dim7" => ORNATE_PRIOR,
+        "aug" => AUG_PRIOR,
+        "sus2" | "sus4" | "sus4(7)" | "dim" | "m7b5" | "dim7" => ORNATE_PRIOR,
         _ => EXTENDED_PRIOR,
     }
 }
@@ -242,7 +251,8 @@ pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScor
                 - MISSING_PENALTY * missing
                 - SIZE_PENALTY * tpl.intervals.len() as f32
                 - quality_prior(tpl.quality)
-                + BASS_ROOT_WEIGHT * bass_share[root];
+                + BASS_ROOT_WEIGHT * bass_share[root]
+                + if tpl.quality == "aug" { AUG_WHOLE_TONE_BASS_WEIGHT * bass_share[(root + 2) % 12] } else { 0.0 };
         }
     }
     Some(TemplateScores { share, bass_share, bass_pc, scores })
@@ -284,6 +294,38 @@ pub fn extra_tensions(active_pitch_classes: &[i32], chord: &ChordMatch) -> Vec<&
         })
         .map(|&(_, name)| name)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn aug_score(roots_bass: i32) -> Vec<(i32, f32)> {
+        // G♭ B♭ D with a C (the bass) sounding.
+        let mut all = [0.0f32; 12];
+        for (pc, w) in [(6, 0.43), (10, 0.33), (2, 0.14), (0, 0.10)] {
+            all[pc] = w;
+        }
+        let mut bass = [0.0f32; 12];
+        bass[roots_bass as usize] = 1.0;
+        let scored = score_templates(&all, &bass).unwrap();
+        let aug = CHORD_TEMPLATES.iter().position(|t| t.quality == "aug").unwrap();
+        [2, 6, 10].iter().map(|&r| (r, scored.scores[r as usize * TEMPLATE_COUNT + aug])).collect()
+    }
+
+    #[test]
+    fn aug_root_is_the_tone_a_whole_tone_below_the_bass() {
+        let scores = aug_score(0);
+        let best = scores.iter().copied().fold((0, f32::NEG_INFINITY), |b, s| if s.1 > b.1 { s } else { b });
+        assert_eq!(best.0, 10, "B♭aug/C expected, got {scores:?}");
+    }
+
+    #[test]
+    fn aug_roots_tie_when_the_bass_is_not_a_whole_tone_above_one() {
+        // Bass on G♭ itself (root position): the root bonus decides, not the whole-tone one.
+        let scores = aug_score(6);
+        assert!(scores[1].1 > scores[0].1 && scores[1].1 > scores[2].1, "{scores:?}");
+    }
 }
 
 /// The chord table as data: what the frontend needs to name the tensions over a shown chord
