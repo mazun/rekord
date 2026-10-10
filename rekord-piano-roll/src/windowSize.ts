@@ -32,6 +32,24 @@ async function currentLogicalWindowSize(
   return { width: size.width / scaleFactor, height: size.height / scaleFactor };
 }
 
+// Only the expanded main view (piano roll shown) is resizable, with the
+// default size as its lower bound: extra height goes to the roll alone and
+// extra width widens the roll's visible time span (fixed px/s). The
+// collapsed and settings layouts stay fixed-size. The minimum has to be
+// lifted before a collapse, or it would stop the window shrinking.
+async function setResizableMode(
+  win: ReturnType<typeof getCurrentWindow>,
+  resizable: boolean,
+): Promise<void> {
+  if (resizable) {
+    await win.setResizable(true);
+    await win.setMinSize(new LogicalSize(DEFAULT_EXPANDED_WIDTH, DEFAULT_EXPANDED_HEIGHT));
+  } else {
+    await win.setMinSize(null);
+    await win.setResizable(false);
+  }
+}
+
 function measureCollapsedSize(
   appShell: HTMLElement,
   toggleBtn: HTMLElement,
@@ -81,11 +99,13 @@ export async function setPianorollVisible(
         widthBeforeCollapse = currentLogicalWidth;
         heightBeforeCollapse = currentLogicalHeight;
       }
+      await setResizableMode(win, false);
       const collapsed = measureCollapsedSize(appShell, toggleBtn);
       await win.setSize(new LogicalSize(collapsed.width, collapsed.height));
     } else {
       const restoredWidth = widthBeforeCollapse ?? DEFAULT_EXPANDED_WIDTH;
       const restoredHeight = heightBeforeCollapse ?? DEFAULT_EXPANDED_HEIGHT;
+      await setResizableMode(win, true);
       await win.setSize(new LogicalSize(restoredWidth, restoredHeight));
     }
   } catch (err) {
@@ -106,6 +126,7 @@ export async function enterSettingsWindowSize(): Promise<void> {
     const { width, height } = await currentLogicalWindowSize(win);
     widthBeforeSettings = width;
     heightBeforeSettings = height;
+    await setResizableMode(win, false);
     if (Math.round(width) !== DEFAULT_EXPANDED_WIDTH || Math.round(height) !== DEFAULT_EXPANDED_HEIGHT) {
       await win.setSize(new LogicalSize(DEFAULT_EXPANDED_WIDTH, DEFAULT_EXPANDED_HEIGHT));
     }
@@ -126,7 +147,9 @@ export async function leaveSettingsWindowSize(): Promise<void> {
     return;
   }
   try {
-    await getCurrentWindow().setSize(new LogicalSize(width, height));
+    const win = getCurrentWindow();
+    await setResizableMode(win, settings.pianorollVisible);
+    await win.setSize(new LogicalSize(width, height));
   } catch (err) {
     console.error(err);
   }
