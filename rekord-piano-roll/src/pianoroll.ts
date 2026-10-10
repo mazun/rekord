@@ -520,6 +520,7 @@ export class PianoRoll {
       key.graphic.x = noteAreaWidth;
       this.redrawKey(pitch);
     }
+    this.relayoutNotes();
   }
 
   /** Creates the vertical white/black-key strip's Graphics, one per MIDI
@@ -699,8 +700,23 @@ export class PianoRoll {
     this.partLayers[part].visible = visible;
   }
 
+  private noteHeightPx(height: number): number {
+    return Math.max(3, (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
+  }
+
+  /** Notes bake their height and y when drawn, so a window height change has to redo them
+   * (the per-tick pass only moves x). */
+  private relayoutNotes(): void {
+    const height = this.app.screen.height;
+    const noteHeightPx = this.noteHeightPx(height);
+    for (const n of this.notes) {
+      this.drawNote(n.graphic, n);
+      n.graphic.y = this.pitchToY(n.pitch_midi, height) - noteHeightPx / 2;
+    }
+  }
+
   private drawNote(graphic: Graphics, note: ConfirmedNote): void {
-    const noteHeightPx = Math.max(3, (this.app.screen.height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
+    const noteHeightPx = this.noteHeightPx(this.app.screen.height);
     const widthPx = Math.max(2, (note.end_s - note.start_s) * PIXELS_PER_SECOND);
     const [colorMin, colorMax] = noteColors(note, this.roleColoringEnabled);
     const color = lerpColor(colorMin, colorMax, note.velocity);
@@ -726,7 +742,7 @@ export class PianoRoll {
 
   private addSprite(note: ConfirmedNote, open: boolean): void {
     const height = this.app.screen.height;
-    const noteHeightPx = Math.max(3, (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
+    const noteHeightPx = this.noteHeightPx(height);
     const graphic = new Graphics();
     this.drawNote(graphic, note);
     // Position it correctly right away -- left at the Graphics default
