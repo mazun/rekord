@@ -20,7 +20,11 @@ export type PlaybackState = "stopped" | "playing" | "paused";
 
 // `marked`: a marker is placed on the roll (mirrors PianoRoll.marker, which is not reactive). While
 // capture runs it is what lets Play stop the capture and start from there.
-export const transport = $state({ state: "stopped" as PlaybackState, marked: false });
+// `loop`: the Repeat button; while on, playing with a range selected returns to its left edge on
+// reaching its right edge.
+export const transport = $state({ state: "stopped" as PlaybackState, marked: false, loop: false });
+
+const LOOP_POLL_MS = 20;
 
 function setMarker(t: number | null): void {
   roll?.setMarker(t);
@@ -83,7 +87,15 @@ export async function connectTransport(pianoRoll: PianoRoll): Promise<UnlistenFn
       showDisplay(recording.stateAt(recording.endS));
     }
   });
+  // The cursor is extrapolated from the backend's position reports, so it is read on a timer
+  // rather than waiting for the next report.
+  const loopTimer = setInterval(() => {
+    if (!roll || !transport.loop || transport.state !== "playing") return;
+    const range = roll.selectedRange;
+    if (range && roll.playheadS() >= range.endS) void playFrom(range.startS);
+  }, LOOP_POLL_MS);
   return () => {
+    clearInterval(loopTimer);
     unlisten();
     roll = null;
   };
@@ -105,6 +117,9 @@ function startPositionS(): number {
 // is none (or it has ended).
 async function playFrom(fromS: number): Promise<void> {
   if (!roll) return;
+  // Repeating a range: starting right of it goes to its left edge.
+  const range = roll.selectedRange;
+  if (transport.loop && range && fromS >= range.endS) fromS = range.startS;
   const myGen = ++gen;
   const hadPlayback = transport.state !== "stopped";
   setMarker(null);

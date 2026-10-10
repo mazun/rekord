@@ -31,6 +31,22 @@
   </svg>
 </button>
 
+<button
+  class="play-btn repeat-btn"
+  class:on={transport.loop}
+  type="button"
+  title={t("toolbar.repeat")}
+  aria-label={t("toolbar.repeat")}
+  aria-pressed={transport.loop}
+  onclick={() => (transport.loop = !transport.loop)}
+>
+  <svg viewBox="0 0 16 16" aria-hidden="true">
+    <path
+      d="M3 7.5V7a3 3 0 0 1 3-3h5.5V2.2l3 2.8-3 2.8V6H6a1 1 0 0 0-1 1v.5zM13 8.5V9a3 3 0 0 1-3 3H4.5v1.8l-3-2.8 3-2.8V10H10a1 1 0 0 0 1-1v-.5z"
+    />
+  </svg>
+</button>
+
 <style>
   /* Overlaid on the piano roll's top-left corner, just under the chord lane
      (CHORD_LANE_HEIGHT in pianoroll.ts, 34px). */
@@ -52,6 +68,16 @@
 
   .play-btn:hover:not(:disabled) {
     color: #fff;
+  }
+
+  /* Right of the play button (0.6rem + its 2.3rem + a gap). */
+  .repeat-btn {
+    left: 3.3rem;
+    color: var(--muted, #8a8f9c);
+  }
+
+  .repeat-btn.on {
+    color: #5ab0ff;
   }
 
   .play-btn:disabled {
