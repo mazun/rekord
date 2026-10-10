@@ -85,7 +85,25 @@ function loadFutureFrames(): number {
   return stored === 8 || stored === 16 ? stored : DEFAULT_FUTURE_FRAMES;
 }
 
+// Piano roll time-axis zoom as a slider position in [-1, 1] with the shipped scale (1x) at the
+// centre: the left half runs 0.5x..1x, the right half 1x..4x.
+const ROLL_ZOOM_STORAGE_KEY = "chord.rollZoomPos";
+
+export function zoomScale(position: number): number {
+  return position < 0 ? 2 ** position : 4 ** position;
+}
+
+function loadRollZoom(): number {
+  const value = Number(localStorage.getItem(ROLL_ZOOM_STORAGE_KEY));
+  return Number.isFinite(value) ? Math.min(1, Math.max(-1, value)) : 0;
+}
+
+export function saveRollZoom(): void {
+  localStorage.setItem(ROLL_ZOOM_STORAGE_KEY, String(settings.rollZoom));
+}
+
 export const settings = $state({
+  rollZoom: loadRollZoom(),
   modelSize: loadModelSize(),
   futureFrames: loadFutureFrames(),
   pianorollVisible: localStorage.getItem(PIANOROLL_VISIBLE_STORAGE_KEY) !== "false",

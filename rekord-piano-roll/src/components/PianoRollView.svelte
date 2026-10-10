@@ -1,10 +1,23 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { debugExport, exportSelection, initDebugExport, setExportRange } from "../debugExport.svelte";
+  import {
+    debugExport,
+    exportSelection,
+    initDebugExport,
+    setExportRange,
+  } from "../debugExport.svelte";
   import { PianoRoll } from "../pianoroll";
-  import { connectPipeline, pipeline, startCapture, stopCapture } from "../pipeline.svelte";
-  import { settings } from "../settings.svelte";
-  import { connectTransport, setPlaybackPartVisible } from "../transport.svelte";
+  import {
+    connectPipeline,
+    pipeline,
+    startCapture,
+    stopCapture,
+  } from "../pipeline.svelte";
+  import { saveRollZoom, settings, zoomScale } from "../settings.svelte";
+  import {
+    connectTransport,
+    setPlaybackPartVisible,
+  } from "../transport.svelte";
   import { t } from "../i18n.svelte";
   import PlaybackVolume from "./PlaybackVolume.svelte";
   import PlayButton from "./PlayButton.svelte";
@@ -30,9 +43,29 @@
     roll?.setRoleColoringEnabled(rolesEnabled);
   }
 
+  const ZOOM_STEP = 0.2;
+  const ZOOM_SNAP = 0.08; // the slider sticks to the centre (1x) within this distance
+
+  function setZoom(position: number) {
+    const clamped = Math.min(1, Math.max(-1, position));
+    settings.rollZoom = Math.abs(clamped) < ZOOM_SNAP ? 0 : clamped;
+    applyZoom();
+    saveRollZoom();
+  }
+
+  let zoomOpen = $state(false);
+
+  function applyZoom() {
+    roll?.setZoom(zoomScale(settings.rollZoom));
+  }
+
   // Esc closes the context menu, else drops the selection.
   function clearSelectionOnEscape(event: KeyboardEvent) {
     if (event.key !== "Escape") return;
+    if (zoomOpen) {
+      zoomOpen = false;
+      return;
+    }
     if (menu) menu = null;
     else roll?.clearSelection();
   }
@@ -41,7 +74,8 @@
   let menu = $state<{ x: number; y: number } | null>(null);
 
   function closeMenuOnOutside(event: PointerEvent) {
-    if (menu && !(event.target as HTMLElement).closest(".context-menu")) menu = null;
+    if (menu && !(event.target as HTMLElement).closest(".context-menu"))
+      menu = null;
   }
 
   async function exportFromMenu() {
@@ -72,6 +106,7 @@
       }
       roll = created;
       roll.setRoleColoringEnabled(rolesEnabled);
+      applyZoom();
       roll.onSelectionChange = (range) => {
         menu = null;
         setExportRange(range);
@@ -124,11 +159,18 @@
   });
 </script>
 
-<svelte:window onkeydown={clearSelectionOnEscape} onpointerdown={closeMenuOnOutside} />
+<svelte:window
+  onkeydown={clearSelectionOnEscape}
+  onpointerdown={closeMenuOnOutside}
+/>
 
 <!-- Hidden via a class, never {#if} -- unmounting would tear down the
      Pixi renderer and the roll's clock/notes along with it. -->
-<div id="pianoroll-container" class:hidden={!settings.pianorollVisible} bind:this={container}>
+<div
+  id="pianoroll-container"
+  class:hidden={!settings.pianorollVisible}
+  bind:this={container}
+>
   <PlayButton />
   <div class="legend">
     <PlaybackVolume />
@@ -160,10 +202,72 @@
       </button>
     {/if}
   </div>
+  <!-- Time-axis zoom: the magnifier sits in the corner above the keyboard (the chord lane's
+       height, KEYBOARD_WIDTH x CHORD_LANE_HEIGHT in pianoroll.ts); hovering it opens the controls over
+       the chord lane beside it, and they close when the pointer leaves. Minus = zoomed out (faster scroll, longer window), plus = zoomed in. -->
+  <div
+    class="zoom"
+    role="group"
+    onpointerenter={() => (zoomOpen = true)}
+    onpointerleave={() => (zoomOpen = false)}
+  >
+    <button
+      type="button"
+      class="zoom-toggle"
+      class:open={zoomOpen}
+      title={t("pianoRollView.zoom")}
+      aria-label={t("pianoRollView.zoom")}
+      aria-expanded={zoomOpen}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="6.5" cy="6.5" r="4.5" />
+        <path d="M10 10l4.5 4.5" />
+      </svg>
+    </button>
+    {#if zoomOpen}
+      <div class="zoom-panel" role="group" aria-label={t("pianoRollView.zoom")}>
+        <button
+          type="button"
+          class="step"
+          aria-label="-"
+          onclick={() =>
+            setZoom(Math.round((settings.rollZoom - ZOOM_STEP) * 100) / 100)}
+          >-</button
+        >
+        <div class="slider">
+          <input
+            type="range"
+            min="-1"
+            max="1"
+            step="0.02"
+            aria-label={t("pianoRollView.zoom")}
+            value={settings.rollZoom}
+            oninput={(e) => {
+              setZoom(e.currentTarget.valueAsNumber);
+              e.currentTarget.value = String(settings.rollZoom); // show the snap
+            }}
+          />
+        </div>
+        <button
+          type="button"
+          class="step"
+          aria-label="+"
+          onclick={() =>
+            setZoom(Math.round((settings.rollZoom + ZOOM_STEP) * 100) / 100)}
+          >+</button
+        >
+      </div>
+    {/if}
+  </div>
 </div>
 
 {#if menu && debugExport.range}
-  <div class="context-menu" role="menu" style:left="{menu.x}px" style:top="{menu.y}px">
+  <div
+    class="context-menu"
+    role="menu"
+    style:left="{menu.x}px"
+    style:top="{menu.y}px"
+  >
     <button
       type="button"
       role="menuitem"
@@ -202,11 +306,117 @@
      corner, and the two overlapped there. */
   .legend {
     position: absolute;
-    bottom: calc(0.6rem + 14px); /* clear of the scrollbar along the bottom edge (SCROLLBAR_HEIGHT + SCROLLBAR_BOTTOM_PADDING) */
+    bottom: calc(
+      0.6rem + 14px
+    ); /* clear of the scrollbar along the bottom edge (SCROLLBAR_HEIGHT + SCROLLBAR_BOTTOM_PADDING) */
     left: 0.6rem;
     z-index: 1;
     display: flex;
     gap: 0.4rem;
+  }
+
+  /* The corner above the keyboard, which the chord lane leaves empty. */
+  .zoom {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+    width: 34px; /* KEYBOARD_WIDTH */
+    /* CHORD_LANE_HEIGHT, less half a key row: the top key is centred on the lane's lower edge, so
+       the free corner ends half a row above it (rows = (height - lane) / (MAX_PITCH - MIN_PITCH)). */
+    height: calc(30px - (100% - 34px) / 174);
+  }
+
+  .zoom-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  .zoom-toggle:hover,
+  .zoom-toggle.open {
+    color: var(--text);
+  }
+
+  .zoom-toggle svg {
+    width: 1.1rem;
+    height: 1.1rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+  }
+
+  /* Laid over the chord lane, to the left of the icon. */
+  .zoom-panel {
+    position: absolute;
+    top: 0;
+    right: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0 0.6rem;
+    background: rgba(20, 22, 28, 0.92);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    user-select: none;
+  }
+
+  .zoom .step {
+    width: 1.4rem;
+    height: 1.4rem;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .zoom .step:hover {
+    background: #313747;
+    color: var(--text);
+  }
+
+  .slider {
+    display: flex;
+  }
+
+  /* Drawn by hand so the hover/active states don't recolor it; the color is the "other" swatch's. */
+  .zoom input[type="range"] {
+    width: 9rem;
+    height: 1rem;
+    margin: 0;
+    background: none;
+    appearance: none;
+    cursor: pointer;
+  }
+
+  .zoom input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: #aecbff55;
+  }
+
+  .zoom input[type="range"]::-webkit-slider-thumb {
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border: none;
+    border-radius: 50%;
+    background: #aecbff;
+    appearance: none;
   }
 
   .roles-toggle {

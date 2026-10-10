@@ -5,7 +5,7 @@ import { HISTORY_S } from "./recording";
 
 const MIN_PITCH = 21; // A0
 const MAX_PITCH = 108; // C8
-const PIXELS_PER_SECOND = 120;
+const PIXELS_PER_SECOND = 120; // at zoom 1; see setZoom
 // Notes are shaded between these two by velocity (the model's own
 // per-pitch activation strength for that note, in [0, 1]) rather than
 // drawn in one fixed color -- so within a chord, a note that sounded
@@ -304,6 +304,8 @@ export class PianoRoll {
   // What time the playhead is at (see clock.ts): the live clock while capture runs, a held one
   // once it stops (scrollable), a playback one while replaying the recording.
   private live = new LiveClock();
+  // Horizontal scale (how fast the roll scrolls past), set by the zoom slider.
+  private pixelsPerSecond = PIXELS_PER_SECOND;
   private clock: RollClock = this.live;
   // The range a held view can be scrolled over, recomputed every tick: from where the oldest
   // retained item reaches the left edge to the end of the recorded audio.
@@ -467,7 +469,7 @@ export class PianoRoll {
         if (!this.held) return;
         e.preventDefault();
         const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINE_PX : 1;
-        this.scrollBy(-((e.deltaY + e.deltaX) * unit * WHEEL_SCROLL_SPEED) / PIXELS_PER_SECOND);
+        this.scrollBy(-((e.deltaY + e.deltaX) * unit * WHEEL_SCROLL_SPEED) / this.pixelsPerSecond);
       },
       { passive: false },
     );
@@ -516,7 +518,7 @@ export class PianoRoll {
         this.selectPointerX = e.clientX - canvas.getBoundingClientRect().left;
         if (this.press?.moved) this.updateSelection();
       } else if (this.dragMode === "content") {
-        this.scrollBy(e.movementX / PIXELS_PER_SECOND);
+        this.scrollBy(e.movementX / this.pixelsPerSecond);
       } else if (this.dragMode === "thumb") {
         const span = this.playheadX() - this.thumbW;
         if (span > 0) this.scrollBy((-e.movementX * this.scrollSpanS()) / span);
@@ -617,7 +619,7 @@ export class PianoRoll {
 
   /** The audio time at horizontal position `x` of the canvas. */
   private timeAtX(x: number): number {
-    return this.displayS() + (x - this.playheadX()) / PIXELS_PER_SECOND;
+    return this.displayS() + (x - this.playheadX()) / this.pixelsPerSecond;
   }
 
   private get held(): HeldClock | null {
@@ -888,7 +890,14 @@ export class PianoRoll {
   }
 
   private xForTime(t: number): number {
-    return this.playheadX() + (t - this.displayS()) * PIXELS_PER_SECOND;
+    return this.playheadX() + (t - this.displayS()) * this.pixelsPerSecond;
+  }
+
+  /** Scales the time axis: 2 = twice the pixels per second (slower scroll, a shorter window).
+   * Notes bake their width when drawn, so they are redrawn; everything else follows xForTime. */
+  setZoom(zoom: number): void {
+    this.pixelsPerSecond = PIXELS_PER_SECOND * zoom;
+    for (const n of this.notes) this.drawNote(n.graphic, n);
   }
 
   setRoleColoringEnabled(enabled: boolean): void {
@@ -918,7 +927,7 @@ export class PianoRoll {
 
   private drawNote(graphic: Graphics, note: ConfirmedNote): void {
     const noteHeightPx = this.noteHeightPx(this.app.screen.height);
-    const widthPx = Math.max(2, (note.end_s - note.start_s) * PIXELS_PER_SECOND);
+    const widthPx = Math.max(2, (note.end_s - note.start_s) * this.pixelsPerSecond);
     const [colorMin, colorMax] = noteColors(note, this.roleColoringEnabled);
     const color = lerpColor(colorMin, colorMax, note.velocity);
     graphic.clear().roundRect(0, 0, widthPx, noteHeightPx, 2).fill({ color });
@@ -1191,7 +1200,7 @@ export class PianoRoll {
       retained.push(n);
       this.oldestS = Math.min(this.oldestS, n.start_s);
       const x = this.xForTime(n.start_s);
-      const right = this.xForTime(Math.max(n.end_s, n.start_s + 2 / PIXELS_PER_SECOND));
+      const right = this.xForTime(Math.max(n.end_s, n.start_s + 2 / this.pixelsPerSecond));
       // Only what is on screen is redrawn and positioned; the rest of the history just waits.
       const onScreen = right >= 0 && x <= screenWidth;
       n.graphic.visible = onScreen;
@@ -1213,7 +1222,7 @@ export class PianoRoll {
     // forward to the end of the recorded audio (a little past where the live roll stopped, which
     // runs behind the audio by the display lag). The live roll always follows the clock.
     this.minViewS = Number.isFinite(this.oldestS)
-      ? Math.min(headS, this.oldestS + this.playheadX() / PIXELS_PER_SECOND)
+      ? Math.min(headS, this.oldestS + this.playheadX() / this.pixelsPerSecond)
       : headS;
     this.maxViewS = Math.max(headS, this.rangeEndS);
     if (this.dragMode === "select" && this.press?.moved) this.updateSelection();
@@ -1270,7 +1279,7 @@ export class PianoRoll {
     this.cursorLine.scale.set(CURSOR_LINE_WIDTH, this.app.screen.height);
   }
 
-  /** The thumb spans the visible window (playheadX / PIXELS_PER_SECOND seconds) out of the whole
+  /** The thumb spans the visible window (playheadX / pixelsPerSecond seconds) out of the whole
    * scrollable history; at the stop position it sits at the right end, at the oldest at the left end. */
   private tickScrollbar(): void {
     const span = this.scrollSpanS();
@@ -1278,7 +1287,7 @@ export class PianoRoll {
     this.scrollbarLayer.visible = show;
     if (!show) return;
     const trackW = this.playheadX();
-    const visibleS = trackW / PIXELS_PER_SECOND;
+    const visibleS = trackW / this.pixelsPerSecond;
     const offsetS = Math.min(span, Math.max(0, this.clock.headS() - this.clock.displayS()));
     this.thumbW = Math.min(trackW, Math.max(SCROLLBAR_MIN_THUMB_PX, (trackW * visibleS) / (span + visibleS)));
     this.thumbX = (1 - offsetS / span) * (trackW - this.thumbW);
