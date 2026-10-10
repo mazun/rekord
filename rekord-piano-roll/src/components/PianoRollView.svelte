@@ -6,6 +6,8 @@
   import { settings } from "../settings.svelte";
   import { connectTransport, setPlaybackPartVisible } from "../transport.svelte";
   import { t } from "../i18n.svelte";
+  import PlaybackVolume from "./PlaybackVolume.svelte";
+  import PlayButton from "./PlayButton.svelte";
 
   const PARTS = ["vocal", "bass", "other"] as const;
 
@@ -127,7 +129,9 @@
 <!-- Hidden via a class, never {#if} -- unmounting would tear down the
      Pixi renderer and the roll's clock/notes along with it. -->
 <div id="pianoroll-container" class:hidden={!settings.pianorollVisible} bind:this={container}>
+  <PlayButton />
   <div class="legend">
+    <PlaybackVolume />
     {#if pipeline.noteModel?.size === "mix"}
       <!-- The 3-part model labels every note itself: one button per part, each
            showing or hiding that part's notes. -->

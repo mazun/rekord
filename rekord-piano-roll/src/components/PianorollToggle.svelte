@@ -12,7 +12,7 @@
   // since there's only ever the one.
   function toggle(visible: boolean, rememberSize = true) {
     const appShell = button.closest<HTMLElement>(".app");
-    if (appShell) setPianorollVisible(visible, appShell, button, rememberSize);
+    if (appShell) setPianorollVisible(visible, appShell, rememberSize);
   }
 
   onMount(() => {

@@ -102,21 +102,13 @@ export async function initWindowSize(): Promise<void> {
   });
 }
 
-function measureCollapsedSize(
-  appShell: HTMLElement,
-  toggleBtn: HTMLElement,
-): { width: number; height: number } {
+function measureCollapsedSize(appShell: HTMLElement): { width: number; height: number } {
   appShell.classList.add("measuring");
   const rect = appShell.getBoundingClientRect();
-  // The toggle button is position:absolute (so it can hang off the
-  // keyboard strip's would-be position even once that strip is gone),
-  // which means it's out-of-flow and never counted in this shrink-to-fit
-  // measurement -- without adding its own footprint back in, the
-  // collapsed window comes out just wide enough for the tension grid
-  // alone, and the button ends up drawn on top of it instead of past
-  // its right edge.
-  const btnWidth = toggleBtn.getBoundingClientRect().width;
-  const size = { width: Math.ceil(rect.width + btnWidth), height: Math.ceil(rect.height) };
+  // The piano-roll toggle is position:absolute, so it is out-of-flow and not
+  // part of this shrink-to-fit measurement; .chord-row's side padding
+  // (App.svelte) reserves its room instead.
+  const size = { width: Math.ceil(rect.width), height: Math.ceil(rect.height) };
   appShell.classList.remove("measuring");
   return size;
 }
@@ -133,7 +125,6 @@ function measureCollapsedSize(
 export async function setPianorollVisible(
   visible: boolean,
   appShell: HTMLElement,
-  toggleBtn: HTMLElement,
   rememberSize = true,
 ): Promise<void> {
   settings.pianorollVisible = visible;
@@ -152,7 +143,7 @@ export async function setPianorollVisible(
         heightBeforeCollapse = currentLogicalHeight;
       }
       await setResizableMode(win, false);
-      const collapsed = measureCollapsedSize(appShell, toggleBtn);
+      const collapsed = measureCollapsedSize(appShell);
       await win.setSize(new LogicalSize(collapsed.width, collapsed.height));
     } else {
       const restoredWidth = widthBeforeCollapse ?? DEFAULT_EXPANDED_WIDTH;

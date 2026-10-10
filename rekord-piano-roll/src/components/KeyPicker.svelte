@@ -40,9 +40,14 @@
     {t("keyPicker.auto")}
   </button>
   <span id="key-label">{pipeline.keyName}</span>
-  <div class="steppers">
-    <button type="button" title={t("keyPicker.semitoneUp")} aria-label={t("keyPicker.semitoneUp")} onclick={() => step(1)}>▲</button>
-    <button type="button" title={t("keyPicker.semitoneDown")} aria-label={t("keyPicker.semitoneDown")} onclick={() => step(-1)}>▼</button>
+  <div class="after-key">
+    <div class="steppers">
+      <button type="button" title={t("keyPicker.semitoneUp")} aria-label={t("keyPicker.semitoneUp")} onclick={() => step(1)}>▲</button>
+      <button type="button" title={t("keyPicker.semitoneDown")} aria-label={t("keyPicker.semitoneDown")} onclick={() => step(-1)}>▼</button>
+    </div>
+    {#if pipeline.bpm !== null}
+      <span class="bpm">{pipeline.bpm} BPM</span>
+    {/if}
   </div>
 </div>
 
@@ -90,8 +95,22 @@
     background: #262a36;
   }
 
-  .steppers {
+  /* The steppers and the tempo, side by side to the key label's right. */
+  .after-key {
     justify-self: start;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .bpm {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .steppers {
     display: flex;
     flex-direction: column;
     gap: 1px;

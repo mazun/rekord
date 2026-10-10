@@ -171,7 +171,7 @@
 </div>
 
 <style>
-  /* Sits in Toolbar's row of left-hand controls; the panel opens below it. */
+  /* Sits first in the piano roll's legend (bottom-left); the panel opens above it. */
   .volume {
     position: relative;
   }
@@ -195,8 +195,10 @@
   .speaker-btn {
     display: flex;
     align-items: center;
-    padding: 0.4rem 0.8rem;
+    padding: 0.3rem 0.6rem;
     border-radius: 6px;
+    /* Same backdrop as the legend's part buttons beside it. */
+    background: rgba(20, 22, 28, 0.7);
   }
 
   .speaker-btn:hover,
@@ -216,7 +218,7 @@
 
   .panel {
     position: absolute;
-    top: calc(100% + 0.3rem);
+    bottom: calc(100% + 0.3rem);
     left: 0;
     z-index: 2;
     display: flex;

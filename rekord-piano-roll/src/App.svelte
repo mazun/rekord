@@ -7,6 +7,7 @@
   import ChordDisplay from "./components/ChordDisplay.svelte";
   import TensionGrid from "./components/TensionGrid.svelte";
   import PianorollToggle from "./components/PianorollToggle.svelte";
+  import RecordButton from "./components/RecordButton.svelte";
   import PianoRollView from "./components/PianoRollView.svelte";
   import SettingsView from "./components/SettingsView.svelte";
 
@@ -51,6 +52,7 @@
       <KeyPicker />
     </div>
     <div class="chord-row">
+      <RecordButton />
       <ChordDisplay />
       <TensionGrid />
       <PianorollToggle />
@@ -61,20 +63,23 @@
 </main>
 
 <style>
-  /* No more standalone top bar -- the record/settings buttons are pinned
-     (Toolbar.svelte, position:absolute) to this row's left/right edges,
+  /* No more standalone top bar -- the settings button is pinned
+     (Toolbar.svelte, position:absolute) to this row's right edge,
      vertically centered on whatever height the key label gives the row,
      the same way PianorollToggle.svelte pins itself to .chord-row. */
   .key-toolbar-row {
     position: relative;
   }
 
+  /* The piano-roll toggle is pinned to the row's right edge, out of flow; the
+     side padding (mirrored on the left to keep the group centered) reserves
+     room for it so the collapsed window doesn't draw it over the tension grid. */
   .chord-row {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 2.2rem;
-    padding: 1rem;
+    padding: 1rem 2.8rem;
   }
 </style>
