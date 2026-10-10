@@ -37,7 +37,7 @@ pub enum ChordAt {
 impl ChordAt {
     pub fn label(&self, key: Option<&KeyEstimate>, mode: Accidental) -> String {
         match self {
-            ChordAt::Silence => "(silence)".to_string(),
+            ChordAt::Silence => "--".to_string(),
             ChordAt::Match(m) => m.label(key, mode),
         }
     }

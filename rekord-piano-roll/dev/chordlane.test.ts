@@ -11,7 +11,7 @@ const LAG: Record<ChordLayerId, number> = { instant: 0, settled: 0.55, confirmed
 const LAYERS: ChordLayerId[] = ["instant", "settled", "confirmed"];
 
 const chord = (t: number, emit_s: number, label: string): LayerChord => ({
-  t, emit_s, label, roman_numeral: null, root_pc: label === "(silence)" ? null : 0, quality: label === "(silence)" ? null : "maj",
+  t, emit_s, label, roman_numeral: null, root_pc: label === "--" ? null : 0, quality: label === "--" ? null : "maj",
 });
 
 type Opinion = (tau: number) => string;

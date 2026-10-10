@@ -314,7 +314,7 @@ mod tests {
         };
         let (instant, settled) = (labels(ChordLayerId::Instant), labels(ChordLayerId::Settled));
         let names = |v: &[(String, f32)]| v.iter().map(|(l, _)| l.clone()).collect::<Vec<_>>();
-        assert_eq!(names(&instant), ["C", "Am", "F", "(silence)"]);
+        assert_eq!(names(&instant), ["C", "Am", "F", "--"]);
         // (the settled layer needs 0.5 s of silence plus its 0.25 s hold: the 0.5 s tail is too short)
         assert_eq!(names(&settled), ["C", "Am", "F"]);
         for ((_, a), (_, b)) in instant.iter().zip(&settled).skip(1) {
@@ -334,7 +334,7 @@ mod tests {
         };
         let (settled, confirmed) = (labels(ChordLayerId::Settled), labels(ChordLayerId::Confirmed));
         let names = |v: &[(String, f32)]| v.iter().map(|(l, _)| l.clone()).collect::<Vec<_>>();
-        assert_eq!(names(&confirmed), ["C", "Am", "F", "(silence)"]);
+        assert_eq!(names(&confirmed), ["C", "Am", "F", "--"]);
         assert_eq!(&names(&settled)[..3], ["C", "Am", "F"]);
         for ((_, at_settled), (_, at_confirmed)) in settled.iter().zip(&confirmed) {
             assert!(at_confirmed > at_settled);

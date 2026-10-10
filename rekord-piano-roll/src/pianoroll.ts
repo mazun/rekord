@@ -83,7 +83,7 @@ const CHORD_TEXT_COLOR = 0xe8e8ec; // matches --text
 const CHORD_ROMAN_COLOR = 0x8b93a7; // matches --text-dim
 const CHORD_SILENCE_COLOR = 0x555f78;
 // Mirrors ChordAt::Silence's label() in pipeline.rs.
-const SILENCE_LABEL = "(silence)";
+const SILENCE_LABEL = "--";
 
 // Vertical piano keyboard drawn at the playhead (the "now" line notes
 // scroll into). Its left edge doubles as the playhead x, replacing the
