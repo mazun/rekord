@@ -102,6 +102,11 @@ const KEY_BORDER_COLOR = 0x0c0d12;
 // full-length. The backing gives that gap a visible, slightly lighter
 // color, same as a real keyboard's frame between/behind the keys.
 const KEYBOARD_BACKING_COLOR = 0x2a2e3a;
+// "C4"-style octave labels on the C keys; hidden when the rows are too short for the minimum size.
+const OCTAVE_LABEL_COLOR = 0x3a3f4d;
+const OCTAVE_LABEL_BOTTOM_PADDING = 1;
+const OCTAVE_LABEL_MAX_FONT_SIZE = 9; // "C4" must fit the 13.6px gap right of the black keys
+const OCTAVE_LABEL_MIN_FONT_SIZE = 7;
 
 // While stopped, the wheel/trackpad scrolls this many times faster than the content moves under
 // the pointer when dragging, since a wheel notch is only ~100 px and the history is minutes long.
@@ -279,6 +284,7 @@ export class PianoRoll {
   private chordPrevHeadS = -Infinity;
   private guides = new Graphics();
   private keyboardBacking = new Graphics();
+  private octaveLabels = new Map<number, Text>();
   private keys = new Map<number, KeySprite>();
   private notes: NoteSprite[] = [];
   // Whether a session has ever started (nothing is drawn before that).
@@ -520,6 +526,19 @@ export class PianoRoll {
       key.graphic.x = noteAreaWidth;
       this.redrawKey(pitch);
     }
+    // Octave labels sit on each C key, only when they fit inside the key's row at a readable size.
+    const rowHeight = (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
+    // Right of the black key the C key is 1.5 rows tall (its own row plus the lower half of the C#
+    // row), and the label goes there for the extra height.
+    const fontSize = Math.min(OCTAVE_LABEL_MAX_FONT_SIZE, rowHeight * 1.5 * 0.8);
+    const showOctaves = fontSize >= OCTAVE_LABEL_MIN_FONT_SIZE;
+    for (const [pitch, text] of this.octaveLabels) {
+      text.visible = showOctaves;
+      if (!showOctaves) continue;
+      text.style.fontSize = fontSize;
+      text.x = noteAreaWidth + KEYBOARD_WIDTH - 1;
+      text.y = this.pitchToY(pitch, height) + rowHeight / 2 - OCTAVE_LABEL_BOTTOM_PADDING; // bottom of the key
+    }
     this.relayoutNotes();
   }
 
@@ -534,6 +553,17 @@ export class PianoRoll {
       const graphic = new Graphics();
       keyboardLayer.addChild(graphic);
       this.keys.set(pitch, { graphic, isBlack: isBlackKey(pitch), active: false });
+    }
+    for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch++) {
+      if (pitch % 12 !== 0) continue;
+      // Scientific pitch notation: MIDI 60 is C4.
+      const text = new Text({
+        text: `C${pitch / 12 - 1}`,
+        style: { fontFamily: CHORD_FONT_FAMILY, fontWeight: "600", fill: OCTAVE_LABEL_COLOR },
+      });
+      text.anchor.set(1, 1);
+      keyboardLayer.addChild(text);
+      this.octaveLabels.set(pitch, text);
     }
   }
 
