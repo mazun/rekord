@@ -52,8 +52,10 @@
       <KeyPicker />
     </div>
     <div class="chord-row">
-      <RecordButton />
-      <ChordDisplay />
+      <div class="chord-group">
+        <RecordButton />
+        <ChordDisplay />
+      </div>
       <TensionGrid />
       <PianorollToggle />
     </div>
@@ -74,6 +76,16 @@
   /* The piano-roll toggle is pinned to the row's right edge, out of flow; the
      side padding (mirrored on the left to keep the group centered) reserves
      room for it so the collapsed window doesn't draw it over the tension grid. */
+  /* Top-aligned so the record button lines up with the chord label itself
+     (the label is a fixed 3.24rem tall, ChordDisplay.svelte; the button is
+     taller and hangs below it), not with the label plus the roman numeral
+     under it. */
+  .chord-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.4rem;
+  }
+
   .chord-row {
     position: relative;
     display: flex;

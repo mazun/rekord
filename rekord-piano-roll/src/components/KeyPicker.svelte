@@ -58,7 +58,10 @@
   .key-row {
     position: relative;
     display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    /* Fixed middle column: the label's text length varies with the key
+       ("C Major (A Minor)" vs "C♯ Major (A♯ Minor)"), and an auto column
+       made the Auto button and steppers shift with it. */
+    grid-template-columns: 1fr 13rem 1fr;
     align-items: center;
     column-gap: 0.5rem;
     padding-top: 0.3rem;
@@ -69,6 +72,8 @@
     color: var(--text-dim);
     letter-spacing: 0.04em;
     padding: 0.1rem 0.4rem;
+    text-align: center;
+    white-space: nowrap;
   }
 
   button {

@@ -26,7 +26,9 @@
        in the DOM, so without this it paints on top and swallows clicks
        on this button even where .key-row has no visible content. */
     z-index: 1;
-    top: 50%;
+    /* .key-row has 0.3rem padding-top above the label, so the label's
+       center sits half of that below the row's center. */
+    top: calc(50% + 0.15rem);
     transform: translateY(-50%);
     padding: 0.4rem 1.1rem;
     border-radius: 6px;
@@ -37,10 +39,10 @@
 
   #settings-btn {
     right: 0;
-    /* Matches PianorollToggle.svelte's own right-inset override exactly,
-       so the gear's glyph lines up on the same x as the piano-roll
-       toggle icon below it, not just the two buttons' boxes. */
-    padding-right: 4px !important;
+    /* The piano-roll toggle's icon (26px wide, 4px right padding) is centered
+       13 + 4 = 17px from the right edge; the gear is 1.2rem wide, so this
+       padding puts its center on that same x. */
+    padding-right: calc(17px - 0.6rem) !important;
     border: none;
     background: none;
     display: flex;

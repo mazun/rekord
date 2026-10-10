@@ -36,7 +36,9 @@
     flex: none;
     display: flex;
     align-items: center;
-    padding: 0.4rem;
+    /* 3.12rem icon + padding = 3.888rem (1.2x the chord label's 3.24rem height,
+       ChordDisplay.svelte). */
+    padding: 0.384rem;
     border: none;
     border-radius: 50%;
     /* A faint disc in both states, so it reads as a button. */
@@ -56,8 +58,8 @@
 
   svg {
     display: block;
-    width: 2.6rem;
-    height: 2.6rem;
+    width: 3.12rem;
+    height: 3.12rem;
     fill: currentColor;
   }
 

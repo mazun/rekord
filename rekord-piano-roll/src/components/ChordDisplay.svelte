@@ -1,9 +1,12 @@
 <script lang="ts">
   import { pipeline } from "../pipeline.svelte";
+  import { fitText } from "../fitText";
 </script>
 
 <div class="chord-block">
-  <div id="chord-label">{pipeline.chord}</div>
+  <!-- Long names (e.g. "C♯sus4(7)/G♯") shrink to fit the box instead of
+       spilling over the tension grid; the box's height is fixed in CSS. -->
+  <div id="chord-label"><span use:fitText={pipeline.chord}>{pipeline.chord}</span></div>
   <div id="roman-label">{pipeline.roman}</div>
 </div>
 
@@ -21,9 +24,12 @@
   #chord-label {
     font-size: 2.7rem;
     font-weight: 600;
-    min-height: 1.2em;
+    /* Fixed height (1.2 x 2.7rem): the inner span's font may shrink for long
+       names, and the row must keep its height regardless. */
+    height: 3.24rem;
     letter-spacing: 0.02em;
-    line-height: 1.1;
+    line-height: 3.24rem;
+    white-space: nowrap;
   }
 
   #roman-label {
