@@ -18,12 +18,19 @@
 //! below doesn't have to change if that support lands later.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+
+/// How often the capture worker checks whether the device has gone quiet.
+const SILENCE_POLL: Duration = Duration::from_millis(50);
+/// Silence is only fed in once the device is this far behind real time, so ordinary packet
+/// jitter never inserts any.
+const MIN_SILENCE_FILL_S: f64 = 0.1;
 
 /// The capture device's native format, as handed to a `CaptureTap`.
 #[derive(Clone, Copy, Debug)]
@@ -140,39 +147,61 @@ pub fn spawn_loopback_capture<const N: usize>(
         if let Some(tap) = tap.as_mut() {
             tap.begin(CaptureFormat { sample_rate: source_rate as u32, channels });
         }
-        while let Ok(raw_chunk) = raw_rx.recv() {
-            let total_drops = dropped_chunks.load(Ordering::Relaxed);
-            if total_drops != last_reported_drops {
-                eprintln!(
-                    "warning: {} audio chunk(s) dropped (consumer falling behind)",
-                    total_drops - last_reported_drops
-                );
-                last_reported_drops = total_drops;
+        // Loopback sends nothing while nothing is playing, which would freeze the audio time
+        // (every timestamp downstream) while the wall clock goes on, so the roll would draw the
+        // next sound that far in the past. Silence is fed in for whatever the device didn't
+        // deliver, keeping audio time = time since capture start.
+        let started_at = Instant::now();
+        let mut fed_frames = 0u64;
+        loop {
+            let delivered = match raw_rx.recv_timeout(SILENCE_POLL) {
+                Ok(raw_chunk) => Some(raw_chunk),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
+            };
+            let due_frames = (started_at.elapsed().as_secs_f64() * source_rate as f64) as u64;
+            let missing_frames = due_frames.saturating_sub(fed_frames);
+            let mut chunks: Vec<Vec<f32>> = Vec::new();
+            if missing_frames as f64 >= MIN_SILENCE_FILL_S * source_rate as f64 {
+                chunks.push(vec![0.0; missing_frames as usize * channels]);
             }
+            chunks.extend(delivered);
 
-            if let Some(tap) = tap.as_mut() {
-                tap.chunk(&raw_chunk);
-            }
-            pending.extend(downmix(&raw_chunk, channels));
-            while pending.len() >= hop_frames_target {
-                let chunk: Vec<f32> = pending.drain(..hop_frames_target).collect();
-                // Every resampler consumes the same native-rate chunk, so
-                // they stay in lockstep -- one output tuple per chunk,
-                // never a partial one if a single rate's resampler errors.
-                let mut outputs: [Vec<f32>; N] = std::array::from_fn(|_| Vec::new());
-                let mut ok = true;
-                for (resampler, out) in resamplers.iter_mut().zip(outputs.iter_mut()) {
-                    match resampler.process(&[chunk.as_slice()], None) {
-                        Ok(mut result) => *out = result.pop().unwrap_or_default(),
-                        Err(e) => {
-                            eprintln!("warning: resampler error, dropping this chunk: {e}");
-                            ok = false;
-                            break;
+            for raw_chunk in chunks {
+                fed_frames += (raw_chunk.len() / channels) as u64;
+                let total_drops = dropped_chunks.load(Ordering::Relaxed);
+                if total_drops != last_reported_drops {
+                    eprintln!(
+                        "warning: {} audio chunk(s) dropped (consumer falling behind)",
+                        total_drops - last_reported_drops
+                    );
+                    last_reported_drops = total_drops;
+                }
+
+                if let Some(tap) = tap.as_mut() {
+                    tap.chunk(&raw_chunk);
+                }
+                pending.extend(downmix(&raw_chunk, channels));
+                while pending.len() >= hop_frames_target {
+                    let chunk: Vec<f32> = pending.drain(..hop_frames_target).collect();
+                    // Every resampler consumes the same native-rate chunk, so
+                    // they stay in lockstep -- one output tuple per chunk,
+                    // never a partial one if a single rate's resampler errors.
+                    let mut outputs: [Vec<f32>; N] = std::array::from_fn(|_| Vec::new());
+                    let mut ok = true;
+                    for (resampler, out) in resamplers.iter_mut().zip(outputs.iter_mut()) {
+                        match resampler.process(&[chunk.as_slice()], None) {
+                            Ok(mut result) => *out = result.pop().unwrap_or_default(),
+                            Err(e) => {
+                                eprintln!("warning: resampler error, dropping this chunk: {e}");
+                                ok = false;
+                                break;
+                            }
                         }
                     }
-                }
-                if ok && tx.send(outputs).is_err() {
-                    return; // consumer gone
+                    if ok && tx.send(outputs).is_err() {
+                        return; // consumer gone
+                    }
                 }
             }
         }

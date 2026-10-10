@@ -228,8 +228,11 @@ Beat This! small0 + madmom's DBN, ported from harmonica-repro
   audio; downmix happens on that thread). It lives in Tauri managed state
   (`SharedRing`), outlives `stop_capture` (which returns its `RecordingInfo`) and
   is replaced when the next capture begins. The time base is audio delivered,
-  not wall time: loopback sends nothing during silence, so silent stretches are
-  absent from the recording (and the live roll's wall clock drifts against it).
+  not wall time, but loopback sends nothing during silence, so the capture
+  worker feeds zeros for whatever the device didn't deliver (once >0.1 s behind
+  real time). Without that, audio time froze in silence and the live roll's
+  wall clock drifted against it: open notes after a long pause were drawn
+  screen-wide. Silent stretches are therefore in the recording.
 - `playback/engine.rs`: an engine thread owns the cpal output stream and renders
   10 ms blocks ahead; the callback pops them and applies a 5 ms fade on
   pause/seek. Recorded audio is copied as is (linear interpolation only if the
