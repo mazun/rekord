@@ -137,6 +137,10 @@ const SELECTION_FILL_ALPHA = 0.16;
 const SELECTION_EDGE_ALPHA = 0.9;
 const SELECTION_EDGE_WIDTH = 2;
 const SELECTION_MIN_S = 0.05;
+/** How close (px) a press must be to a selection edge to drag it. */
+const SELECTION_GRAB_PX = 6;
+/** Beats further apart than this (a gap in the detected beats) have no eighth-note grid between them. */
+const SNAP_MAX_BEAT_GAP_S = 2;
 // The playback cursor while it travels along the roll (before it reaches the keyboard edge).
 const CURSOR_COLOR = 0xffffff;
 const CURSOR_LINE_WIDTH = 2;
@@ -327,6 +331,10 @@ export class PianoRoll {
   private selection: { startS: number; endS: number } | null = null;
   private selectAnchorS = 0;
   private selectPointerX = 0;
+  /** The current select drag started on an edge of the existing selection (adjusting it). */
+  private edgeGrab = false;
+  /** Alt is held during the select drag or click: no snapping to eighth notes. */
+  private freeSelect = false;
   // Space is held: dragging scrolls instead of selecting.
   private spaceHeld = false;
   private removeKeyListeners: (() => void) | null = null;
@@ -481,16 +489,29 @@ export class PianoRoll {
         canvas.style.cursor = "grabbing";
       } else if (x < this.playheadX()) {
         // The selection starts once the press has moved (a click is a click, not an empty range).
+        // Grabbing one of its edges instead drags that edge, the other one staying as the anchor.
+        const edge = this.edgeAtX(x);
         this.dragMode = "select";
-        this.selectAnchorS = this.press?.tS ?? this.timeAtX(x);
+        this.edgeGrab = edge !== null;
+        if (edge !== null && this.selection) {
+          this.selectAnchorS = edge === "start" ? this.selection.endS : this.selection.startS;
+        } else {
+          this.freeSelect = e.altKey;
+          this.selectAnchorS = this.snapTime(this.press?.tS ?? this.timeAtX(x));
+        }
         this.selectPointerX = x;
       }
     });
     canvas.addEventListener("pointermove", (e) => {
+      if (this.dragMode === "none" && !this.spaceHeld && this.clock.kind !== "live") {
+        const x = e.clientX - canvas.getBoundingClientRect().left;
+        canvas.style.cursor = x < this.playheadX() && this.edgeAtX(x) !== null ? "ew-resize" : "";
+      }
       if (this.press && !this.press.moved && Math.hypot(e.clientX - this.press.clientX, e.clientY - this.press.clientY) > CLICK_SLOP_PX) {
         this.press.moved = true;
       }
       if (this.dragMode === "select") {
+        this.freeSelect = e.altKey;
         this.selectPointerX = e.clientX - canvas.getBoundingClientRect().left;
         if (this.press?.moved) this.updateSelection();
       } else if (this.dragMode === "content") {
@@ -500,7 +521,8 @@ export class PianoRoll {
         if (span > 0) this.scrollBy((-e.movementX * this.scrollSpanS()) / span);
       }
     });
-    canvas.addEventListener("pointerup", () => {
+    canvas.addEventListener("pointerup", (e) => {
+      this.freeSelect = e.altKey;
       const press = this.press;
       const mode = this.dragMode;
       this.press = null;
@@ -509,15 +531,18 @@ export class PianoRoll {
       if (mode === "select" && press?.moved) {
         const range = this.selection;
         if (!range || range.endS - range.startS < SELECTION_MIN_S) this.setSelection(null);
+        // The playhead goes to the range's left edge.
+        else this.onSeekRequest?.(range.startS);
         return;
       }
+      if (mode === "select" && this.edgeGrab) return; // a click on an edge changes nothing
       const isClick = press && !press.moved && mode !== "thumb" && performance.now() - press.ms < CLICK_MAX_MS;
       // Not on the keyboard: its keys aren't positions.
       if (isClick && press.x < this.playheadX()) {
         // A click inside the selection only moves the position (to play or look at it).
         const range = this.selection;
         if (range && (press.tS < range.startS || press.tS > range.endS)) this.setSelection(null);
-        this.onSeekRequest?.(press.tS);
+        this.onSeekRequest?.(this.snapTime(press.tS));
       }
     });
     canvas.addEventListener("pointercancel", () => {
@@ -537,11 +562,42 @@ export class PianoRoll {
    * the view scrolls under it, so this is also called every frame during the drag). */
   private updateSelection(): void {
     const x = Math.min(this.playheadX(), Math.max(0, this.selectPointerX));
-    const t = this.timeAtX(x);
+    const t = this.snapTime(this.timeAtX(x));
     this.setSelection({ startS: Math.min(this.selectAnchorS, t), endS: Math.max(this.selectAnchorS, t) });
   }
 
-  private setSelection(range: { startS: number; endS: number } | null): void {
+  /** `t` snapped to the nearest eighth note: a beat line or the middle between two neighbouring ones.
+   * Not snapped while Alt is held (the DAW convention for free movement), outside the detected beats,
+   * or across a gap in them. */
+  private snapTime(t: number): number {
+    if (this.freeSelect) return t;
+    const beats = this.beatLines.filter((b) => !b.dying).map((b) => b.targetT).sort((a, b) => a - b);
+    if (beats.length < 2 || t < beats[0] || t > beats[beats.length - 1]) return t;
+    let best = t;
+    let bestD = Infinity;
+    const consider = (c: number) => {
+      const d = Math.abs(c - t);
+      if (d < bestD) [best, bestD] = [c, d];
+    };
+    for (let i = 0; i < beats.length; i++) {
+      if (beats[i] > t + SNAP_MAX_BEAT_GAP_S) break;
+      consider(beats[i]);
+      if (i + 1 < beats.length && beats[i + 1] - beats[i] <= SNAP_MAX_BEAT_GAP_S) consider((beats[i] + beats[i + 1]) / 2);
+    }
+    return best;
+  }
+
+  /** Which edge of the selection lies within grabbing distance of canvas position `x`. */
+  private edgeAtX(x: number): "start" | "end" | null {
+    const range = this.selection;
+    if (!range) return null;
+    const dStart = Math.abs(x - this.xForTime(range.startS));
+    const dEnd = Math.abs(x - this.xForTime(range.endS));
+    if (Math.min(dStart, dEnd) > SELECTION_GRAB_PX) return null;
+    return dStart <= dEnd ? "start" : "end";
+  }
+
+  private setSelection(range:{ startS: number; endS: number } | null): void {
     const same = range === null ? this.selection === null : this.selection?.startS === range.startS && this.selection.endS === range.endS;
     if (same) return;
     this.selection = range;
