@@ -247,6 +247,12 @@ pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScor
                 inside += c;
                 missing += (MISSING_FLOOR - c).max(0.0);
             }
+            if tpl.quality == "aug" {
+                // The Blackadder chord's bass: the tone a whole tone above the root is part of the
+                // chord when the bass plays it, not a stray note outside the triad.
+                let above = (root + 2) % 12;
+                inside += share[above] * bass_share[above];
+            }
             scores[root * TEMPLATE_COUNT + index] = inside - OUTSIDE_WEIGHT * (1.0 - inside)
                 - MISSING_PENALTY * missing
                 - SIZE_PENALTY * tpl.intervals.len() as f32
@@ -325,6 +331,20 @@ mod tests {
         // Bass on G♭ itself (root position): the root bonus decides, not the whole-tone one.
         let scores = aug_score(6);
         assert!(scores[1].1 > scores[0].1 && scores[1].1 > scores[2].1, "{scores:?}");
+    }
+
+    #[test]
+    fn the_whole_tone_bass_is_part_of_the_aug_chord_not_a_seventh() {
+        // E♭ G B over an F bass (shares from a recording): the Blackadder chord E♭aug/F, which a G7
+        // without its 5th and with a stray E♭ also fits; the F is the chord's bass, not a 7th.
+        let mut all = [0.0f32; 12];
+        for (pc, w) in [(3, 0.17), (5, 0.33), (7, 0.17), (11, 0.33)] {
+            all[pc] = w;
+        }
+        let mut bass = [0.0f32; 12];
+        bass[5] = 1.0;
+        let m = match_chroma(&all, &bass, None).unwrap();
+        assert_eq!((m.root_pc, m.quality, m.bass_pc), (3, "aug", Some(5)));
     }
 }
 
