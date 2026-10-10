@@ -18,8 +18,9 @@
     else if (pipeline.status === "idle") startCapture();
   }
 
-  // Replays what was just recorded (see transport.svelte.ts): play / pause toggle. Not while
-  // capturing -- the loopback would record the playback -- or when there is nothing recorded.
+  // Replays what was just recorded (see transport.svelte.ts): play / pause toggle. While capturing
+  // only with a marker placed (capture is then stopped first -- the loopback would record the
+  // playback); otherwise not when there is nothing recorded.
   const playing = $derived(transport.state === "playing");
   const playLabel = $derived(playing ? t("toolbar.pause") : t("toolbar.play"));
 </script>
@@ -49,7 +50,9 @@
   type="button"
   title={playLabel}
   aria-label={playLabel}
-  disabled={pipeline.status !== "idle" || !pipeline.hasRecording}
+  disabled={pipeline.status === "running"
+    ? !transport.marked
+    : pipeline.status !== "idle" || !pipeline.hasRecording}
   onclick={togglePlayback}
 >
   <svg viewBox="0 0 16 16" aria-hidden="true">

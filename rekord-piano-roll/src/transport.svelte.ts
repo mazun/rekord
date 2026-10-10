@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { NotePart, PianoRoll } from "./pianoroll";
-import { pipeline, showDisplay } from "./pipeline.svelte";
+import { pipeline, showDisplay, stopCapture } from "./pipeline.svelte";
 import { recording } from "./recording";
 import { settings, type VoicePart } from "./settings.svelte";
 
@@ -18,7 +18,14 @@ import { settings, type VoicePart } from "./settings.svelte";
 
 export type PlaybackState = "stopped" | "playing" | "paused";
 
-export const transport = $state({ state: "stopped" as PlaybackState });
+// `marked`: a marker is placed on the roll (mirrors PianoRoll.marker, which is not reactive). While
+// capture runs it is what lets Play stop the capture and start from there.
+export const transport = $state({ state: "stopped" as PlaybackState, marked: false });
+
+function setMarker(t: number | null): void {
+  roll?.setMarker(t);
+  transport.marked = t !== null;
+}
 
 // Starting this close to the end of the recording (stopped, nothing chosen) plays from the left
 // edge of the roll instead: what the user was just looking at, rather than a fraction of a second.
@@ -100,7 +107,7 @@ async function playFrom(fromS: number): Promise<void> {
   if (!roll) return;
   const myGen = ++gen;
   const hadPlayback = transport.state !== "stopped";
-  roll.setMarker(null);
+  setMarker(null);
   transport.state = "playing";
   roll.startPlayback(fromS);
   if (hadPlayback) {
@@ -125,6 +132,13 @@ async function playFrom(fromS: number): Promise<void> {
 /** The Play button: start, pause or resume. */
 export async function togglePlayback(): Promise<void> {
   if (!roll) return;
+  if (pipeline.status === "running") {
+    // Capture is running and a marker is placed: stop capturing, then play from the marker.
+    if (!transport.marked) return;
+    await stopCapture();
+    if (recording.hasAudio) await playFrom(startPositionS());
+    return;
+  }
   if (transport.state === "stopped") {
     if (recording.hasAudio) await playFrom(startPositionS());
   } else if (transport.state === "playing") {
@@ -150,7 +164,7 @@ export async function togglePlayback(): Promise<void> {
  * next Play starts from (also while capture runs, where it only marks the time). */
 async function seekTo(t: number): Promise<void> {
   if (roll && pipeline.status === "running") {
-    roll.setMarker(t);
+    setMarker(t);
     return;
   }
   // Not while capture is starting up or stopping (the roll still shows the previous recording
@@ -158,7 +172,7 @@ async function seekTo(t: number): Promise<void> {
   if (!roll || pipeline.status !== "idle" || !recording.hasAudio) return;
   const target = clampToRecording(t);
   if (transport.state === "playing") await playFrom(target);
-  else roll.setMarker(target);
+  else setMarker(target);
 }
 
 /** Stops playback (if any), leaving the roll where it is. */
@@ -166,7 +180,7 @@ export async function stopPlayback(): Promise<void> {
   const wasPlaying = transport.state !== "stopped";
   transport.state = "stopped";
   gen++;
-  roll?.setMarker(null);
+  setMarker(null);
   if (!wasPlaying) return;
   roll?.stopPlayback();
   try {
