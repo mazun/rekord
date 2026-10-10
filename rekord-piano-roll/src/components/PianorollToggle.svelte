@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { settings } from "../settings.svelte";
-  import { setPianorollVisible } from "../windowSize";
+  import { initWindowSize, setPianorollVisible } from "../windowSize";
   import pianorollToggleIconSvg from "../assets/pianoroll-toggle-icon.svg?raw";
   import { t } from "../i18n.svelte";
 
@@ -20,8 +20,11 @@
     // starts at tauri.conf.json's expanded default (800x600) on launch, so
     // this shrinks it down to match. It deliberately doesn't record the
     // current size as what "show" restores to (see windowSize.ts) -- after
-    // a webview reload the window is already collapsed.
-    if (!settings.pianorollVisible) toggle(false, false);
+    // a webview reload the window is already collapsed. The saved expanded
+    // size is applied first so a visible roll reopens at its last size.
+    initWindowSize().then(() => {
+      if (!settings.pianorollVisible) toggle(false, false);
+    });
   });
 </script>
 

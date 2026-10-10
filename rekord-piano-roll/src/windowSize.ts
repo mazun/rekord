@@ -50,6 +50,58 @@ async function setResizableMode(
   }
 }
 
+// The expanded (piano roll shown) size is remembered across launches. Only
+// that size is saved: the collapsed and settings sizes are derived, and
+// both are fixed-size modes the user can't drag.
+const SIZE_STORAGE_KEY = "chord.expandedWindowSize";
+
+function loadSavedSize(): { width: number; height: number } | null {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SIZE_STORAGE_KEY) ?? "null");
+    if (stored && Number.isFinite(stored.width) && Number.isFinite(stored.height)) {
+      return {
+        width: Math.max(DEFAULT_EXPANDED_WIDTH, Math.round(stored.width)),
+        height: Math.max(DEFAULT_EXPANDED_HEIGHT, Math.round(stored.height)),
+      };
+    }
+  } catch {
+    // Corrupt entry: fall back to the defaults.
+  }
+  return null;
+}
+
+// Call once at startup, before the collapsed-state replay. Applies the saved
+// size (or, if the roll starts hidden, arms it as what "show" restores to)
+// and starts saving later user resizes.
+export async function initWindowSize(): Promise<void> {
+  const saved = loadSavedSize();
+  if (saved) {
+    widthBeforeCollapse = saved.width;
+    heightBeforeCollapse = saved.height;
+    if (settings.pianorollVisible) {
+      try {
+        await getCurrentWindow().setSize(new LogicalSize(saved.width, saved.height));
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
+
+  let timer: number | undefined;
+  window.addEventListener("resize", () => {
+    clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      // Collapsed and settings sizes are not the user's expanded size.
+      if (!settings.pianorollVisible || widthBeforeSettings !== null) return;
+      if (window.innerWidth < DEFAULT_EXPANDED_WIDTH || window.innerHeight < DEFAULT_EXPANDED_HEIGHT) return;
+      localStorage.setItem(
+        SIZE_STORAGE_KEY,
+        JSON.stringify({ width: window.innerWidth, height: window.innerHeight }),
+      );
+    }, 300);
+  });
+}
+
 function measureCollapsedSize(
   appShell: HTMLElement,
   toggleBtn: HTMLElement,
