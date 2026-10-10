@@ -516,11 +516,9 @@ export class PianoRoll {
     this.keyboardBacking.x = noteAreaWidth;
     this.keyboardBacking.y = 0;
 
-    const rowHeight = (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
     for (const [pitch, key] of this.keys) {
       key.graphic.x = noteAreaWidth;
-      key.graphic.y = this.pitchToY(pitch, height) - rowHeight / 2;
-      this.redrawKey(key, rowHeight);
+      this.redrawKey(pitch);
     }
   }
 
@@ -538,25 +536,54 @@ export class PianoRoll {
     }
   }
 
-  private redrawKey(key: KeySprite, rowHeight: number): void {
-    const width = key.isBlack ? BLACK_KEY_WIDTH : KEYBOARD_WIDTH;
-    const color = key.active
-      ? key.isBlack
-        ? BLACK_KEY_ACTIVE_COLOR
-        : WHITE_KEY_ACTIVE_COLOR
-      : key.isBlack
-        ? BLACK_KEY_COLOR
-        : WHITE_KEY_COLOR;
-    key.graphic.clear().rect(0, 0, width, rowHeight).fill({ color });
-    if (!key.isBlack) key.graphic.stroke({ width: 1, color: KEY_BORDER_COLOR });
+  /** Draws one key's row. All edges are snapped to device pixels, with neighboring rows sharing
+   * their boundary exactly: fractional edges antialiased into faint seams (extra lines, ragged
+   * edges) and 1px lines at fractional y smeared over two pixel rows. */
+  private redrawKey(pitch: number): void {
+    const key = this.keys.get(pitch);
+    if (!key) return;
+    const { height } = this.app.screen;
+    const res = this.app.renderer.resolution;
+    const snap = (v: number) => Math.round(v * res) / res;
+    const line = 1;
+    const rowHeight = (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
+    const top = snap(this.pitchToY(pitch, height) - rowHeight / 2);
+    const bottom = snap(this.pitchToY(pitch, height) + rowHeight / 2);
+    key.graphic.y = top;
+    const h = bottom - top;
+    const g = key.graphic.clear();
+    if (!key.isBlack) {
+      g.rect(0, 0, KEYBOARD_WIDTH, h).fill({ color: key.active ? WHITE_KEY_ACTIVE_COLOR : WHITE_KEY_COLOR });
+      // A line only toward a neighboring white key (E|F, B|C); next to a black key the white key
+      // continues and the line is drawn in the black key's row instead.
+      if (!isBlackKey(pitch + 1)) g.rect(0, 0, KEYBOARD_WIDTH, line);
+      if (!isBlackKey(pitch - 1)) g.rect(0, h - line, KEYBOARD_WIDTH, line);
+      g.fill({ color: KEY_BORDER_COLOR });
+      return;
+    }
+    // Like a real piano, the white keys continue beside the black key: the part of this row right
+    // of the black key belongs to the white key above (upper half) and below (lower half), with
+    // a single boundary line through the row's center.
+    const mid = snap(h / 2 - line / 2);
+    const gapX = BLACK_KEY_WIDTH;
+    const gapW = KEYBOARD_WIDTH - BLACK_KEY_WIDTH;
+    const whiteColor = (p: number) => (this.keys.get(p)?.active ? WHITE_KEY_ACTIVE_COLOR : WHITE_KEY_COLOR);
+    g.rect(gapX, 0, gapW, mid).fill({ color: whiteColor(pitch + 1) });
+    g.rect(gapX, mid + line, gapW, h - mid - line).fill({ color: whiteColor(pitch - 1) });
+    g.rect(gapX, mid, gapW, line).fill({ color: KEY_BORDER_COLOR });
+    g.rect(0, 0, BLACK_KEY_WIDTH, h).fill({ color: key.active ? BLACK_KEY_ACTIVE_COLOR : BLACK_KEY_COLOR });
   }
 
   private setKeyActive(pitch: number, active: boolean): void {
     const key = this.keys.get(pitch);
     if (!key || key.active === active) return;
     key.active = active;
-    const rowHeight = (this.app.screen.height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
-    this.redrawKey(key, rowHeight);
+    this.redrawKey(pitch);
+    // A white key's color also shows in the gaps of its neighboring black-key rows.
+    if (!key.isBlack) {
+      this.redrawKey(pitch - 1);
+      this.redrawKey(pitch + 1);
+    }
   }
 
   // Rows fill [CHORD_LANE_HEIGHT, height], not [0, height] -- the chord lane at the top is
