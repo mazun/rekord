@@ -125,6 +125,10 @@ const SCROLLBAR_THUMB_ACTIVE_COLOR = 0x9aaad8;
 // A press that moves less than this (px) and is released within CLICK_MAX_MS is a click -- it sets
 // the playback position -- not a drag that scrolls.
 const CLICK_SLOP_PX = 4;
+// A select drag with the pointer outside the note area scrolls the view (px of roll per second).
+const AUTOSCROLL_BASE_PX_PER_S = 200;
+const AUTOSCROLL_PX_PER_S_PER_PX = 8;
+const AUTOSCROLL_MAX_PX_PER_S = 2500;
 const CLICK_MAX_MS = 500;
 // The playback position marker: a line the full height of the roll, with a small flag on the chord
 // lane.
@@ -581,6 +585,18 @@ export class PianoRoll {
       const t = this.timeAtX(x);
       if (t >= range.startS && t <= range.endS && this.onSelectionContextMenu?.(e.clientX, e.clientY)) e.preventDefault();
     });
+  }
+
+  /** Scrolls the held view while a select drag has the pointer outside the note area, faster the
+   * further out it is. */
+  private autoScrollForSelect(dtS: number): void {
+    if (!this.held) return;
+    const x = this.selectPointerX;
+    const right = this.playheadX();
+    const over = x < 0 ? x : x > right ? x - right : 0; // negative: past the left edge
+    if (over === 0) return;
+    const pxPerS = Math.min(AUTOSCROLL_MAX_PX_PER_S, AUTOSCROLL_BASE_PX_PER_S + Math.abs(over) * AUTOSCROLL_PX_PER_S_PER_PX);
+    this.scrollBy(Math.sign(-over) * (pxPerS * dtS) / this.pixelsPerSecond);
   }
 
   /** The selection between the anchor and the pointer's current time (it follows the pointer while
@@ -1266,7 +1282,10 @@ export class PianoRoll {
       ? Math.min(headS, this.oldestS + this.playheadX() / this.pixelsPerSecond)
       : headS;
     this.maxViewS = Math.max(headS, this.rangeEndS);
-    if (this.dragMode === "select" && this.press?.moved) this.updateSelection();
+    if (this.dragMode === "select" && this.press?.moved) {
+      this.autoScrollForSelect(this.app.ticker.deltaMS / 1000);
+      this.updateSelection();
+    }
     this.tickSelection();
     this.tickMarker();
     this.tickCursor();
