@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { debugExport, exportSelection, initDebugExport, setExportRange } from "../debugExport.svelte";
   import { PianoRoll } from "../pianoroll";
   import { connectPipeline, pipeline, startCapture, stopCapture } from "../pipeline.svelte";
   import { settings } from "../settings.svelte";
@@ -27,6 +28,36 @@
     roll?.setRoleColoringEnabled(rolesEnabled);
   }
 
+  // Esc closes the context menu, else drops the selection.
+  function clearSelectionOnEscape(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    if (menu) menu = null;
+    else roll?.clearSelection();
+  }
+
+  // The selection's context menu (debug export), at the client position of the right-click.
+  let menu = $state<{ x: number; y: number } | null>(null);
+
+  function closeMenuOnOutside(event: PointerEvent) {
+    if (menu && !(event.target as HTMLElement).closest(".context-menu")) menu = null;
+  }
+
+  async function exportFromMenu() {
+    await exportSelection();
+    // Leave the result readable for a moment, then close.
+    setTimeout(() => (menu = null), 1200);
+  }
+
+  const exportLabel = $derived(
+    debugExport.status === "busy"
+      ? t("debugExport.busy")
+      : debugExport.status === "done"
+        ? t("debugExport.done")
+        : debugExport.status === "failed"
+          ? t("debugExport.failed")
+          : `${t("debugExport.export")} (${debugExport.range ? (debugExport.range.endS - debugExport.range.startS).toFixed(1) : 0} s)`,
+  );
+
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
@@ -39,6 +70,17 @@
       }
       roll = created;
       roll.setRoleColoringEnabled(rolesEnabled);
+      roll.onSelectionChange = (range) => {
+        menu = null;
+        setExportRange(range);
+      };
+      // Right-clicking the selection offers the debug export (only in builds that have it).
+      roll.onSelectionContextMenu = (x, y) => {
+        if (!debugExport.enabled) return false;
+        menu = { x, y };
+        return true;
+      };
+      void initDebugExport();
       const off = await connectPipeline({
         onStarted: (totalLatencyS) => roll?.reset(totalLatencyS),
         onNoteStarted: (note) => roll?.startNote(note),
@@ -80,6 +122,8 @@
   });
 </script>
 
+<svelte:window onkeydown={clearSelectionOnEscape} onpointerdown={closeMenuOnOutside} />
+
 <!-- Hidden via a class, never {#if} -- unmounting would tear down the
      Pixi renderer and the roll's clock/notes along with it. -->
 <div id="pianoroll-container" class:hidden={!settings.pianorollVisible} bind:this={container}>
@@ -113,6 +157,20 @@
     {/if}
   </div>
 </div>
+
+{#if menu && debugExport.range}
+  <div class="context-menu" role="menu" style:left="{menu.x}px" style:top="{menu.y}px">
+    <button
+      type="button"
+      role="menuitem"
+      title={debugExport.status === "done" ? debugExport.path : ""}
+      disabled={debugExport.status === "busy"}
+      onclick={exportFromMenu}
+    >
+      {exportLabel}
+    </button>
+  </div>
+{/if}
 
 <style>
   #pianoroll-container {
@@ -171,6 +229,34 @@
      color regardless of role. */
   .roles-toggle.off {
     opacity: 0.35;
+  }
+
+  /* The selection's right-click menu: one item, in the look of the settings popovers. */
+  .context-menu {
+    position: fixed;
+    z-index: 10;
+    padding: 0.25rem;
+    border: 1px solid #3a3f4d;
+    border-radius: 8px;
+    background: var(--surface-raised);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  }
+
+  .context-menu button {
+    display: block;
+    padding: 0.35rem 0.8rem;
+    border: none;
+    border-radius: 5px;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .context-menu button:hover:not(:disabled) {
+    background: #313747;
   }
 
   .legend-swatch {

@@ -1,3 +1,6 @@
+#[cfg(debug_assertions)]
+mod debug_export;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -209,6 +212,27 @@ async fn playback_stop(playback_state: State<'_, Mutex<PlaybackState>>) -> Resul
     stop_playback(&playback_state)
 }
 
+// Whether this build can export a selected range of the recording for debugging
+// (`debug_export_range`); the roll only offers the selection's export button when it can.
+#[tauri::command]
+fn debug_export_enabled() -> bool {
+    cfg!(debug_assertions)
+}
+
+// Writes the audio, notes and chord-layer log of the selected range to a folder under Documents and
+// returns its path. Debug builds only.
+#[cfg(debug_assertions)]
+#[tauri::command]
+async fn debug_export_range(app: AppHandle, ring: State<'_, SharedRing>, range: debug_export::ExportRange) -> Result<String, String> {
+    debug_export::export(&app, &ring, range)
+}
+
+#[cfg(not(debug_assertions))]
+#[tauri::command]
+async fn debug_export_range(_range: serde_json::Value) -> Result<String, String> {
+    Err("the range export is only in debug builds".into())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -225,7 +249,9 @@ pub fn run() {
             playback_pause,
             playback_seek,
             playback_set_params,
-            playback_stop
+            playback_stop,
+            debug_export_enabled,
+            debug_export_range
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

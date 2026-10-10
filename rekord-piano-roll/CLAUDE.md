@@ -96,6 +96,23 @@ audio plus the roll's notes synthesized; backend in rust/CLAUDE.md).
   (`PlaybackClock`: view = max(view at start, cursor)). A paused playback keeps
   its cursor; scrolling/dragging the stopped roll puts it back at the edge.
 
+## Range selection and debug export
+
+While the roll is stopped or playing, a plain **drag** selects a range (`pianoroll.ts`: a
+translucent band with edge lines) and **Space+drag** scrolls (hand-tool style; the wheel and the
+scrollbar still scroll too). A click still places the marker or seeks. A click outside the band or Esc
+clears the selection; a click inside only moves the position. Pointing at the roll takes the focus off
+a toolbar button, so Space reaches the roll. In **debug builds only** (`debug_export_enabled` in lib.rs,
+i.e. `cfg!(debug_assertions)`; `tauri dev` and `tauri build --debug`) **right-clicking the selection**
+opens a one-item menu that exports it (`debugExport.svelte.ts` → `debug_export.rs`) to
+`Documents/ReKord debug exports/export_<unix s>/`:
+`audio.wav`, `raw/001.txt` (notes in `rekord_engine`'s line format, times relative to the window, so
+`chord_replay <folder>/raw <out>` re-runs the chord logic), `chord_layers.json` (each layer's
+reports, the lane shown, keys; recording time) and `meta.json`. The window is the selection plus 4 s
+before / 3 s after (`EXPORT_PAD_*` in recording.ts) so the 2 s layer reproduces it. Beat lines are
+not exported (the roll keeps them, `Recording` does not). `dev/chords-mock.js` fakes the commands
+(`window.__lastExport` holds the request).
+
 ## Inspecting the real Tauri app
 
 Start a second instance of the debug exe with its own WebView2 profile and debug

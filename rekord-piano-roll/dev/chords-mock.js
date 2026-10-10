@@ -47,6 +47,9 @@ window.__TAURI_INTERNALS__ = {
       // what a real stop returns: the span of audio the backend recorded (none here, but a span lets the roll scroll)
       return window.__replay ? { sample_rate: 48000, start_s: 0, end_s: Math.max(lastWall - 0.4, 0) } : null;
     }
+    // the debug range export: on, and the request is kept for inspection (window.__lastExport)
+    if (cmd === "debug_export_enabled") return true;
+    if (cmd === "debug_export_range") { window.__lastExport = args.range; return "C:/mock/export"; }
     return null; // window size, playback and so on: no-ops
   },
 };

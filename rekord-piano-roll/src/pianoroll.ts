@@ -130,6 +130,13 @@ const CLICK_MAX_MS = 500;
 const MARKER_COLOR = 0xffd166;
 const MARKER_LINE_WIDTH = 2;
 const MARKER_FLAG_SIZE = 6;
+// The range selected by dragging (debug builds export it): a translucent band the full height
+// of the roll with an edge line at each end. Anything shorter than this is a stray drag.
+const SELECTION_COLOR = 0x8fb0ff;
+const SELECTION_FILL_ALPHA = 0.16;
+const SELECTION_EDGE_ALPHA = 0.9;
+const SELECTION_EDGE_WIDTH = 2;
+const SELECTION_MIN_S = 0.05;
 // The playback cursor while it travels along the roll (before it reaches the keyboard edge).
 const CURSOR_COLOR = 0xffffff;
 const CURSOR_LINE_WIDTH = 2;
@@ -301,7 +308,7 @@ export class PianoRoll {
   // can reach it.
   private rangeEndS = 0;
   // What a pointer drag moves: the notes themselves, or the scrollbar thumb.
-  private dragMode: "none" | "content" | "thumb" = "none";
+  private dragMode: "none" | "content" | "thumb" | "select" = "none";
   // The press in progress, until it moves too far or is released; released in time it is a click.
   private press: { x: number; clientX: number; clientY: number; ms: number; tS: number; moved: boolean } | null = null;
   private scrollbarLayer = new Container();
@@ -316,10 +323,25 @@ export class PianoRoll {
   private markerLayer = new Container();
   private markerLine = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
   private markerFlag = new Graphics();
+  // The dragged range of audio time, until a click elsewhere or a new session clears it.
+  private selection: { startS: number; endS: number } | null = null;
+  private selectAnchorS = 0;
+  private selectPointerX = 0;
+  // Space is held: dragging scrolls instead of selecting.
+  private spaceHeld = false;
+  private removeKeyListeners: (() => void) | null = null;
+  private selectionLayer = new Container();
+  private selectionFill = new Graphics().rect(0, 0, 1, 1).fill({ color: SELECTION_COLOR });
+  private selectionEdges = [0, 1].map(() => new Graphics().rect(0, 0, 1, 1).fill({ color: SELECTION_COLOR }));
   private cursorLayer = new Container();
   private cursorLine = new Graphics().rect(0, 0, 1, 1).fill({ color: CURSOR_COLOR });
   /** The user clicked the roll at audio time `t` (stopped or playing, not while capturing). */
   onSeekRequest: ((t: number) => void) | null = null;
+  /** The user right-clicked inside the selection at client position (x, y); true if that was
+   * handled (the browser's own menu is then suppressed). */
+  onSelectionContextMenu: ((clientX: number, clientY: number) => boolean) | null = null;
+  /** The selected range changed (null: cleared). */
+  onSelectionChange: ((range: { startS: number; endS: number } | null) => void) | null = null;
   /** Called every frame while the roll is not live, with the time at the playhead. */
   onPlayheadTime: ((t: number) => void) | null = null;
   // Whether newly-added notes get the melody/bass color treatment (see
@@ -354,6 +376,11 @@ export class PianoRoll {
     app.stage.addChild(noteLayer);
     app.stage.addChild(roll.chordGhostLayer);
     app.stage.addChild(roll.chordLayer);
+    app.stage.addChild(roll.selectionLayer);
+    roll.selectionLayer.addChild(roll.selectionFill, ...roll.selectionEdges);
+    roll.selectionFill.alpha = SELECTION_FILL_ALPHA;
+    for (const edge of roll.selectionEdges) edge.alpha = SELECTION_EDGE_ALPHA;
+    roll.selectionLayer.visible = false;
     app.stage.addChild(roll.markerLayer);
     roll.markerLayer.addChild(roll.markerLine, roll.markerFlag);
     roll.markerLine.tint = MARKER_COLOR;
@@ -388,10 +415,42 @@ export class PianoRoll {
   }
 
   /** Lets a stopped roll be scrolled back through its history: the wheel/trackpad (down = later,
-   * like any scrolled view) or dragging the notes. A click (a press that hardly moves) asks for
-   * the playback position (`onSeekRequest`), also while playing. Ignored while capture is running. */
+   * like any scrolled view), Space+drag, or the scrollbar. A click (a press that hardly moves) asks
+   * for the playback position (`onSeekRequest`), also while playing. A plain drag selects a range
+   * (`onSelectionChange`); a click outside it clears it. Ignored while capture is running. */
   private attachScrollInput(canvas: HTMLCanvasElement): void {
     canvas.style.touchAction = "none";
+    // Space switches the drag from selecting to scrolling (like a DAW's/Photoshop's hand tool).
+    const setSpace = (held: boolean) => {
+      if (this.spaceHeld === held) return;
+      this.spaceHeld = held;
+      canvas.style.cursor = held ? (this.dragMode === "content" ? "grabbing" : "grab") : "";
+    };
+    // A toolbar button that was just clicked keeps the focus, and would take the Space (a click on it)
+    // instead of the roll: pointing at the roll takes the focus off it.
+    const releaseButtonFocus = () => {
+      if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur();
+    };
+    canvas.addEventListener("pointerenter", releaseButtonFocus);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat || this.clock.kind === "live") return;
+      const target = e.target as HTMLElement | null;
+      if (target && target !== document.body && target !== canvas) return; // a focused button or input keeps Space
+      e.preventDefault();
+      setSpace(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpace(false);
+    };
+    const onBlur = () => setSpace(false);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    this.removeKeyListeners = () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
     canvas.addEventListener(
       "wheel",
       (e) => {
@@ -412,20 +471,29 @@ export class PianoRoll {
         e.button === 0
           ? { x, clientX: e.clientX, clientY: e.clientY, ms: performance.now(), tS: this.timeAtX(x), moved: false }
           : null;
-      if (!this.held) return;
-      if (this.scrollbarLayer.visible && y >= this.app.screen.height - SCROLLBAR_HIT_HEIGHT && x < this.playheadX()) {
+      if (e.button !== 0) return;
+      if (this.held && this.scrollbarLayer.visible && y >= this.app.screen.height - SCROLLBAR_HIT_HEIGHT && x < this.playheadX()) {
         // Clicking the track outside the thumb centers the thumb there first, then drags it.
         if (x < this.thumbX || x > this.thumbX + this.thumbW) this.setThumbX(x - this.thumbW / 2);
         this.dragMode = "thumb";
-      } else {
-        this.dragMode = "content";
+      } else if (this.spaceHeld) {
+        if (this.held) this.dragMode = "content";
+        canvas.style.cursor = "grabbing";
+      } else if (x < this.playheadX()) {
+        // The selection starts once the press has moved (a click is a click, not an empty range).
+        this.dragMode = "select";
+        this.selectAnchorS = this.press?.tS ?? this.timeAtX(x);
+        this.selectPointerX = x;
       }
     });
     canvas.addEventListener("pointermove", (e) => {
       if (this.press && !this.press.moved && Math.hypot(e.clientX - this.press.clientX, e.clientY - this.press.clientY) > CLICK_SLOP_PX) {
         this.press.moved = true;
       }
-      if (this.dragMode === "content") {
+      if (this.dragMode === "select") {
+        this.selectPointerX = e.clientX - canvas.getBoundingClientRect().left;
+        if (this.press?.moved) this.updateSelection();
+      } else if (this.dragMode === "content") {
         this.scrollBy(e.movementX / PIXELS_PER_SECOND);
       } else if (this.dragMode === "thumb") {
         const span = this.playheadX() - this.thumbW;
@@ -437,14 +505,57 @@ export class PianoRoll {
       const mode = this.dragMode;
       this.press = null;
       this.dragMode = "none";
+      if (this.spaceHeld) canvas.style.cursor = "grab";
+      if (mode === "select" && press?.moved) {
+        const range = this.selection;
+        if (!range || range.endS - range.startS < SELECTION_MIN_S) this.setSelection(null);
+        return;
+      }
       const isClick = press && !press.moved && mode !== "thumb" && performance.now() - press.ms < CLICK_MAX_MS;
       // Not on the keyboard: its keys aren't positions.
-      if (isClick && press.x < this.playheadX()) this.onSeekRequest?.(press.tS);
+      if (isClick && press.x < this.playheadX()) {
+        // A click inside the selection only moves the position (to play or look at it).
+        const range = this.selection;
+        if (range && (press.tS < range.startS || press.tS > range.endS)) this.setSelection(null);
+        this.onSeekRequest?.(press.tS);
+      }
     });
     canvas.addEventListener("pointercancel", () => {
       this.press = null;
       this.dragMode = "none";
     });
+    canvas.addEventListener("contextmenu", (e) => {
+      const range = this.selection;
+      const x = e.clientX - canvas.getBoundingClientRect().left;
+      if (this.clock.kind === "live" || !range || x >= this.playheadX()) return;
+      const t = this.timeAtX(x);
+      if (t >= range.startS && t <= range.endS && this.onSelectionContextMenu?.(e.clientX, e.clientY)) e.preventDefault();
+    });
+  }
+
+  /** The selection between the anchor and the pointer's current time (it follows the pointer while
+   * the view scrolls under it, so this is also called every frame during the drag). */
+  private updateSelection(): void {
+    const x = Math.min(this.playheadX(), Math.max(0, this.selectPointerX));
+    const t = this.timeAtX(x);
+    this.setSelection({ startS: Math.min(this.selectAnchorS, t), endS: Math.max(this.selectAnchorS, t) });
+  }
+
+  private setSelection(range: { startS: number; endS: number } | null): void {
+    const same = range === null ? this.selection === null : this.selection?.startS === range.startS && this.selection.endS === range.endS;
+    if (same) return;
+    this.selection = range;
+    this.onSelectionChange?.(range);
+  }
+
+  /** The range selected with Shift+drag, in audio seconds (null: none). */
+  get selectedRange(): { startS: number; endS: number } | null {
+    return this.selection;
+  }
+
+  clearSelection(): void {
+    if (this.dragMode === "select") this.dragMode = "none";
+    this.setSelection(null);
   }
 
   /** The audio time at horizontal position `x` of the canvas. */
@@ -485,6 +596,7 @@ export class PianoRoll {
   // Tears down the renderer and removes its canvas -- only needed so a
   // Svelte HMR remount doesn't leave a second canvas/ticker running.
   destroy(): void {
+    this.removeKeyListeners?.();
     this.app.destroy(true, { children: true });
   }
 
@@ -635,6 +747,8 @@ export class PianoRoll {
     this.markerS = null;
     this.dragMode = "none";
     this.press = null;
+    this.setSelection(null);
+    this.selectionLayer.visible = false;
     this.scrollbarLayer.visible = false;
     this.markerLayer.visible = false;
     this.cursorLayer.visible = false;
@@ -1045,10 +1159,37 @@ export class PianoRoll {
       ? Math.min(headS, this.oldestS + this.playheadX() / PIXELS_PER_SECOND)
       : headS;
     this.maxViewS = Math.max(headS, this.rangeEndS);
+    if (this.dragMode === "select" && this.press?.moved) this.updateSelection();
+    this.tickSelection();
     this.tickMarker();
     this.tickCursor();
     if (!live) this.onPlayheadTime?.(cursorS);
     this.tickScrollbar();
+  }
+
+  /** The selected range, wherever it is on screen (clipped to the note area). */
+  private tickSelection(): void {
+    const range = this.selection;
+    const right = this.playheadX();
+    const x0 = range ? this.xForTime(range.startS) : NaN;
+    const x1 = range ? this.xForTime(range.endS) : NaN;
+    const show = range !== null && x1 > 0 && x0 < right; // NaN: none
+    this.selectionLayer.visible = show;
+    if (!show) return;
+    const height = this.app.screen.height;
+    const left = Math.max(0, x0);
+    this.selectionFill.x = left;
+    this.selectionFill.scale.set(Math.min(right, x1) - left, height);
+    // An edge is only drawn where the range really ends, not where the screen cuts it off.
+    const edges: [Graphics, number][] = [
+      [this.selectionEdges[0], x0],
+      [this.selectionEdges[1], x1 - SELECTION_EDGE_WIDTH],
+    ];
+    for (const [edge, x] of edges) {
+      edge.visible = x + SELECTION_EDGE_WIDTH >= 0 && x <= right - SELECTION_EDGE_WIDTH;
+      edge.x = x;
+      edge.scale.set(SELECTION_EDGE_WIDTH, height);
+    }
   }
 
   /** The playback position marker, wherever its time is on screen. */

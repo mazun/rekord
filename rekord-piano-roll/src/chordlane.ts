@@ -116,6 +116,19 @@ export class ChordLane {
     this.sentHeadS = -Infinity;
   }
 
+  /** What each layer reported (not the composed lane): its changes from `fromS` to `toS` -- plus the
+   * one in effect at `fromS` -- and how far it had decided. For exporting a stretch of the recording. */
+  layerLogs(fromS: number, toS: number): Record<ChordLayerId, { decided_s: number; changes: LayerChord[] }> {
+    const out = {} as Record<ChordLayerId, { decided_s: number; changes: LayerChord[] }>;
+    for (const id of LAYER_ORDER) {
+      const { entries, decidedS } = this.logs[id];
+      let first = 0;
+      while (first + 1 < entries.length && entries[first + 1].t <= fromS) first++;
+      out[id] = { decided_s: decidedS, changes: entries.slice(first).filter((c) => c.t <= toS) };
+    }
+    return out;
+  }
+
   /** The newest time any layer has decided. */
   get headS(): number {
     return this.logs.instant.decidedS;

@@ -1,5 +1,5 @@
 import { BpmTracker } from "./bpm";
-import { ChordLane, type ChordLayerEvent } from "./chordlane";
+import { ChordLane, LAYER_ORDER, type ChordLayerEvent, type ChordLayerId, type LayerChord } from "./chordlane";
 import type { BeatLines, ConfirmedNote, NotePart, StartedNote } from "./pianoroll";
 import { tensionsFor, type ChordVocabulary } from "./tensions";
 
@@ -29,6 +29,13 @@ export class Timeline<T> {
       else hi = mid;
     }
     return lo > 0 ? this.entries[lo - 1].v : undefined;
+  }
+
+  /** The entries from `fromS` to `toS`, plus the one in effect at `fromS`. */
+  between(fromS: number, toS: number): { t: number; v: T }[] {
+    let first = 0;
+    while (first + 1 < this.entries.length && this.entries[first + 1].t <= fromS) first++;
+    return this.entries.slice(first).filter((e) => e.t <= toS);
   }
 
   last(): T | undefined {
@@ -94,6 +101,23 @@ interface RecordedNote {
   pitch_midi: number;
   velocity: number;
   part: NotePart;
+}
+
+// The context a debug export keeps around the selected range: the chord layers read back before it
+// (the 2 s layer's Viterbi starts cold otherwise) and decide late after it.
+const EXPORT_PAD_BEFORE_S = 4;
+const EXPORT_PAD_AFTER_S = 3;
+
+/** What `Recording.exportRange` gathers (sent to the backend's `debug_export_range`). */
+export interface RangeExport {
+  window_start_s: number;
+  window_end_s: number;
+  selection_start_s: number;
+  selection_end_s: number;
+  notes: SynthNote[];
+  chord_layers: Record<ChordLayerId, { decided_s: number; changes: LayerChord[] }>;
+  lane: { start_s: number; end_s: number | null; label: string; layer: ChordLayerId }[];
+  keys: { t: number; key_name: string }[];
 }
 
 // A recording shorter than this isn't offered for playback.
@@ -221,6 +245,27 @@ export class Recording {
       out.push({ start_s: n.start_s, end_s: end, pitch: n.pitch_midi, velocity: n.velocity, part: n.part });
     }
     return out;
+  }
+
+  /** What a debug export of the selected range needs besides the audio: the notes, what each chord
+   * layer reported and the lane showed, and the keys, over the range widened by the context the
+   * chord layers need to reproduce it (the 2 s layer decides late, and reads back before the range). */
+  exportRange(selection: { startS: number; endS: number }): RangeExport {
+    const windowStartS = Math.max(this.startS, selection.startS - EXPORT_PAD_BEFORE_S);
+    const windowEndS = Math.min(this.endS, selection.endS + EXPORT_PAD_AFTER_S);
+    return {
+      window_start_s: windowStartS,
+      window_end_s: windowEndS,
+      selection_start_s: selection.startS,
+      selection_end_s: selection.endS,
+      notes: this.synthNotes().filter((n) => n.end_s > windowStartS && n.start_s < windowEndS),
+      chord_layers: this.lane.layerLogs(windowStartS, windowEndS),
+      lane: this.lane
+        .segments()
+        .filter((s) => s.startS < windowEndS && (s.endS ?? Infinity) > windowStartS)
+        .map((s) => ({ start_s: s.startS, end_s: s.endS, label: s.chord.label, layer: LAYER_ORDER[s.layer] })),
+      keys: this.keys.between(windowStartS, windowEndS).map((e) => ({ t: e.t, key_name: e.v })),
+    };
   }
 
   private see(t: number): void {
