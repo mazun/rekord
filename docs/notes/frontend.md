@@ -115,6 +115,19 @@ before / 3 s after (`EXPORT_PAD_*` in recording.ts) so the 2 s layer reproduces 
 not exported (the roll keeps them, `Recording` does not). `dev/chords-mock.js` fakes the commands
 (`window.__lastExport` holds the request).
 
+**MIDI out** (all builds; `midiCopy.svelte.ts` → `midi_copy.rs`, not while capturing). The selection's
+notes (clipped to it, times relative to its start; parts hidden with the legend left out) become a
+.mid in `%TEMP%/ReKord midi/` (newest 20 kept): one track per part, channels 1-3 for Vocal/Bass/Other
+when split, **no tempo/time-signature event** (a DAW would ask to import it) -- ticks are laid out in
+beats of the tracker's BPM (120 without one), so the project tempo must match the song's. A **drag from
+inside the selection** drags the file out of the window (`drag` crate, OLE; Bitwig and Studio One take
+the drop): pressed on empty roll = all three parts on their own channels, pressed on a note = only that
+note's part on one channel. A click inside the selection still only seeks; edges still resize; to start
+a new selection press outside the band. (A right-click "copy to the clipboard" as `CF_HDROP` existed
+and was removed: Studio One didn't take it.) While dragging, Windows shows its own file-drag look plus
+a stray image that no picture passed to the `drag` crate changes; left as is. `dev/chords-mock.js`
+keeps the request in `window.__lastMidi`.
+
 ## Inspecting the real Tauri app
 
 Start a second instance of the debug exe with its own WebView2 profile and debug

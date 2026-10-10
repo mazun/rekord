@@ -247,6 +247,20 @@ export class Recording {
     return out;
   }
 
+  /** The notes of the selected range for "copy as MIDI": clipped to it, times relative to its
+   * start, with the beat tracker's tempo there (the backend falls back to 120 without one). Parts
+   * hidden on the roll are left out. */
+  midiRange(selection: { startS: number; endS: number }, isPartShown: (part: NotePart) => boolean) {
+    const notes = this.synthNotes()
+      .filter((n) => n.end_s > selection.startS && n.start_s < selection.endS && isPartShown(n.part))
+      .map((n) => ({
+        ...n,
+        start_s: Math.max(n.start_s, selection.startS) - selection.startS,
+        end_s: Math.min(n.end_s, selection.endS) - selection.startS,
+      }));
+    return { notes, bpm: this.bpms.at(selection.startS) ?? null };
+  }
+
   /** What a debug export of the selected range needs besides the audio: the notes, what each chord
    * layer reported and the lane showed, and the keys, over the range widened by the context the
    * chord layers need to reproduce it (the 2 s layer decides late, and reads back before the range). */

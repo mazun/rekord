@@ -50,6 +50,8 @@ window.__TAURI_INTERNALS__ = {
     // the debug range export: on, and the request is kept for inspection (window.__lastExport)
     if (cmd === "debug_export_enabled") return true;
     if (cmd === "debug_export_range") { window.__lastExport = args.range; return "C:/mock/export"; }
+    // MIDI out (a drag from the selection): the request is kept for inspection (window.__lastMidi)
+    if (cmd === "drag_notes_as_midi") { window.__lastMidi = args.range; return null; }
     return null; // window size, playback and so on: no-ops
   },
 };

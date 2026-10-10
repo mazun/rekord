@@ -315,7 +315,9 @@ export class PianoRoll {
   // can reach it.
   private rangeEndS = 0;
   // What a pointer drag moves: the notes themselves, or the scrollbar thumb.
-  private dragMode: "none" | "content" | "thumb" | "select" = "none";
+  private dragMode: "none" | "content" | "thumb" | "select" | "dragout" = "none";
+  /** The part of the note a drag out of the selection was pressed on (null: pressed on empty roll). */
+  private dragOutPart: NotePart | null = null;
   // The press in progress, until it moves too far or is released; released in time it is a click.
   private press: { x: number; clientX: number; clientY: number; ms: number; tS: number; moved: boolean } | null = null;
   private scrollbarLayer = new Container();
@@ -351,6 +353,9 @@ export class PianoRoll {
   /** The user right-clicked inside the selection at client position (x, y); true if that was
    * handled (the browser's own menu is then suppressed). */
   onSelectionContextMenu: ((clientX: number, clientY: number) => boolean) | null = null;
+  /** A press inside the selection moved: the user drags the selection out of the window. `part` is
+   * that of the note the press was on, null when it was on empty roll. */
+  onSelectionDragOut: ((part: NotePart | null) => void) | null = null;
   /** The selected range changed (null: cleared). */
   onSelectionChange: ((range: { startS: number; endS: number } | null) => void) | null = null;
   /** Called every frame while the roll is not live, with the time at the playhead. */
@@ -494,6 +499,13 @@ export class PianoRoll {
         // The selection starts once the press has moved (a click is a click, not an empty range).
         // Grabbing one of its edges instead drags that edge, the other one staying as the anchor.
         const edge = this.edgeAtX(x);
+        if (edge === null && this.insideSelection(this.press?.tS ?? this.timeAtX(x))) {
+          // A drag from inside the selection takes it out instead of making a new one; a click
+          // there still only moves the position.
+          this.dragMode = "dragout";
+          this.dragOutPart = this.noteAt(x, y)?.part ?? null;
+          return;
+        }
         this.dragMode = "select";
         this.edgeGrab = edge !== null;
         if (edge !== null && this.selection) {
@@ -508,12 +520,22 @@ export class PianoRoll {
     canvas.addEventListener("pointermove", (e) => {
       if (this.dragMode === "none" && !this.spaceHeld) {
         const x = e.clientX - canvas.getBoundingClientRect().left;
-        canvas.style.cursor = x < this.playheadX() && this.edgeAtX(x) !== null ? "ew-resize" : "";
+        const onRoll = x < this.playheadX();
+        canvas.style.cursor = onRoll && this.edgeAtX(x) !== null ? "ew-resize" : onRoll && this.insideSelection(this.timeAtX(x)) ? "grab" : "";
       }
       if (this.press && !this.press.moved && Math.hypot(e.clientX - this.press.clientX, e.clientY - this.press.clientY) > CLICK_SLOP_PX) {
         this.press.moved = true;
       }
-      if (this.dragMode === "select") {
+      if (this.dragMode === "dragout") {
+        if (this.press?.moved) {
+          // The OS drag takes over the pointer from here: this press is over.
+          const part = this.dragOutPart;
+          this.press = null;
+          this.dragMode = "none";
+          if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+          this.onSelectionDragOut?.(part);
+        }
+      } else if (this.dragMode === "select") {
         this.freeSelect = e.altKey;
         this.selectPointerX = e.clientX - canvas.getBoundingClientRect().left;
         if (this.press?.moved) this.updateSelection();
@@ -588,6 +610,25 @@ export class PianoRoll {
       if (i + 1 < beats.length && beats[i + 1] - beats[i] <= SNAP_MAX_BEAT_GAP_S) consider((beats[i] + beats[i + 1]) / 2);
     }
     return best;
+  }
+
+  /** Time `t` lies in the selection, which can be dragged out (not while capturing: the roll is live). */
+  private insideSelection(t: number): boolean {
+    const range = this.selection;
+    return range !== null && this.clock.kind !== "live" && t >= range.startS && t <= range.endS;
+  }
+
+  /** The visible note drawn at canvas position (x, y), the newest one when several overlap. */
+  private noteAt(x: number, y: number): NoteSprite | null {
+    const noteHeightPx = this.noteHeightPx(this.app.screen.height);
+    const pad = 2; // thin notes are hard to hit exactly
+    for (let i = this.notes.length - 1; i >= 0; i--) {
+      const n = this.notes[i];
+      if (!this.partLayers[n.part].visible) continue;
+      const w = Math.max(2, (n.end_s - n.start_s) * this.pixelsPerSecond);
+      if (x >= n.graphic.x - pad && x <= n.graphic.x + w + pad && y >= n.graphic.y - pad && y <= n.graphic.y + noteHeightPx + pad) return n;
+    }
+    return null;
   }
 
   /** Which edge of the selection lies within grabbing distance of canvas position `x`. */

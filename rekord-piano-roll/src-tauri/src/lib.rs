@@ -1,5 +1,6 @@
 #[cfg(debug_assertions)]
 mod debug_export;
+mod midi_copy;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -212,6 +213,14 @@ async fn playback_stop(playback_state: State<'_, Mutex<PlaybackState>>) -> Resul
     stop_playback(&playback_state)
 }
 
+// Writes the selected notes as a .mid file and drags it out of the window (the frontend calls this
+// once a drag from the selection has moved). A sync command: it runs on the main thread, which the
+// OS drag needs.
+#[tauri::command]
+fn drag_notes_as_midi(window: tauri::WebviewWindow, range: midi_copy::MidiRange) -> Result<(), String> {
+    midi_copy::drag(&window, range)
+}
+
 // Whether this build can export a selected range of the recording for debugging
 // (`debug_export_range`); the roll only offers the selection's export button when it can.
 #[tauri::command]
@@ -250,6 +259,7 @@ pub fn run() {
             playback_seek,
             playback_set_params,
             playback_stop,
+            drag_notes_as_midi,
             debug_export_enabled,
             debug_export_range
         ])

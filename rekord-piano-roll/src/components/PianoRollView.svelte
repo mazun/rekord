@@ -6,7 +6,9 @@
     initDebugExport,
     setExportRange,
   } from "../debugExport.svelte";
-  import { PianoRoll } from "../pianoroll";
+  import { t } from "../i18n.svelte";
+  import { dragSelectionAsMidi } from "../midiCopy.svelte";
+  import { PianoRoll, type NotePart } from "../pianoroll";
   import {
     connectPipeline,
     pipeline,
@@ -18,7 +20,6 @@
     connectTransport,
     setPlaybackPartVisible,
   } from "../transport.svelte";
-  import { t } from "../i18n.svelte";
   import PlaybackVolume from "./PlaybackVolume.svelte";
   import PlayButton from "./PlayButton.svelte";
 
@@ -84,6 +85,9 @@
     setTimeout(() => (menu = null), 1200);
   }
 
+  // The parts hidden with the legend are left out of a MIDI drag ("all" has no legend entry).
+  const isPartShown = (part: NotePart) => part === "all" || !hiddenParts[part];
+
   const exportLabel = $derived(
     debugExport.status === "busy"
       ? t("debugExport.busy")
@@ -116,6 +120,10 @@
         if (!debugExport.enabled) return false;
         menu = { x, y };
         return true;
+      };
+      roll.onSelectionDragOut = (part) => {
+        menu = null;
+        void dragSelectionAsMidi(part, isPartShown);
       };
       void initDebugExport();
       const off = await connectPipeline({

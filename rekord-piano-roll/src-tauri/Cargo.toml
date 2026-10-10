@@ -31,3 +31,6 @@ anyhow = "1"
 # with real time. That decoder is its own crate so only it is optimized here.
 [profile.dev.package.rekord_beat_dbn]
 opt-level = 3
+
+[target."cfg(windows)".dependencies]
+drag = "2"
