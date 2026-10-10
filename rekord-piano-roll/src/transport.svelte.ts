@@ -147,10 +147,14 @@ export async function togglePlayback(): Promise<void> {
 }
 
 /** A click on the roll at audio time `t`: seeks while playing, otherwise places the marker the
- * next Play starts from. */
+ * next Play starts from (also while capture runs, where it only marks the time). */
 async function seekTo(t: number): Promise<void> {
-  // Not while capture runs or is starting up (the roll still shows the previous recording until
-  // `Started`), and not without audio.
+  if (roll && pipeline.status === "running") {
+    roll.setMarker(t);
+    return;
+  }
+  // Not while capture is starting up or stopping (the roll still shows the previous recording
+  // until `Started`), and not without audio.
   if (!roll || pipeline.status !== "idle" || !recording.hasAudio) return;
   const target = clampToRecording(t);
   if (transport.state === "playing") await playFrom(target);

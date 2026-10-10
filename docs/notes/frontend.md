@@ -98,9 +98,11 @@ audio plus the roll's notes synthesized; backend in rust/CLAUDE.md).
 
 ## Range selection and debug export
 
-While the roll is stopped or playing, a plain **drag** selects a range (`pianoroll.ts`: a
+While the roll is stopped, playing or capturing, a plain **drag** selects a range (`pianoroll.ts`: a
 translucent band with edge lines) and **Space+drag** scrolls (hand-tool style; the wheel and the
-scrollbar still scroll too). A click still places the marker or seeks. A click outside the band or Esc
+scrollbar still scroll too; none of that while capturing, and no export either). A click still places
+the marker or seeks (while capturing it only places the marker; the selection and marker are in audio
+time, so they scroll away with the notes). A click outside the band or Esc
 clears the selection; a click inside only moves the position. Pointing at the roll takes the focus off
 a toolbar button, so Space reaches the roll. In **debug builds only** (`debug_export_enabled` in lib.rs,
 i.e. `cfg!(debug_assertions)`; `tauri dev` and `tauri build --debug`) **right-clicking the selection**

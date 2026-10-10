@@ -425,7 +425,8 @@ export class PianoRoll {
   /** Lets a stopped roll be scrolled back through its history: the wheel/trackpad (down = later,
    * like any scrolled view), Space+drag, or the scrollbar. A click (a press that hardly moves) asks
    * for the playback position (`onSeekRequest`), also while playing. A plain drag selects a range
-   * (`onSelectionChange`); a click outside it clears it. Ignored while capture is running. */
+   * (`onSelectionChange`); a click outside it clears it. While capture runs only the selection and
+   * the click work (the roll can't be scrolled, the export is off). */
   private attachScrollInput(canvas: HTMLCanvasElement): void {
     canvas.style.touchAction = "none";
     // Space switches the drag from selecting to scrolling (like a DAW's/Photoshop's hand tool).
@@ -470,7 +471,6 @@ export class PianoRoll {
       { passive: false },
     );
     canvas.addEventListener("pointerdown", (e) => {
-      if (this.clock.kind === "live") return;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -503,7 +503,7 @@ export class PianoRoll {
       }
     });
     canvas.addEventListener("pointermove", (e) => {
-      if (this.dragMode === "none" && !this.spaceHeld && this.clock.kind !== "live") {
+      if (this.dragMode === "none" && !this.spaceHeld) {
         const x = e.clientX - canvas.getBoundingClientRect().left;
         canvas.style.cursor = x < this.playheadX() && this.edgeAtX(x) !== null ? "ew-resize" : "";
       }
