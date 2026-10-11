@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { settings } from "../settings.svelte";
-  import { initWindowSize, setPianorollVisible } from "../windowSize";
   import pianorollToggleIconSvg from "../assets/pianoroll-toggle-icon.svg?raw";
   import { t } from "../i18n.svelte";
+  import { settings } from "../settings.svelte";
+  import { initWindowSize, setPianorollVisible } from "../windowSize";
 
   let button: HTMLButtonElement;
 

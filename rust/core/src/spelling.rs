@@ -43,12 +43,20 @@ impl FromStr for Accidental {
     }
 }
 
-const SHARP_NAMES: [&str; 12] = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
-const FLAT_NAMES: [&str; 12] = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+const SHARP_NAMES: [&str; 12] = [
+    "C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B",
+];
+const FLAT_NAMES: [&str; 12] = [
+    "C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B",
+];
 // Auto without a key (or for a bare note): flats except F♯.
-const AUTO_NAMES: [&str; 12] = ["C", "D♭", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
+const AUTO_NAMES: [&str; 12] = [
+    "C", "D♭", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B",
+];
 // Auto, minor-type chord root without a key: the sharp side where the flat spelling is absurd.
-const AUTO_MINOR_NAMES: [&str; 12] = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "G♯", "A", "B♭", "B"];
+const AUTO_MINOR_NAMES: [&str; 12] = [
+    "C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "G♯", "A", "B♭", "B",
+];
 // Major keys by tonic, in key-signature order of preference (G♭ over F♯, as the flat side).
 const MAJOR_KEY_NAMES: [&str; 12] = FLAT_NAMES;
 // Relative minors: fewest accidentals in the signature.
@@ -69,7 +77,10 @@ pub fn key_pair_name(relative_major_pc: i32, mode: Accidental) -> String {
     let major = relative_major_pc.rem_euclid(12);
     let minor = (major - 3).rem_euclid(12);
     let (major_name, minor_name) = match mode {
-        Accidental::Auto => (MAJOR_KEY_NAMES[major as usize], MINOR_KEY_NAMES[minor as usize]),
+        Accidental::Auto => (
+            MAJOR_KEY_NAMES[major as usize],
+            MINOR_KEY_NAMES[minor as usize],
+        ),
         _ => (note_name(major, mode), note_name(minor, mode)),
     };
     format!("{major_name} Major ({minor_name} Minor)")
@@ -141,9 +152,21 @@ fn interval_steps(semitones: i32, quality: &str) -> usize {
         1 | 2 => 1,
         3 | 4 => 2,
         5 => 3,
-        6 => if is_dim_class(quality) { 4 } else { 3 },
+        6 => {
+            if is_dim_class(quality) {
+                4
+            } else {
+                3
+            }
+        }
         7 => 4,
-        8 => if quality == "aug" { 4 } else { 5 },
+        8 => {
+            if quality == "aug" {
+                4
+            } else {
+                5
+            }
+        }
         9 => 5,
         _ => 6,
     }
@@ -155,7 +178,10 @@ fn auto_root(pc: i32, quality: &str, key: Option<&KeyEstimate>) -> String {
     }
     if let Some(key) = key {
         let tonic = key.relative_major_pc();
-        let tonic_letter = MAJOR_KEY_NAMES[tonic as usize].chars().next().and_then(|c| LETTERS.iter().position(|&l| l == c));
+        let tonic_letter = MAJOR_KEY_NAMES[tonic as usize]
+            .chars()
+            .next()
+            .and_then(|c| LETTERS.iter().position(|&l| l == c));
         let steps = DEGREE_STEPS[(pc - tonic).rem_euclid(12) as usize];
         if let Some(tonic_letter) = tonic_letter {
             if let Some(s) = Spelled::on_letter((tonic_letter + steps) % 7, pc) {
@@ -163,7 +189,11 @@ fn auto_root(pc: i32, quality: &str, key: Option<&KeyEstimate>) -> String {
             }
         }
     }
-    let table = if is_minor_type(quality) { &AUTO_MINOR_NAMES } else { &AUTO_NAMES };
+    let table = if is_minor_type(quality) {
+        &AUTO_MINOR_NAMES
+    } else {
+        &AUTO_NAMES
+    };
     table[pc as usize].to_string()
 }
 
@@ -174,24 +204,33 @@ pub fn chord_label(chord: &ChordMatch, key: Option<&KeyEstimate>, mode: Accident
     let (root_name, bass_name) = match mode {
         Accidental::Auto => {
             let root = auto_root(root_pc, chord.quality, key);
-            let bass = chord.bass_pc.filter(|&b| b.rem_euclid(12) != root_pc).map(|b| {
-                let b = b.rem_euclid(12);
-                // Spell the bass from the spelled root, so the two agree.
-                let root_letter = root.chars().next().and_then(|c| LETTERS.iter().position(|&l| l == c));
-                let from_root = root_letter.and_then(|rl| {
-                    let steps = interval_steps((b - root_pc).rem_euclid(12), chord.quality);
-                    Spelled::on_letter((rl + steps) % 7, b)
+            let bass = chord
+                .bass_pc
+                .filter(|&b| b.rem_euclid(12) != root_pc)
+                .map(|b| {
+                    let b = b.rem_euclid(12);
+                    // Spell the bass from the spelled root, so the two agree.
+                    let root_letter = root
+                        .chars()
+                        .next()
+                        .and_then(|c| LETTERS.iter().position(|&l| l == c));
+                    let from_root = root_letter.and_then(|rl| {
+                        let steps = interval_steps((b - root_pc).rem_euclid(12), chord.quality);
+                        Spelled::on_letter((rl + steps) % 7, b)
+                    });
+                    match from_root {
+                        Some(s) => s.name(),
+                        None => AUTO_NAMES[b as usize].to_string(),
+                    }
                 });
-                match from_root {
-                    Some(s) => s.name(),
-                    None => AUTO_NAMES[b as usize].to_string(),
-                }
-            });
             (root, bass)
         }
         _ => (
             note_name(root_pc, mode).to_string(),
-            chord.bass_pc.filter(|&b| b.rem_euclid(12) != root_pc).map(|b| note_name(b, mode).to_string()),
+            chord
+                .bass_pc
+                .filter(|&b| b.rem_euclid(12) != root_pc)
+                .map(|b| note_name(b, mode).to_string()),
         ),
     };
     match bass_name {
@@ -206,11 +245,18 @@ mod tests {
     use crate::key_estimator::Mode;
 
     fn chord(root: i32, quality: &'static str, bass: Option<i32>) -> ChordMatch {
-        ChordMatch { root_pc: root, quality, bass_pc: bass }
+        ChordMatch {
+            root_pc: root,
+            quality,
+            bass_pc: bass,
+        }
     }
 
     fn major(tonic: i32) -> KeyEstimate {
-        KeyEstimate { tonic_pc: tonic, mode: Mode::Major }
+        KeyEstimate {
+            tonic_pc: tonic,
+            mode: Mode::Major,
+        }
     }
 
     fn auto(c: ChordMatch, key: Option<KeyEstimate>) -> String {
@@ -223,7 +269,10 @@ mod tests {
         assert_eq!(chord_label(&c, None, Accidental::Sharp), "C♯m7/G♯");
         assert_eq!(chord_label(&c, None, Accidental::Flat), "D♭m7/A♭");
         // the key is ignored outside Auto
-        assert_eq!(chord_label(&c, Some(&major(9)), Accidental::Flat), "D♭m7/A♭");
+        assert_eq!(
+            chord_label(&c, Some(&major(9)), Accidental::Flat),
+            "D♭m7/A♭"
+        );
     }
 
     #[test]
@@ -260,14 +309,17 @@ mod tests {
         assert_eq!(auto(chord(1, "m", None), Some(major(9))), "C♯m");
         assert_eq!(auto(chord(6, "m7", None), Some(major(9))), "F♯m7");
         assert_eq!(auto(chord(8, "7", None), Some(major(4))), "G♯7"); // E major: V/vi
-        // D major: F♯m, with a borrowed B♭
+                                                                      // D major: F♯m, with a borrowed B♭
         assert_eq!(auto(chord(6, "m", None), Some(major(2))), "F♯m");
         assert_eq!(auto(chord(10, "maj", None), Some(major(2))), "B♭");
         // B♭ major / E♭ major are flat
         assert_eq!(auto(chord(3, "maj", None), Some(major(10))), "E♭");
         assert_eq!(auto(chord(8, "maj", None), Some(major(3))), "A♭");
         // an A-minor song is keyed as its relative major C
-        let a_minor = KeyEstimate { tonic_pc: 9, mode: Mode::Minor };
+        let a_minor = KeyEstimate {
+            tonic_pc: 9,
+            mode: Mode::Minor,
+        };
         assert_eq!(auto(chord(4, "7", Some(8)), Some(a_minor)), "E7/G♯");
     }
 

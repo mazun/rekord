@@ -43,13 +43,15 @@ const en = {
   "settings.noteModelMediumDesc": "Balanced. Runs on a GPU or a fast CPU.",
   "settings.noteModelSmallDesc": "Lightest. For a slow CPU.",
   "settings.noteModelLastRun": "Last session",
-  "settings.overBudgetNote": "Okarina L may be too slow without a discrete GPU, and the notes may fall behind the audio.",
+  "settings.overBudgetNote":
+    "Okarina L may be too slow without a discrete GPU, and the notes may fall behind the audio.",
   "settings.lookAhead": "Look-ahead",
   "settings.lookAhead8": "0.26 s",
   "settings.lookAhead16": "0.51 s",
   "settings.lookAhead8Desc": "Less delay.",
   "settings.lookAhead16Desc": "Slightly more accurate, with more delay.",
-  "settings.cpuFallbackNote": "DirectML is unavailable, so the model runs on the CPU, at a size that suits its speed.",
+  "settings.cpuFallbackNote":
+    "DirectML is unavailable, so the model runs on the CPU, at a size that suits its speed.",
   "settings.accidental": "Sharps / flats",
   "settings.accidentalAuto": "Auto",
   "settings.accidentalSharp": "Always ♯",
@@ -111,7 +113,8 @@ const ja: Record<MessageKey, string> = {
   "settings.lookAhead16": "0.51 秒",
   "settings.lookAhead8Desc": "低遅延です。",
   "settings.lookAhead16Desc": "遅延は増えますが、やや高精度です。",
-  "settings.cpuFallbackNote": "DirectML が使えないため、CPU の速さに合わせたサイズで CPU 上で動かしています。",
+  "settings.cpuFallbackNote":
+    "DirectML が使えないため、CPU の速さに合わせたサイズで CPU 上で動かしています。",
   "settings.accidental": "♯ / ♭ 表記",
   "settings.accidentalAuto": "自動",
   "settings.accidentalSharp": "常に ♯",

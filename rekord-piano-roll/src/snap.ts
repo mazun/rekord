@@ -21,7 +21,8 @@ export function snapToBeats(beats: readonly number[], t: number): number {
   for (let i = Math.max(0, lo - 1); i < beats.length; i++) {
     if (beats[i] > t + SNAP_MAX_BEAT_GAP_S) break;
     consider(beats[i]);
-    if (i + 1 < beats.length && beats[i + 1] - beats[i] <= SNAP_MAX_BEAT_GAP_S) consider((beats[i] + beats[i + 1]) / 2);
+    if (i + 1 < beats.length && beats[i + 1] - beats[i] <= SNAP_MAX_BEAT_GAP_S)
+      consider((beats[i] + beats[i + 1]) / 2);
   }
   return best;
 }

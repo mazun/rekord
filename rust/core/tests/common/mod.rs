@@ -7,13 +7,25 @@ use std::time::Instant;
 
 use ndarray::{s, Array2};
 use rekord_core::harmonica_decode::DecodedNote;
-use rekord_core::harmonica_model::{Device, HarmonicaModel, ModelSize, Part, FRAME_S, HOP, MIN_MIDI, N_PITCH};
+use rekord_core::harmonica_model::{
+    Device, HarmonicaModel, ModelSize, Part, FRAME_S, HOP, MIN_MIDI, N_PITCH,
+};
 use rekord_core::harmonica_stream::{BlockProbs, BlockStreamer};
 
 pub fn read_f32_file(path: &Path) -> Vec<f32> {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-    assert_eq!(bytes.len() % 4, 0, "{}: not a whole number of f32s", path.display());
-    bytes.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect()
+    assert_eq!(
+        bytes.len() % 4,
+        0,
+        "{}: not a whole number of f32s",
+        path.display()
+    );
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| f32::from_le_bytes(*c))
+        .collect()
 }
 
 pub fn read_meta(dir: &Path) -> serde_json::Value {
@@ -26,17 +38,29 @@ pub fn read_meta_t(dir: &Path) -> usize {
 }
 
 pub fn read_notes_json(path: &Path) -> Vec<(f64, f64, f64)> {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()))
 }
 
 pub fn max_abs_diff(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
-    assert_eq!(a.dim(), b.dim(), "shape mismatch: {:?} vs {:?}", a.dim(), b.dim());
-    a.iter().zip(b.iter()).fold(0.0f32, |m, (&x, &y)| m.max((x - y).abs()))
+    assert_eq!(
+        a.dim(),
+        b.dim(),
+        "shape mismatch: {:?} vs {:?}",
+        a.dim(),
+        b.dim()
+    );
+    a.iter()
+        .zip(b.iter())
+        .fold(0.0f32, |m, (&x, &y)| m.max((x - y).abs()))
 }
 
 pub fn max_abs_diff_rows(a: &Array2<f32>, b: &Array2<f32>, rows: std::ops::Range<usize>) -> f32 {
-    a.slice(s![rows.clone(), ..]).iter().zip(b.slice(s![rows, ..]).iter()).fold(0.0f32, |m, (&x, &y)| m.max((x - y).abs()))
+    a.slice(s![rows.clone(), ..])
+        .iter()
+        .zip(b.slice(s![rows, ..]).iter())
+        .fold(0.0f32, |m, (&x, &y)| m.max((x - y).abs()))
 }
 
 pub fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -55,7 +79,16 @@ pub fn frame_of(seconds: f64) -> i64 {
 /// "explained" by the golden reference being within `tol` of a decision
 /// boundary near `frame` for pitch `p`: a near-threshold onset/sustain
 /// value, or a near-tied plateau, within +/-2 frames.
-pub fn near_tie(onset: &Array2<f32>, sustain: &Array2<f32>, th_on: f32, th_sus: f32, frame: usize, p: usize, tol: f32, t: usize) -> bool {
+pub fn near_tie(
+    onset: &Array2<f32>,
+    sustain: &Array2<f32>,
+    th_on: f32,
+    th_sus: f32,
+    frame: usize,
+    p: usize,
+    tol: f32,
+    t: usize,
+) -> bool {
     if t == 0 || p >= N_PITCH {
         return false;
     }
@@ -94,8 +127,10 @@ pub fn check_note_keys_match(
     t: usize,
     label: &str,
 ) {
-    let golden_keys: HashSet<(i64, i64, i32)> =
-        golden.iter().map(|&(on_s, off_s, midi)| (frame_of(on_s), frame_of(off_s), midi.round() as i32)).collect();
+    let golden_keys: HashSet<(i64, i64, i32)> = golden
+        .iter()
+        .map(|&(on_s, off_s, midi)| (frame_of(on_s), frame_of(off_s), midi.round() as i32))
+        .collect();
 
     let mut unexplained = Vec::new();
     let mut mismatch_count = 0;
@@ -103,16 +138,45 @@ pub fn check_note_keys_match(
         mismatch_count += 1;
         let (start, end, midi) = *key;
         let p = (midi - MIN_MIDI).max(0) as usize;
-        let explained = near_tie(g_onset, g_sustain, th_on, th_sus, start.max(0) as usize, p, tol, t)
-            || near_tie(g_onset, g_sustain, th_on, th_sus, end.max(0) as usize, p, tol, t);
-        let which = if ours_keys.contains(key) { "ours-only" } else { "golden-only" };
+        let explained = near_tie(
+            g_onset,
+            g_sustain,
+            th_on,
+            th_sus,
+            start.max(0) as usize,
+            p,
+            tol,
+            t,
+        ) || near_tie(
+            g_onset,
+            g_sustain,
+            th_on,
+            th_sus,
+            end.max(0) as usize,
+            p,
+            tol,
+            t,
+        );
+        let which = if ours_keys.contains(key) {
+            "ours-only"
+        } else {
+            "golden-only"
+        };
         eprintln!("{label}: note mismatch [{which}] start={start} end={end} midi={midi} explained={explained}");
         if !explained {
             unexplained.push(*key);
         }
     }
-    eprintln!("{label}: {} note(s), {mismatch_count} mismatch(es), {} unexplained", ours_keys.len(), unexplained.len());
-    assert!(unexplained.is_empty(), "{label}: {} unexplained note mismatches: {unexplained:?}", unexplained.len());
+    eprintln!(
+        "{label}: {} note(s), {mismatch_count} mismatch(es), {} unexplained",
+        ours_keys.len(),
+        unexplained.len()
+    );
+    assert!(
+        unexplained.is_empty(),
+        "{label}: {} unexplained note mismatches: {unexplained:?}",
+        unexplained.len()
+    );
 }
 
 /// `check_note_keys_match` for decoder output.
@@ -127,8 +191,13 @@ pub fn check_notes_match(
     t: usize,
     label: &str,
 ) {
-    let keys: HashSet<(i64, i64, i32)> = ours.iter().map(|n| (n.start_frame as i64, n.end_frame as i64, n.pitch_midi)).collect();
-    check_note_keys_match(&keys, golden, g_onset, g_sustain, th_on, th_sus, tol, t, label);
+    let keys: HashSet<(i64, i64, i32)> = ours
+        .iter()
+        .map(|n| (n.start_frame as i64, n.end_frame as i64, n.pitch_midi))
+        .collect();
+    check_note_keys_match(
+        &keys, golden, g_onset, g_sustain, th_on, th_sus, tol, t, label,
+    );
 }
 
 /// Tries to load `size` on DirectML; prints a skip message and returns None
@@ -161,7 +230,12 @@ pub struct StreamResult {
 /// Feeds `audio` through a fresh `BlockStreamer` in the given (cyclically
 /// repeated) chunk sizes, then `finish()`s it, reassembling the full
 /// per-part [T, N_PITCH] probability arrays and per-block wall-clock timings.
-pub fn collect_stream(model: HarmonicaModel, audio: &[f32], future_frames: usize, chunk_sizes: &[usize]) -> StreamResult {
+pub fn collect_stream(
+    model: HarmonicaModel,
+    audio: &[f32],
+    future_frames: usize,
+    chunk_sizes: &[usize],
+) -> StreamResult {
     let t_hint = audio.len().div_ceil(HOP);
     let mut parts: Vec<PartArrays> = model
         .parts()
@@ -181,7 +255,10 @@ pub fn collect_stream(model: HarmonicaModel, audio: &[f32], future_frames: usize
         let now = Instant::now();
         timings_ms.push(now.duration_since(last_instant).as_secs_f64() * 1000.0);
         last_instant = now;
-        assert_eq!(block.first_frame, frames_produced, "blocks must arrive contiguously from 0");
+        assert_eq!(
+            block.first_frame, frames_produced,
+            "blocks must arrive contiguously from 0"
+        );
         let n = block.parts[0].onset.nrows();
         for (dst, src) in parts.iter_mut().zip(&block.parts) {
             assert_eq!(dst.part, src.part);
@@ -199,20 +276,35 @@ pub fn collect_stream(model: HarmonicaModel, audio: &[f32], future_frames: usize
     while pos < audio.len() {
         let want = *cycle.next().unwrap();
         let take = want.min(audio.len() - pos);
-        streamer.push(&audio[pos..pos + take], &mut on_block).unwrap();
+        streamer
+            .push(&audio[pos..pos + take], &mut on_block)
+            .unwrap();
         pos += take;
     }
     streamer.finish(&mut on_block).unwrap();
     drop(on_block);
 
-    assert_eq!(frames_produced, t_hint, "expected frames 0..{t_hint} contiguously, got {frames_produced}");
-    StreamResult { parts, timings_ms, frames_produced }
+    assert_eq!(
+        frames_produced, t_hint,
+        "expected frames 0..{t_hint} contiguously, got {frames_produced}"
+    );
+    StreamResult {
+        parts,
+        timings_ms,
+        frames_produced,
+    }
 }
 
 /// Compares one part's streamed probabilities to the golden ones, printing
 /// the deltas and asserting `tol` on steady-state frames and a looser bound
 /// on the startup frames.
-pub fn check_stream_probs(label: &str, result: &PartArrays, golden: &(Array2<f32>, Array2<f32>, Array2<f32>), t: usize, tol: f32) {
+pub fn check_stream_probs(
+    label: &str,
+    result: &PartArrays,
+    golden: &(Array2<f32>, Array2<f32>, Array2<f32>),
+    t: usize,
+    tol: f32,
+) {
     let (g_onset, g_sustain, g_offset) = golden;
     let d_on = max_abs_diff(&result.onset, g_onset);
     let d_sus = max_abs_diff(&result.sustain, g_sustain);
@@ -243,16 +335,39 @@ pub fn check_stream_probs(label: &str, result: &PartArrays, golden: &(Array2<f32
     let d_off_steady = max_abs_diff_rows(&result.offset, g_offset, STARTUP_FRAMES..t);
     eprintln!("{label}: startup (frames<{STARTUP_FRAMES}) max|delta| onset={d_on_startup:.2e} sustain={d_sus_startup:.2e} offset={d_off_startup:.2e}");
     eprintln!("{label}: steady-state (frames>={STARTUP_FRAMES}) max|delta| onset={d_on_steady:.2e} sustain={d_sus_steady:.2e} offset={d_off_steady:.2e}");
-    assert!(d_on_startup <= STARTUP_TOL, "{label} startup onset max|delta| {d_on_startup} > {STARTUP_TOL}");
-    assert!(d_sus_startup <= STARTUP_TOL, "{label} startup sustain max|delta| {d_sus_startup} > {STARTUP_TOL}");
-    assert!(d_off_startup <= STARTUP_TOL, "{label} startup offset max|delta| {d_off_startup} > {STARTUP_TOL}");
-    assert!(d_on_steady <= tol, "{label} steady-state onset max|delta| {d_on_steady} > {tol}");
-    assert!(d_sus_steady <= tol, "{label} steady-state sustain max|delta| {d_sus_steady} > {tol}");
-    assert!(d_off_steady <= tol, "{label} steady-state offset max|delta| {d_off_steady} > {tol}");
+    assert!(
+        d_on_startup <= STARTUP_TOL,
+        "{label} startup onset max|delta| {d_on_startup} > {STARTUP_TOL}"
+    );
+    assert!(
+        d_sus_startup <= STARTUP_TOL,
+        "{label} startup sustain max|delta| {d_sus_startup} > {STARTUP_TOL}"
+    );
+    assert!(
+        d_off_startup <= STARTUP_TOL,
+        "{label} startup offset max|delta| {d_off_startup} > {STARTUP_TOL}"
+    );
+    assert!(
+        d_on_steady <= tol,
+        "{label} steady-state onset max|delta| {d_on_steady} > {tol}"
+    );
+    assert!(
+        d_sus_steady <= tol,
+        "{label} steady-state sustain max|delta| {d_sus_steady} > {tol}"
+    );
+    assert!(
+        d_off_steady <= tol,
+        "{label} steady-state offset max|delta| {d_off_steady} > {tol}"
+    );
 }
 
 pub fn print_block_timings(label: &str, timings_ms: &[f64]) {
     let mut sorted_ms = timings_ms.to_vec();
     sorted_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    eprintln!("{label}: per-block ms median={:.2} p99={:.2} (n={})", percentile(&sorted_ms, 0.5), percentile(&sorted_ms, 0.99), sorted_ms.len());
+    eprintln!(
+        "{label}: per-block ms median={:.2} p99={:.2} (n={})",
+        percentile(&sorted_ms, 0.5),
+        percentile(&sorted_ms, 0.99),
+        sorted_ms.len()
+    );
 }

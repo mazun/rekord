@@ -1,6 +1,6 @@
-import { tick } from "svelte";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { settings, savePianorollVisible } from "./settings.svelte";
+import { tick } from "svelte";
+import { savePianorollVisible, settings } from "./settings.svelte";
 
 // The piano roll is the only reason this window needs to be wide or
 // tall -- the toolbar/key/chord rows above it are happy at their
@@ -93,7 +93,11 @@ export async function initWindowSize(): Promise<void> {
     timer = window.setTimeout(() => {
       // Collapsed and settings sizes are not the user's expanded size.
       if (!settings.pianorollVisible || widthBeforeSettings !== null) return;
-      if (window.innerWidth < DEFAULT_EXPANDED_WIDTH || window.innerHeight < DEFAULT_EXPANDED_HEIGHT) return;
+      if (
+        window.innerWidth < DEFAULT_EXPANDED_WIDTH ||
+        window.innerHeight < DEFAULT_EXPANDED_HEIGHT
+      )
+        return;
       localStorage.setItem(
         SIZE_STORAGE_KEY,
         JSON.stringify({ width: window.innerWidth, height: window.innerHeight }),
@@ -170,7 +174,10 @@ export async function enterSettingsWindowSize(): Promise<void> {
     widthBeforeSettings = width;
     heightBeforeSettings = height;
     await setResizableMode(win, false);
-    if (Math.round(width) !== DEFAULT_EXPANDED_WIDTH || Math.round(height) !== DEFAULT_EXPANDED_HEIGHT) {
+    if (
+      Math.round(width) !== DEFAULT_EXPANDED_WIDTH ||
+      Math.round(height) !== DEFAULT_EXPANDED_HEIGHT
+    ) {
       await win.setSize(new LogicalSize(DEFAULT_EXPANDED_WIDTH, DEFAULT_EXPANDED_HEIGHT));
     }
   } catch (err) {

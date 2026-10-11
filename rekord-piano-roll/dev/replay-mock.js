@@ -23,19 +23,34 @@ function emit(event, payload) {
 const lines = (v) => v.map(([t, b]) => ({ t, bar: !!b }));
 
 async function startReplay() {
-  const text = await (await fetch("/dev/" + (params.get("events") ?? "replay-events.jsonl"))).text();
-  const events = text.trim().split("\n").map((l) => JSON.parse(l));
+  const text = await (
+    await fetch("/dev/" + (params.get("events") ?? "replay-events.jsonl"))
+  ).text();
+  const events = text
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
   const ref = params.get("ref") ? await (await fetch("/dev/" + params.get("ref"))).json() : null;
   window.__replay = { t0: performance.now(), events, ref };
   emit("pipeline-event", {
-    type: "Started", total_latency_s: LATENCY,
+    type: "Started",
+    total_latency_s: LATENCY,
     note_model: { size: params.get("model") ?? "large", device: "directml", future_frames: 8 },
   });
   for (const e of events) {
-    timers.push(setTimeout(() => emit("pipeline-event", {
-      type: "BeatLines", from_s: e.from_s,
-      committed: lines(e.committed), provisional: lines(e.provisional), predicted: lines(e.predicted),
-    }), e.wall * 1000));
+    timers.push(
+      setTimeout(
+        () =>
+          emit("pipeline-event", {
+            type: "BeatLines",
+            from_s: e.from_s,
+            committed: lines(e.committed),
+            provisional: lines(e.provisional),
+            predicted: lines(e.predicted),
+          }),
+        e.wall * 1000,
+      ),
+    );
   }
   if (ref) requestAnimationFrame(drawRef);
 }
@@ -72,14 +87,33 @@ function drawRef() {
 
 window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
 window.__TAURI_INTERNALS__ = {
-  metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main", windowLabel: "main" } },
-  transformCallback(cb) { const id = nextId++; cbs.set(id, cb); return id; },
-  unregisterCallback(id) { cbs.delete(id); },
+  metadata: {
+    currentWindow: { label: "main" },
+    currentWebview: { label: "main", windowLabel: "main" },
+  },
+  transformCallback(cb) {
+    const id = nextId++;
+    cbs.set(id, cb);
+    return id;
+  },
+  unregisterCallback(id) {
+    cbs.delete(id);
+  },
   convertFileSrc: (x) => x,
   async invoke(cmd, args) {
-    if (cmd === "plugin:event|listen") { listeners.push({ event: args.event, handler: args.handler }); return listeners.length; }
-    if (cmd === "start_capture") { startReplay(); return null; }
-    if (cmd === "stop_capture") { timers.forEach(clearTimeout); timers = []; return null; }
+    if (cmd === "plugin:event|listen") {
+      listeners.push({ event: args.event, handler: args.handler });
+      return listeners.length;
+    }
+    if (cmd === "start_capture") {
+      startReplay();
+      return null;
+    }
+    if (cmd === "stop_capture") {
+      timers.forEach(clearTimeout);
+      timers = [];
+      return null;
+    }
     return null; // window size etc.: no-ops
   },
 };

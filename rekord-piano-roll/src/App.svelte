@@ -1,15 +1,15 @@
 <script lang="ts">
+  import ChordDisplay from "./components/ChordDisplay.svelte";
+  import KeyPicker from "./components/KeyPicker.svelte";
+  import PianoRollView from "./components/PianoRollView.svelte";
+  import PianorollToggle from "./components/PianorollToggle.svelte";
+  import RecordButton from "./components/RecordButton.svelte";
+  import SettingsView from "./components/SettingsView.svelte";
+  import TensionGrid from "./components/TensionGrid.svelte";
+  import Toolbar from "./components/Toolbar.svelte";
   import { pipeline, startCapture, stopCapture } from "./pipeline.svelte";
   import { stopPlayback } from "./transport.svelte";
   import { enterSettingsWindowSize, leaveSettingsWindowSize } from "./windowSize";
-  import Toolbar from "./components/Toolbar.svelte";
-  import KeyPicker from "./components/KeyPicker.svelte";
-  import ChordDisplay from "./components/ChordDisplay.svelte";
-  import TensionGrid from "./components/TensionGrid.svelte";
-  import PianorollToggle from "./components/PianorollToggle.svelte";
-  import RecordButton from "./components/RecordButton.svelte";
-  import PianoRollView from "./components/PianoRollView.svelte";
-  import SettingsView from "./components/SettingsView.svelte";
 
   let view = $state<"main" | "settings">("main");
 

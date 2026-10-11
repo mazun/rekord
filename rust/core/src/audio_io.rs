@@ -3,7 +3,9 @@
 //! test fixtures are all WAV; broader format support can come later).
 
 use anyhow::{Context, Result};
-use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
 
 pub fn load_audio(path: &str, target_rate: usize) -> Result<Vec<f32>> {
     let mut reader = hound::WavReader::open(path).with_context(|| format!("opening {path}"))?;
@@ -17,9 +19,9 @@ pub fn load_audio(path: &str, target_rate: usize) -> Result<Vec<f32>> {
                 .map(|s| s.map(|v| v as f32 / max_value))
                 .collect::<std::result::Result<Vec<f32>, _>>()?
         }
-        hound::SampleFormat::Float => {
-            reader.samples::<f32>().collect::<std::result::Result<Vec<f32>, _>>()?
-        }
+        hound::SampleFormat::Float => reader
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<f32>, _>>()?,
     };
 
     let channels = spec.channels as usize;

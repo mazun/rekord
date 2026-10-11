@@ -25,10 +25,12 @@ use crate::spelling::{key_name, Accidental};
 // tendency to identify the relative major as tonic in minor keys" --
 // exactly the major/minor distinction this feature's key-name display
 // depends on getting right. Bellman-Budge carries no such documented bias.
-const BELLMAN_BUDGE_MAJOR: [f32; 12] =
-    [16.80, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 20.28, 1.80, 8.04, 0.62, 10.57];
-const BELLMAN_BUDGE_MINOR: [f32; 12] =
-    [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 21.07, 7.49, 1.53, 0.92, 10.21];
+const BELLMAN_BUDGE_MAJOR: [f32; 12] = [
+    16.80, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 20.28, 1.80, 8.04, 0.62, 10.57,
+];
+const BELLMAN_BUDGE_MINOR: [f32; 12] = [
+    18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 21.07, 7.49, 1.53, 0.92, 10.21,
+];
 
 // Notes older than this contribute nothing to the current estimate --
 // long enough to span several chords (so one passing/chromatic tone can't
@@ -138,8 +140,8 @@ pub struct KeyParams {
     /// tell (a bare-fifth riff), which is the usual case in pop; a minor key needs its 3rd.
     pub minor_penalty: f32,
     /// > 0: track the key by accumulating evidence instead of the margin / hold hysteresis (see
-    /// `KeyEstimator::estimate_cusum`): a challenger takes over once it has gained this much
-    /// (correlation x seconds) on the current key. 0 = the original hysteresis.
+    /// > `KeyEstimator::estimate_cusum`): a challenger takes over once it has gained this much
+    /// > (correlation x seconds) on the current key. 0 = the original hysteresis.
     pub cusum_s: f32,
     /// With `cusum_s`: the key is "in doubt" (`KeyEstimator::in_doubt`) while a challenger has
     /// gained this fraction of `cusum_s`; 0 = never.
@@ -163,8 +165,12 @@ impl Default for KeyParams {
 impl KeyParams {
     pub fn apply_tune(&mut self, tune: &str) -> Result<(), String> {
         for kv in tune.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            let (k, v) = kv.split_once('=').ok_or_else(|| format!("expected key=value, got {kv:?}"))?;
-            let num = v.parse::<f32>().map_err(|_| format!("{k} needs a number, got {v:?}"))?;
+            let (k, v) = kv
+                .split_once('=')
+                .ok_or_else(|| format!("expected key=value, got {kv:?}"))?;
+            let num = v
+                .parse::<f32>()
+                .map_err(|_| format!("{k} needs a number, got {v:?}"))?;
             match k {
                 "w" => self.window_s = num,
                 "d" => self.decay_s = num,
@@ -242,8 +248,15 @@ impl KeyEstimator {
             .filter(|&c| c != leader)
             .map(|c| (c, self.scores[c]))
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())?;
-        let class = if score > -doubt * lambda { challenger } else { leader };
-        Some(KeyEstimate { tonic_pc: class as i32, mode: Mode::Major })
+        let class = if score > -doubt * lambda {
+            challenger
+        } else {
+            leader
+        };
+        Some(KeyEstimate {
+            tonic_pc: class as i32,
+            mode: Mode::Major,
+        })
     }
 
     /// Feed one just-confirmed note. Intended to be called once per
@@ -308,7 +321,9 @@ impl KeyEstimator {
                 let cur_score = self.correlation_for(cur);
                 if best_score - cur_score >= self.params.switch_margin {
                     match self.pending {
-                        Some((cand, since)) if cand == best_key && now_s - since >= self.params.min_hold_s => {
+                        Some((cand, since))
+                            if cand == best_key && now_s - since >= self.params.min_hold_s =>
+                        {
                             self.pending = None;
                             best_key
                         }
@@ -345,27 +360,45 @@ impl KeyEstimator {
         let mut fit = [0f32; 12];
         for (class, slot) in fit.iter_mut().enumerate() {
             let major = pearson(&chroma, &rotated(&BELLMAN_BUDGE_MAJOR, class as i32));
-            let minor = pearson(&chroma, &rotated(&BELLMAN_BUDGE_MINOR, (class as i32 + 9) % 12)) - self.params.minor_penalty;
+            let minor = pearson(
+                &chroma,
+                &rotated(&BELLMAN_BUDGE_MINOR, (class as i32 + 9) % 12),
+            ) - self.params.minor_penalty;
             *slot = major.max(minor);
         }
         let mean = fit.iter().sum::<f32>() / 12.0;
-        let dt = self.last_eval_s.map_or(1.0, |t| (self.now_s - t).clamp(0.0, 1.0));
+        let dt = self
+            .last_eval_s
+            .map_or(1.0, |t| (self.now_s - t).clamp(0.0, 1.0));
         self.last_eval_s = Some(self.now_s);
-        let top = self.scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let top = self
+            .scores
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
         for (score, fit) in self.scores.iter_mut().zip(fit) {
             *score = score.max(top - self.params.cusum_s) + (fit - mean) * dt;
         }
-        let top = self.scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let top = self
+            .scores
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
         for score in &mut self.scores {
             *score -= top;
         }
-        let best = (0..12).max_by(|&a, &b| self.scores[a].partial_cmp(&self.scores[b]).unwrap()).unwrap();
+        let best = (0..12)
+            .max_by(|&a, &b| self.scores[a].partial_cmp(&self.scores[b]).unwrap())
+            .unwrap();
         let leader = match self.leader {
             Some(cur) if self.scores[best] <= self.scores[cur] + 1e-6 => cur,
             _ => best,
         };
         self.leader = Some(leader);
-        self.displayed = Some(KeyEstimate { tonic_pc: leader as i32, mode: Mode::Major });
+        self.displayed = Some(KeyEstimate {
+            tonic_pc: leader as i32,
+            mode: Mode::Major,
+        });
         self.displayed
     }
 
@@ -373,7 +406,11 @@ impl KeyEstimator {
         let mut bins = [0f32; 12];
         let decay = self.params.decay_s;
         for n in &self.history {
-            let age_weight = if decay > 0.0 { (-(self.now_s - n.start_s).max(0.0) / decay).exp() } else { 1.0 };
+            let age_weight = if decay > 0.0 {
+                (-(self.now_s - n.start_s).max(0.0) / decay).exp()
+            } else {
+                1.0
+            };
             bins[n.pc as usize] += n.weight * age_weight;
         }
         bins
@@ -402,15 +439,27 @@ impl KeyEstimator {
         let chroma = self.chroma();
         let mut best: Option<(KeyEstimate, f32)> = None;
         for tonic in 0..12i32 {
-            for (mode, profile) in [(Mode::Major, &BELLMAN_BUDGE_MAJOR), (Mode::Minor, &BELLMAN_BUDGE_MINOR)] {
+            for (mode, profile) in [
+                (Mode::Major, &BELLMAN_BUDGE_MAJOR),
+                (Mode::Minor, &BELLMAN_BUDGE_MINOR),
+            ] {
                 let score = pearson(&chroma, &rotated(profile, tonic)) - self.mode_penalty(mode);
-                let candidate = KeyEstimate { tonic_pc: tonic, mode };
-                if best.map_or(true, |(_, s)| score > s) {
+                let candidate = KeyEstimate {
+                    tonic_pc: tonic,
+                    mode,
+                };
+                if best.is_none_or(|(_, s)| score > s) {
                     best = Some((candidate, score));
                 }
             }
         }
         best
+    }
+}
+
+impl Default for KeyEstimator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -443,8 +492,9 @@ fn pearson(a: &[f32; 12], b: &[f32; 12]) -> f32 {
 // in popular-music analysis (bIII, bVI, bVII), except the tritone (#IV),
 // far more often reached as a secondary-dominant root (V/V) than named
 // "bV".
-const DEGREE_NAMES: [&str; 12] =
-    ["I", "bII", "II", "bIII", "III", "IV", "#IV", "V", "bVI", "VI", "bVII", "VII"];
+const DEGREE_NAMES: [&str; 12] = [
+    "I", "bII", "II", "bIII", "III", "IV", "#IV", "V", "bVI", "VI", "bVII", "VII",
+];
 
 /// Roman-numeral degree name for `chord`'s root relative to `key`'s
 /// governing major scale, carrying the same quality suffix a normal chord
@@ -475,7 +525,13 @@ mod tests {
             if k % 10 == 0 {
                 let chord = degrees[(k / 10) as usize % 4];
                 for pc in chord {
-                    pending.push(ConfirmedNote { start_s: t, end_s: t + 1.0, pitch_midi: 48 + (tonic + pc) % 12, part: Part::Other, velocity: 0.8 });
+                    pending.push(ConfirmedNote {
+                        start_s: t,
+                        end_s: t + 1.0,
+                        pitch_midi: 48 + (tonic + pc) % 12,
+                        part: Part::Other,
+                        velocity: 0.8,
+                    });
                 }
             }
             let (ended, rest): (Vec<_>, Vec<_>) = pending.drain(..).partition(|n| n.end_s <= t);
@@ -484,7 +540,11 @@ mod tests {
                 est.observe(n);
             }
             if let Some(key) = est.estimate(t) {
-                out.push((t, key.relative_major_pc(), est.naming_key().unwrap().relative_major_pc()));
+                out.push((
+                    t,
+                    key.relative_major_pc(),
+                    est.naming_key().unwrap().relative_major_pc(),
+                ));
             }
             k += 1;
         }
@@ -495,20 +555,59 @@ mod tests {
     fn follows_a_modulation_without_flicker_and_names_with_the_challenger_first() {
         let mut est = KeyEstimator::with_params(KeyParams::default());
         let first = play(&mut est, 0, 0.0, 30.0);
-        assert!(first.last().is_some_and(|&(_, shown, _)| shown == 0), "C major settles as C");
+        assert!(
+            first.last().is_some_and(|&(_, shown, _)| shown == 0),
+            "C major settles as C"
+        );
         let second = play(&mut est, 9, 30.0, 30.0);
-        let shown_at = |pc: i32| second.iter().find(|&&(_, shown, _)| shown == pc).map(|&(t, ..)| t);
-        let named_at = |pc: i32| second.iter().find(|&&(_, _, named)| named == pc).map(|&(t, ..)| t);
-        let (shown, named) = (shown_at(9).expect("A major is reached"), named_at(9).expect("naming reaches A major"));
-        assert!(shown - 30.0 < 10.0, "A major takes over within 10 s of the modulation, took {}", shown - 30.0);
-        assert!(named <= shown, "naming does not lag the readout ({named} vs {shown})");
-        let switches = first.iter().chain(&second).collect::<Vec<_>>().windows(2).filter(|w| w[0].1 != w[1].1).count();
-        assert!(switches <= 2, "the key changes about once, not {switches} times");
+        let shown_at = |pc: i32| {
+            second
+                .iter()
+                .find(|&&(_, shown, _)| shown == pc)
+                .map(|&(t, ..)| t)
+        };
+        let named_at = |pc: i32| {
+            second
+                .iter()
+                .find(|&&(_, _, named)| named == pc)
+                .map(|&(t, ..)| t)
+        };
+        let (shown, named) = (
+            shown_at(9).expect("A major is reached"),
+            named_at(9).expect("naming reaches A major"),
+        );
+        assert!(
+            shown - 30.0 < 10.0,
+            "A major takes over within 10 s of the modulation, took {}",
+            shown - 30.0
+        );
+        assert!(
+            named <= shown,
+            "naming does not lag the readout ({named} vs {shown})"
+        );
+        let switches = first
+            .iter()
+            .chain(&second)
+            .collect::<Vec<_>>()
+            .windows(2)
+            .filter(|w| w[0].1 != w[1].1)
+            .count();
+        assert!(
+            switches <= 2,
+            "the key changes about once, not {switches} times"
+        );
     }
 
     #[test]
     fn the_original_hysteresis_is_still_there_without_the_cumulative_rule() {
-        let params = KeyParams { cusum_s: 0.0, doubt: 0.0, minor_penalty: 0.0, window_s: 12.0, decay_s: 0.0, ..KeyParams::default() };
+        let params = KeyParams {
+            cusum_s: 0.0,
+            doubt: 0.0,
+            minor_penalty: 0.0,
+            window_s: 12.0,
+            decay_s: 0.0,
+            ..KeyParams::default()
+        };
         let mut est = KeyEstimator::with_params(params);
         let first = play(&mut est, 0, 0.0, 30.0);
         assert!(first.last().is_some_and(|&(_, shown, _)| shown == 0));

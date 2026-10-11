@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { pipeline } from "../pipeline.svelte";
   import { togglePlayback, transport } from "../transport.svelte";
-  import { t } from "../i18n.svelte";
 
   // Replays what was just recorded (see transport.svelte.ts): play / pause toggle. While capturing
   // only with a marker placed (capture is then stopped first -- the loopback would record the

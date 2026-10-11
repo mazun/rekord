@@ -67,7 +67,9 @@ impl Golden {
     fn thresholds(&self, part: Part, future_frames: usize) -> (f32, f32) {
         let meta = &read_meta(&self.dir)[self.key];
         let v = if future_frames >= 16 {
-            let json = meta["onnx_metadata"]["thresholds_f16"].as_str().expect("golden meta has no thresholds_f16");
+            let json = meta["onnx_metadata"]["thresholds_f16"]
+                .as_str()
+                .expect("golden meta has no thresholds_f16");
             serde_json::from_str::<serde_json::Value>(json).unwrap()[part.name()].clone()
         } else {
             meta["thresholds"][part.name()].clone()
@@ -76,7 +78,9 @@ impl Golden {
     }
 
     fn note_count(&self, part: Part) -> usize {
-        read_meta(&self.dir)[self.key]["n_notes"][part.name()].as_u64().unwrap() as usize
+        read_meta(&self.dir)[self.key]["n_notes"][part.name()]
+            .as_u64()
+            .unwrap() as usize
     }
 
     fn notes(&self, part: Part) -> Vec<(f64, f64, f64)> {
@@ -104,10 +108,16 @@ fn goldens() -> Vec<Golden> {
     let mut out = Vec::new();
     for (size, base, key) in [
         (ModelSize::Small, "runs/okarina_deploy/small", "mix_small"),
-        (ModelSize::Medium, "runs/okarina_deploy/medium", "mix_medium"),
+        (
+            ModelSize::Medium,
+            "runs/okarina_deploy/medium",
+            "mix_medium",
+        ),
         (ModelSize::Large, "runs/s2_deploy", "mix_large"),
     ] {
-        let model = Path::new(env!("CARGO_MANIFEST_DIR")).join("models").join(size.file_name());
+        let model = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("models")
+            .join(size.file_name());
         if !model.exists() {
             eprintln!("skipping {}: no model at {}", size.label(), model.display());
             continue;
@@ -115,9 +125,18 @@ fn goldens() -> Vec<Golden> {
         for (dataset, sub) in [("guitarset", "golden"), ("rwc001", "golden_rwc001")] {
             let dir = repro.join(base).join(sub);
             if dir.exists() {
-                out.push(Golden { size, dataset, dir, key });
+                out.push(Golden {
+                    size,
+                    dataset,
+                    dir,
+                    key,
+                });
             } else {
-                eprintln!("skipping {} {dataset}: no golden vectors at {}", size.label(), dir.display());
+                eprintln!(
+                    "skipping {} {dataset}: no golden vectors at {}",
+                    size.label(),
+                    dir.display()
+                );
             }
         }
     }
@@ -126,7 +145,9 @@ fn goldens() -> Vec<Golden> {
 
 fn load(size: ModelSize, device: Device) -> Option<HarmonicaModel> {
     match device {
-        Device::Cpu => Some(HarmonicaModel::load_on(size, Device::Cpu).expect("cpu load must not fail")),
+        Device::Cpu => {
+            Some(HarmonicaModel::load_on(size, Device::Cpu).expect("cpu load must not fail"))
+        }
         Device::DirectML => try_load_dml(size),
     }
 }
@@ -142,7 +163,9 @@ fn split_heads_parts(flat: Vec<f32>, rows: usize) -> Vec<PartTriple> {
         let start = (head * PARTS.len() + part) * n;
         Array2::from_shape_vec((rows, N_PITCH), flat[start..start + n].to_vec()).unwrap()
     };
-    (0..PARTS.len()).map(|p| (block(0, p), block(1, p), block(2, p))).collect()
+    (0..PARTS.len())
+        .map(|p| (block(0, p), block(1, p), block(2, p)))
+        .collect()
 }
 
 // ---------------------------------------------------------------------
@@ -156,7 +179,8 @@ fn okarina_metadata() {
         assert_eq!(model.size(), g.size);
         assert_eq!(model.parts(), &PARTS);
         for future_frames in [8, 16] {
-            for (&part, &(th_on, th_sus)) in PARTS.iter().zip(model.part_thresholds(future_frames)) {
+            for (&part, &(th_on, th_sus)) in PARTS.iter().zip(model.part_thresholds(future_frames))
+            {
                 let (want_on, want_sus) = g.thresholds(part, future_frames);
                 assert!(
                     (th_on - want_on).abs() < 1e-6 && (th_sus - want_sus).abs() < 1e-6,
@@ -176,13 +200,26 @@ fn run_cqt_window_test(device: Device, tol: f32) {
     // The CQT is shared by all sizes and every golden holds the same window;
     // one dataset per size is enough to also cover each size's own session.
     for g in goldens().into_iter().filter(|g| g.dataset == "guitarset") {
-        let Some(mut model) = load(g.size, device) else { return };
+        let Some(mut model) = load(g.size, device) else {
+            return;
+        };
         let window_audio = read_f32_file(&g.dir.join("window_audio.f32"));
         assert_eq!(window_audio.len(), WINDOW_SAMPLES);
-        let golden_mag = Array2::from_shape_vec((CHUNK, N_BINS), read_f32_file(&g.dir.join("window_cqt_mag.f32"))).unwrap();
+        let golden_mag = Array2::from_shape_vec(
+            (CHUNK, N_BINS),
+            read_f32_file(&g.dir.join("window_cqt_mag.f32")),
+        )
+        .unwrap();
         let d = max_abs_diff(&model.cqt(&window_audio).unwrap(), &golden_mag);
-        eprintln!("okarina_cqt_window {device:?} {}: max|delta| = {d:.3e}", g.label());
-        assert!(d <= tol, "{}: cqt max|delta| {d} exceeds tolerance {tol}", g.label());
+        eprintln!(
+            "okarina_cqt_window {device:?} {}: max|delta| = {d:.3e}",
+            g.label()
+        );
+        assert!(
+            d <= tol,
+            "{}: cqt max|delta| {d} exceeds tolerance {tol}",
+            g.label()
+        );
     }
 }
 
@@ -202,14 +239,29 @@ fn okarina_cqt_window_dml() {
 
 fn run_net_window_test(device: Device, tol: f32) {
     for g in goldens() {
-        let Some(mut model) = load(g.size, device) else { return };
-        let cqt_mag = Array2::from_shape_vec((CHUNK, N_BINS), read_f32_file(&g.dir.join("window_cqt_mag.f32"))).unwrap();
+        let Some(mut model) = load(g.size, device) else {
+            return;
+        };
+        let cqt_mag = Array2::from_shape_vec(
+            (CHUNK, N_BINS),
+            read_f32_file(&g.dir.join("window_cqt_mag.f32")),
+        )
+        .unwrap();
         let out = model.net(cqt_mag.view()).unwrap();
         assert_eq!(out.iter().map(|p| p.part).collect::<Vec<_>>(), PARTS);
         for (probs, (g_on, g_sus, g_off)) in out.iter().zip(&g.window_probs()) {
-            let (d_on, d_sus, d_off) = (max_abs_diff(&probs.onset, g_on), max_abs_diff(&probs.sustain, g_sus), max_abs_diff(&probs.offset, g_off));
+            let (d_on, d_sus, d_off) = (
+                max_abs_diff(&probs.onset, g_on),
+                max_abs_diff(&probs.sustain, g_sus),
+                max_abs_diff(&probs.offset, g_off),
+            );
             eprintln!("okarina_net_window {device:?} {} {:?}: max|delta| onset={d_on:.2e} sustain={d_sus:.2e} offset={d_off:.2e}", g.label(), probs.part);
-            assert!(d_on <= tol && d_sus <= tol && d_off <= tol, "{} {:?} {device:?}: window delta exceeds {tol}", g.label(), probs.part);
+            assert!(
+                d_on <= tol && d_sus <= tol && d_off <= tol,
+                "{} {:?} {device:?}: window delta exceeds {tol}",
+                g.label(),
+                probs.part
+            );
         }
     }
 }
@@ -232,15 +284,23 @@ fn run_stream_test(device: Device, tol: f32) {
     // Irregular chunk sizes, cycled, deliberately not aligned to BLOCK_FRAMES.
     let chunk_pattern = [1usize, 4095, 4097, 12345, 777, 30000];
     for g in goldens() {
-        let Some(model) = load(g.size, device) else { return };
+        let Some(model) = load(g.size, device) else {
+            return;
+        };
         let t = read_meta_t(&g.dir);
         let audio = read_f32_file(&g.dir.join("audio_16k.f32"));
         let thresholds = model.part_thresholds(8).to_vec();
 
         let result = collect_stream(model, &audio, 8, &chunk_pattern);
         assert_eq!(result.frames_produced, t, "expected exactly T={t} frames");
-        assert_eq!(result.parts.iter().map(|p| p.part).collect::<Vec<_>>(), PARTS);
-        print_block_timings(&format!("okarina_stream {device:?} {}", g.label()), &result.timings_ms);
+        assert_eq!(
+            result.parts.iter().map(|p| p.part).collect::<Vec<_>>(),
+            PARTS
+        );
+        print_block_timings(
+            &format!("okarina_stream {device:?} {}", g.label()),
+            &result.timings_ms,
+        );
 
         let golden = g.probs(t);
         for ((probs, gold), &(th_on, th_sus)) in result.parts.iter().zip(&golden).zip(&thresholds) {
@@ -250,11 +310,28 @@ fn run_stream_test(device: Device, tol: f32) {
             let mut decoder = StreamingDecoder::new(th_on, th_sus);
             let mut notes = decoder.push(probs.onset.view(), probs.sustain.view());
             notes.extend(decoder.finish());
-            check_notes_match(&notes, &g.notes(probs.part), &gold.0, &gold.1, th_on, th_sus, tol, t, &name);
+            check_notes_match(
+                &notes,
+                &g.notes(probs.part),
+                &gold.0,
+                &gold.1,
+                th_on,
+                th_sus,
+                tol,
+                t,
+                &name,
+            );
             if g.note_count(probs.part) == 0 {
-                assert!(notes.is_empty(), "{name}: golden has no notes in this part but we decoded {}", notes.len());
+                assert!(
+                    notes.is_empty(),
+                    "{name}: golden has no notes in this part but we decoded {}",
+                    notes.len()
+                );
             } else {
-                assert!(!notes.is_empty(), "{name}: golden has notes in this part but we decoded none");
+                assert!(
+                    !notes.is_empty(),
+                    "{name}: golden has notes in this part but we decoded none"
+                );
             }
         }
     }
@@ -280,22 +357,39 @@ fn okarina_decode_golden() {
         let t = read_meta_t(&g.dir);
         for (part, (onset, sustain, _)) in PARTS.iter().zip(&g.probs(t)) {
             let (th_on, th_sus) = g.thresholds(*part, 8);
-            let expected: HashSet<(i64, i64, i32)> =
-                g.notes(*part).iter().map(|&(a, b, c)| (frame_of(a), frame_of(b), c.round() as i32)).collect();
+            let expected: HashSet<(i64, i64, i32)> = g
+                .notes(*part)
+                .iter()
+                .map(|&(a, b, c)| (frame_of(a), frame_of(b), c.round() as i32))
+                .collect();
             for blocks in [8usize, 1, t] {
                 let mut decoder = StreamingDecoder::new(th_on, th_sus);
                 let mut notes = Vec::new();
                 let mut r = 0;
                 while r < t {
                     let end = (r + blocks).min(t);
-                    notes.extend(decoder.push(onset.slice(s![r..end, ..]), sustain.slice(s![r..end, ..])));
+                    notes.extend(
+                        decoder.push(onset.slice(s![r..end, ..]), sustain.slice(s![r..end, ..])),
+                    );
                     r = end;
                 }
                 notes.extend(decoder.finish());
-                let got: HashSet<(i64, i64, i32)> = notes.iter().map(|n| (n.start_frame as i64, n.end_frame as i64, n.pitch_midi)).collect();
-                assert_eq!(got, expected, "{} {part:?} (rows per push: {blocks}): decode mismatch vs golden notes", g.label());
+                let got: HashSet<(i64, i64, i32)> = notes
+                    .iter()
+                    .map(|n| (n.start_frame as i64, n.end_frame as i64, n.pitch_midi))
+                    .collect();
+                assert_eq!(
+                    got,
+                    expected,
+                    "{} {part:?} (rows per push: {blocks}): decode mismatch vs golden notes",
+                    g.label()
+                );
             }
-            eprintln!("okarina_decode_golden {} {part:?}: {} notes, exact match in 3 chunkings", g.label(), expected.len());
+            eprintln!(
+                "okarina_decode_golden {} {part:?}: {} notes, exact match in 3 chunkings",
+                g.label(),
+                expected.len()
+            );
         }
     }
 }
@@ -320,7 +414,9 @@ fn okarina_future16_rows() {
             let mut streamer = BlockStreamer::new(model, future_frames);
             let mut last_block = None;
             streamer.push(prefix, |b| last_block = Some(b)).unwrap();
-            let b = last_block.unwrap_or_else(|| panic!("block {block} (f={future_frames}) should have been produced"));
+            let b = last_block.unwrap_or_else(|| {
+                panic!("block {block} (f={future_frames}) should have been produced")
+            });
             assert_eq!(b.first_frame, block * 8);
             for (part, (g_on, g_sus, g_off)) in b.parts.iter().zip(&window) {
                 let rows = s![rows.clone(), ..];
@@ -328,7 +424,12 @@ fn okarina_future16_rows() {
                 let d_sus = max_abs_diff(&part.sustain, &g_sus.slice(rows).to_owned());
                 let d_off = max_abs_diff(&part.offset, &g_off.slice(rows).to_owned());
                 eprintln!("okarina_future16_rows {} f={future_frames} {:?}: max|delta| onset={d_on:.2e} sustain={d_sus:.2e} offset={d_off:.2e}", g.label(), part.part);
-                assert!(d_on <= 1e-4 && d_sus <= 1e-4 && d_off <= 1e-4, "{} f={future_frames} {:?}", g.label(), part.part);
+                assert!(
+                    d_on <= 1e-4 && d_sus <= 1e-4 && d_off <= 1e-4,
+                    "{} f={future_frames} {:?}",
+                    g.label(),
+                    part.part
+                );
             }
         }
     }
@@ -345,7 +446,9 @@ fn okarina_future16_rows() {
 fn okarina_transcriber_dml() {
     const TOL: f32 = 1e-3;
     for g in goldens() {
-        let Some(model) = load(g.size, Device::DirectML) else { return };
+        let Some(model) = load(g.size, Device::DirectML) else {
+            return;
+        };
         let t = read_meta_t(&g.dir);
         let audio = read_f32_file(&g.dir.join("audio_16k.f32"));
         let thresholds = model.part_thresholds(8).to_vec();
@@ -363,11 +466,31 @@ fn okarina_transcriber_dml() {
             let keys: HashSet<(i64, i64, i32)> = confirmed
                 .iter()
                 .filter(|n| n.part == part)
-                .map(|n| (frame_of(n.start_s as f64), frame_of(n.end_s as f64), n.pitch_midi))
+                .map(|n| {
+                    (
+                        frame_of(n.start_s as f64),
+                        frame_of(n.end_s as f64),
+                        n.pitch_midi,
+                    )
+                })
                 .collect();
-            check_note_keys_match(&keys, &g.notes(part), &gold.0, &gold.1, th_on, th_sus, TOL, t, &format!("okarina_transcriber {} {part:?}", g.label()));
+            check_note_keys_match(
+                &keys,
+                &g.notes(part),
+                &gold.0,
+                &gold.1,
+                th_on,
+                th_sus,
+                TOL,
+                t,
+                &format!("okarina_transcriber {} {part:?}", g.label()),
+            );
             if g.note_count(part) > 0 {
-                assert!(saw_part_in_events.contains(&part), "{}: note_events never carried a {part:?} note", g.label());
+                assert!(
+                    saw_part_in_events.contains(&part),
+                    "{}: note_events never carried a {part:?} note",
+                    g.label()
+                );
             }
         }
     }

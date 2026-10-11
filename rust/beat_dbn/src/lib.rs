@@ -79,7 +79,12 @@ struct StateSpace {
     last_states: Vec<Vec<usize>>,
 }
 
-fn build_state_space(num_beats: usize, min_interval: f64, max_interval: f64, num_tempi: usize) -> StateSpace {
+fn build_state_space(
+    num_beats: usize,
+    min_interval: f64,
+    max_interval: f64,
+    num_tempi: usize,
+) -> StateSpace {
     let intervals = beat_intervals(min_interval, max_interval, num_tempi);
     let num_intervals = intervals.len();
 
@@ -118,7 +123,15 @@ fn build_state_space(num_beats: usize, min_interval: f64, max_interval: f64, num
         }
     }
 
-    StateSpace { num_beats, num_intervals, num_states, state_positions, state_intervals, first_states, last_states }
+    StateSpace {
+        num_beats,
+        num_intervals,
+        num_states,
+        state_positions,
+        state_intervals,
+        first_states,
+        last_states,
+    }
 }
 
 /// Sparse transition model (madmom's `BarTransitionModel`), but split by
@@ -158,8 +171,14 @@ fn build_transitions(ss: &StateSpace, lambda: f64) -> Transitions {
         let to_states = &ss.first_states[b];
         let from_beat = (b + ss.num_beats - 1) % ss.num_beats; // python b - 1 wraparound
         let from_states = &ss.last_states[from_beat];
-        let from_int: Vec<f64> = from_states.iter().map(|&s| ss.state_intervals[s] as f64).collect();
-        let to_int: Vec<f64> = to_states.iter().map(|&s| ss.state_intervals[s] as f64).collect();
+        let from_int: Vec<f64> = from_states
+            .iter()
+            .map(|&s| ss.state_intervals[s] as f64)
+            .collect();
+        let to_int: Vec<f64> = to_states
+            .iter()
+            .map(|&s| ss.state_intervals[s] as f64)
+            .collect();
 
         for i in 0..n {
             let mut row = vec![0f64; n];
@@ -192,7 +211,12 @@ fn build_transitions(ss: &StateSpace, lambda: f64) -> Transitions {
         }
     }
 
-    Transitions { first_states_sorted, fpred_pointers, fpred_orig, fpred_logprob }
+    Transitions {
+        first_states_sorted,
+        fpred_pointers,
+        fpred_orig,
+        fpred_logprob,
+    }
 }
 
 /// Reusable Viterbi scratch space, sized once per `Hmm` and grown (never
@@ -270,9 +294,16 @@ impl Hmm {
             return None;
         }
         let num_states = self.num_states;
-        assert!(num_states <= usize::from(u16::MAX) + 1, "backtrack entries are u16");
+        assert!(
+            num_states <= usize::from(u16::MAX) + 1,
+            "backtrack entries are u16"
+        );
         let mut scratch = self.scratch.lock().expect("Viterbi scratch lock");
-        let Scratch { prev, cur, backtrack } = &mut *scratch;
+        let Scratch {
+            prev,
+            cur,
+            backtrack,
+        } = &mut *scratch;
 
         let neg_ln_n = -(num_states as f64).ln();
         for p in prev.iter_mut() {
@@ -286,7 +317,11 @@ impl Hmm {
         for t in 0..num_frames {
             let (b_only, dbeat) = observations[t];
             let s = b_only + dbeat;
-            let dens = [((1.0 - s) / (OBSERVATION_LAMBDA - 1.0)).ln(), b_only.ln(), dbeat.ln()];
+            let dens = [
+                ((1.0 - s) / (OBSERVATION_LAMBDA - 1.0)).ln(),
+                b_only.ln(),
+                dbeat.ln(),
+            ];
             let bt_row = &mut backtrack[t * num_states..t * num_states + num_states];
 
             // Walk destination states 0..num_states in order, alongside the
@@ -358,7 +393,11 @@ pub struct DbnDecoder {
 
 impl DbnDecoder {
     pub fn new(fps: f64) -> Self {
-        DbnDecoder { fps, hmm3: Hmm::new(3, fps), hmm4: Hmm::new(4, fps) }
+        DbnDecoder {
+            fps,
+            hmm3: Hmm::new(3, fps),
+            hmm4: Hmm::new(4, fps),
+        }
     }
 
     /// 3-6. Run Viterbi for beats_per_bar in {3, 4}; 7. pick the larger log_prob, ties keeping
@@ -367,7 +406,10 @@ impl DbnDecoder {
         // Each model has its own scratch space, so the two runs go side by side.
         let (run3, run4) = std::thread::scope(|scope| {
             let run4 = scope.spawn(|| self.hmm4.viterbi(cropped));
-            (self.hmm3.viterbi(cropped), run4.join().expect("the bpb=4 Viterbi run panicked"))
+            (
+                self.hmm3.viterbi(cropped),
+                run4.join().expect("the bpb=4 Viterbi run panicked"),
+            )
         });
         let mut best_log_prob = f64::NEG_INFINITY;
         let mut best: Option<(&Hmm, Vec<u32>)> = None;
@@ -428,7 +470,10 @@ impl DbnDecoder {
         };
 
         // 8. Reading off beat/downbeat positions ("correct" branch).
-        let beat_range: Vec<bool> = path.iter().map(|&s| hmm.om_pointer[s as usize] >= 1).collect();
+        let beat_range: Vec<bool> = path
+            .iter()
+            .map(|&s| hmm.om_pointer[s as usize] >= 1)
+            .collect();
         if !beat_range.iter().any(|&x| x) {
             return (Vec::new(), Vec::new());
         }
@@ -465,7 +510,10 @@ impl DbnDecoder {
             }
         }
 
-        let beat_times: Vec<f64> = peaks.iter().map(|&p| (p + first) as f64 / self.fps).collect();
+        let beat_times: Vec<f64> = peaks
+            .iter()
+            .map(|&p| (p + first) as f64 / self.fps)
+            .collect();
         let downbeat_times: Vec<f64> = peaks
             .iter()
             .zip(beat_times.iter())
@@ -486,9 +534,12 @@ mod tests {
 
     /// Same as rekord_core's beat_model::golden_dir (this crate sits at the same depth).
     fn golden_dir() -> Option<std::path::PathBuf> {
-        let dir = std::env::var("BEAT_GOLDEN_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../harmonica-repro/runs/beat/golden")
-        });
+        let dir = std::env::var("BEAT_GOLDEN_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../harmonica-repro/runs/beat/golden")
+            });
         if dir.exists() {
             Some(dir)
         } else {
@@ -500,19 +551,36 @@ mod tests {
     #[test]
     fn matches_python_golden_windows() {
         let Some(dir) = golden_dir() else { return };
-        let mut npz = NpzReader::new(std::fs::File::open(dir.join("dbn_windows.npz")).unwrap()).unwrap();
+        let mut npz =
+            NpzReader::new(std::fs::File::open(dir.join("dbn_windows.npz")).unwrap()).unwrap();
         let decoder = DbnDecoder::new(50.0);
 
         for i in 0..8 {
-            let beat: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>(&format!("beat_{i}")).unwrap();
-            let down: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>(&format!("down_{i}")).unwrap();
-            let exp_beats: Array1<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix1>(&format!("beats_{i}")).unwrap();
-            let exp_downs: Array1<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix1>(&format!("downs_{i}")).unwrap();
+            let beat: Array1<f32> = npz
+                .by_name::<ndarray::OwnedRepr<f32>, Ix1>(&format!("beat_{i}"))
+                .unwrap();
+            let down: Array1<f32> = npz
+                .by_name::<ndarray::OwnedRepr<f32>, Ix1>(&format!("down_{i}"))
+                .unwrap();
+            let exp_beats: Array1<f64> = npz
+                .by_name::<ndarray::OwnedRepr<f64>, Ix1>(&format!("beats_{i}"))
+                .unwrap();
+            let exp_downs: Array1<f64> = npz
+                .by_name::<ndarray::OwnedRepr<f64>, Ix1>(&format!("downs_{i}"))
+                .unwrap();
 
             let (beats, downs) = decoder.decode(beat.as_slice().unwrap(), down.as_slice().unwrap());
 
-            assert_eq!(beats.len(), exp_beats.len(), "window {i}: beat count mismatch");
-            assert_eq!(downs.len(), exp_downs.len(), "window {i}: downbeat count mismatch");
+            assert_eq!(
+                beats.len(),
+                exp_beats.len(),
+                "window {i}: beat count mismatch"
+            );
+            assert_eq!(
+                downs.len(),
+                exp_downs.len(),
+                "window {i}: downbeat count mismatch"
+            );
             for (k, (a, b)) in beats.iter().zip(exp_beats.iter()).enumerate() {
                 assert!((a - b).abs() <= 1e-9, "window {i} beat {k}: {a} vs {b}");
             }
@@ -543,13 +611,24 @@ mod tests {
         let decoder = DbnDecoder::new(50.0);
         for bar in [3, 4] {
             let (beat, down) = synthetic_activations(500, bar);
-            let obs: Vec<(f64, f64)> = beat.iter().zip(&down).map(|(&b, &d)| (((b - d).max(0.001)) as f64, d as f64)).collect();
+            let obs: Vec<(f64, f64)> = beat
+                .iter()
+                .zip(&down)
+                .map(|(&b, &d)| (((b - d).max(0.001)) as f64, d as f64))
+                .collect();
             let first = decoder.hmm3.viterbi(&obs).expect("a path for 3");
             let second = decoder.hmm4.viterbi(&obs).expect("a path for 4");
-            let (want_hmm, want_path) = if second.1 > first.1 { (&decoder.hmm4, second.0) } else { (&decoder.hmm3, first.0) };
+            let (want_hmm, want_path) = if second.1 > first.1 {
+                (&decoder.hmm4, second.0)
+            } else {
+                (&decoder.hmm3, first.0)
+            };
             for _ in 0..3 {
                 let (hmm, path) = decoder.best_path(&obs).expect("a path");
-                assert!(std::ptr::eq(hmm, want_hmm), "bar {bar}: the other model won");
+                assert!(
+                    std::ptr::eq(hmm, want_hmm),
+                    "bar {bar}: the other model won"
+                );
                 assert_eq!(path, want_path, "bar {bar}");
             }
             let (beats, downs) = decoder.decode(&beat, &down);
@@ -561,9 +640,14 @@ mod tests {
     #[test]
     fn timing_500_frame_window() {
         let Some(dir) = golden_dir() else { return };
-        let mut npz = NpzReader::new(std::fs::File::open(dir.join("dbn_windows.npz")).unwrap()).unwrap();
-        let beat: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>("beat_0").unwrap();
-        let down: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>("down_0").unwrap();
+        let mut npz =
+            NpzReader::new(std::fs::File::open(dir.join("dbn_windows.npz")).unwrap()).unwrap();
+        let beat: Array1<f32> = npz
+            .by_name::<ndarray::OwnedRepr<f32>, Ix1>("beat_0")
+            .unwrap();
+        let down: Array1<f32> = npz
+            .by_name::<ndarray::OwnedRepr<f32>, Ix1>("down_0")
+            .unwrap();
         assert_eq!(beat.len(), 500);
 
         let decoder = DbnDecoder::new(50.0);
@@ -578,6 +662,9 @@ mod tests {
         let elapsed = start.elapsed();
         let per_call_ms = elapsed.as_secs_f64() * 1000.0 / iters as f64;
         println!("decode() on a 500-frame window: {per_call_ms:.3} ms/call avg over {iters} calls");
-        assert!(per_call_ms < 20.0, "decode() too slow: {per_call_ms:.3} ms/call");
+        assert!(
+            per_call_ms < 20.0,
+            "decode() too slow: {per_call_ms:.3} ms/call"
+        );
     }
 }

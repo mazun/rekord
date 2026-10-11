@@ -76,7 +76,9 @@ const PARTS: [Part; 3] = [Part::Vocal, Part::Bass, Part::Other];
 /// 0.256 s block budget (see harmonica-repro's `docs/okarina-sm-report.md`)
 /// is met by L only on a DirectML dGPU, by M on a CPU with 8 threads or an
 /// iGPU, and by S on a CPU with 4 threads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelSize {
     Small,
@@ -157,7 +159,9 @@ impl std::str::FromStr for ModelChoice {
         if s.eq_ignore_ascii_case("auto") {
             Ok(ModelChoice::Auto)
         } else {
-            s.parse().map(ModelChoice::Fixed).map_err(|_| anyhow!("unknown model {s:?} (expected auto/s/m/l)"))
+            s.parse()
+                .map(ModelChoice::Fixed)
+                .map_err(|_| anyhow!("unknown model {s:?} (expected auto/s/m/l)"))
         }
     }
 }
@@ -202,11 +206,17 @@ pub struct HarmonicaModel {
 /// Parses a `thresholds_*` metadata value (`{"vocal": [th_on, th_sus], ...}`)
 /// into `parts`' order.
 fn parse_thresholds(json: &str, parts: &[Part]) -> Result<Vec<(f32, f32)>> {
-    let map: HashMap<String, [f32; 2]> = serde_json::from_str(json).context("parsing thresholds metadata")?;
+    let map: HashMap<String, [f32; 2]> =
+        serde_json::from_str(json).context("parsing thresholds metadata")?;
     parts
         .iter()
         .map(|part| {
-            let [on, sus] = *map.get(part.name()).ok_or_else(|| anyhow!("thresholds metadata has no entry for part {:?}", part.name()))?;
+            let [on, sus] = *map.get(part.name()).ok_or_else(|| {
+                anyhow!(
+                    "thresholds metadata has no entry for part {:?}",
+                    part.name()
+                )
+            })?;
             Ok((on, sus))
         })
         .collect()
@@ -220,14 +230,20 @@ fn check_metadata(session: &Session, expected: &[(&str, String)], label: &str) -
             Some(got) => {
                 return Err(anyhow!("{label}: ONNX metadata {key:?} = {got:?}, expected {want:?} (wrong model file?)"));
             }
-            None => return Err(anyhow!("{label}: ONNX metadata is missing key {key:?} (wrong/old model file?)")),
+            None => {
+                return Err(anyhow!(
+                    "{label}: ONNX metadata is missing key {key:?} (wrong/old model file?)"
+                ))
+            }
         }
     }
     Ok(())
 }
 
 fn cpu_threads() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
 }
 
 fn cpu_intra_threads() -> usize {
@@ -247,8 +263,10 @@ fn cpu_size() -> ModelSize {
 }
 
 fn build_session(path: &str, device: Device) -> Result<Session> {
-    let builder =
-        Session::builder().map_err(|e| anyhow!("{e}"))?.with_optimization_level(GraphOptimizationLevel::Level3).map_err(|e| anyhow!("{e}"))?;
+    let builder = Session::builder()
+        .map_err(|e| anyhow!("{e}"))?
+        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .map_err(|e| anyhow!("{e}"))?;
     let mut builder = match device {
         // DirectML requires disabling the memory-pattern optimizer and
         // parallel execution mode; `error_on_failure()` on the DirectML
@@ -259,7 +277,10 @@ fn build_session(path: &str, device: Device) -> Result<Session> {
             .map_err(|e| anyhow!("{e}"))?
             .with_parallel_execution(false)
             .map_err(|e| anyhow!("{e}"))?
-            .with_execution_providers([DirectML::default().build().error_on_failure(), CPU::default().build()])
+            .with_execution_providers([
+                DirectML::default().build().error_on_failure(),
+                CPU::default().build(),
+            ])
             .map_err(|e| anyhow!("{e}"))?,
         Device::Cpu => builder
             .with_intra_threads(cpu_intra_threads())
@@ -275,15 +296,27 @@ fn build_session(path: &str, device: Device) -> Result<Session> {
 /// Reads output `name` as one `[T, features]` array per part. Shape is
 /// `[batch, time, features]` for the CQT (one part) and `[batch, parts, time,
 /// features]` for the network; batch is always 1 (see struct doc).
-fn extract_parts(outputs: &SessionOutputs<'_>, name: &str, n_parts: usize) -> Result<Vec<Array2<f32>>> {
-    let (shape, data) = outputs[name].try_extract_tensor::<f32>().map_err(|e| anyhow!("{e}"))?;
+fn extract_parts(
+    outputs: &SessionOutputs<'_>,
+    name: &str,
+    n_parts: usize,
+) -> Result<Vec<Array2<f32>>> {
+    let (shape, data) = outputs[name]
+        .try_extract_tensor::<f32>()
+        .map_err(|e| anyhow!("{e}"))?;
     let expected_rank = if n_parts == 1 { 3 } else { 4 };
     if shape.len() != expected_rank || (n_parts > 1 && shape[1] as usize != n_parts) {
         bail!("output {name:?} has shape {shape:?}, expected {n_parts} part(s)");
     }
-    let (t, f) = (shape[shape.len() - 2] as usize, shape[shape.len() - 1] as usize);
+    let (t, f) = (
+        shape[shape.len() - 2] as usize,
+        shape[shape.len() - 1] as usize,
+    );
     (0..n_parts)
-        .map(|p| Array2::from_shape_vec((t, f), data[p * t * f..(p + 1) * t * f].to_vec()).map_err(|e| anyhow!("{e}")))
+        .map(|p| {
+            Array2::from_shape_vec((t, f), data[p * t * f..(p + 1) * t * f].to_vec())
+                .map_err(|e| anyhow!("{e}"))
+        })
         .collect()
 }
 
@@ -324,18 +357,36 @@ impl HarmonicaModel {
         // ONNX Runtime answers an absent key with an empty string, not None.
         let custom = |key: &str| meta.custom(key).filter(|v| !v.is_empty());
         let want = PARTS.iter().map(|p| p.name()).collect::<Vec<_>>().join(",");
-        let got = custom("parts").ok_or_else(|| anyhow!("{}: ONNX metadata is missing \"parts\" (wrong/old model file?)", size.file_name()))?;
+        let got = custom("parts").ok_or_else(|| {
+            anyhow!(
+                "{}: ONNX metadata is missing \"parts\" (wrong/old model file?)",
+                size.file_name()
+            )
+        })?;
         if got != want {
-            bail!("{}: ONNX metadata \"parts\" = {got:?}, expected {want:?}", size.file_name());
+            bail!(
+                "{}: ONNX metadata \"parts\" = {got:?}, expected {want:?}",
+                size.file_name()
+            );
         }
         let read = |key: &str| -> Result<Vec<(f32, f32)>> {
-            let json = custom(key).ok_or_else(|| anyhow!("{}: ONNX metadata is missing {key:?}", size.file_name()))?;
-            parse_thresholds(&json, &PARTS).with_context(|| format!("{}: metadata {key:?}", size.file_name()))
+            let json = custom(key)
+                .ok_or_else(|| anyhow!("{}: ONNX metadata is missing {key:?}", size.file_name()))?;
+            parse_thresholds(&json, &PARTS)
+                .with_context(|| format!("{}: metadata {key:?}", size.file_name()))
         };
         let (thresholds_f8, thresholds_f16) = (read("thresholds_f8")?, read("thresholds_f16")?);
         drop(meta);
 
-        let mut model = Self { cqt, net, size, device, gpu: GpuClass::None, thresholds_f8, thresholds_f16 };
+        let mut model = Self {
+            cqt,
+            net,
+            size,
+            device,
+            gpu: GpuClass::None,
+            thresholds_f8,
+            thresholds_f16,
+        };
 
         // The first run of a session costs ~0.7-0.9s (graph optimization,
         // DirectML shader compilation, ...); do it now so it doesn't stall
@@ -362,7 +413,11 @@ impl HarmonicaModel {
     ///   miss the 256 ms block budget -- that would silently break real-time
     ///   use instead of just degrading accuracy.
     pub fn load(choice: ModelChoice, allow_directml: bool) -> Result<Self> {
-        let gpu = if allow_directml { gpu_class::probe() } else { GpuClass::None };
+        let gpu = if allow_directml {
+            gpu_class::probe()
+        } else {
+            GpuClass::None
+        };
         if allow_directml && !(choice == ModelChoice::Auto && gpu == GpuClass::None) {
             let size = match choice {
                 ModelChoice::Fixed(size) => size,
@@ -371,15 +426,21 @@ impl HarmonicaModel {
             };
             match Self::load_on(size, Device::DirectML) {
                 Ok(mut model) => {
-                    eprintln!("HarmonicaModel: {} on DirectML ({})", size.label(), match &gpu {
-                        GpuClass::Discrete(name) => format!("discrete GPU {name}"),
-                        GpuClass::Integrated(name) => format!("integrated GPU {name}"),
-                        GpuClass::None => "no hardware adapter found".to_string(),
-                    });
+                    eprintln!(
+                        "HarmonicaModel: {} on DirectML ({})",
+                        size.label(),
+                        match &gpu {
+                            GpuClass::Discrete(name) => format!("discrete GPU {name}"),
+                            GpuClass::Integrated(name) => format!("integrated GPU {name}"),
+                            GpuClass::None => "no hardware adapter found".to_string(),
+                        }
+                    );
                     model.gpu = gpu;
                     return Ok(model);
                 }
-                Err(e) => eprintln!("HarmonicaModel: DirectML load failed ({e}); falling back to the CPU"),
+                Err(e) => {
+                    eprintln!("HarmonicaModel: DirectML load failed ({e}); falling back to the CPU")
+                }
             }
         }
         let size = match choice {
@@ -425,9 +486,17 @@ impl HarmonicaModel {
     /// N_BINS] |CQT| magnitudes (untrimmed -- callers zero out-of-range rows
     /// themselves, see `harmonica_stream.rs`).
     pub fn cqt(&mut self, audio: &[f32]) -> Result<Array2<f32>> {
-        assert_eq!(audio.len(), WINDOW_SAMPLES, "harmonica cqt window must be exactly WINDOW_SAMPLES samples");
-        let input = Tensor::from_array(([1, WINDOW_SAMPLES], audio.to_vec())).map_err(|e| anyhow!("{e}"))?;
-        let outputs = self.cqt.run(ort::inputs!["audio" => input]).map_err(|e| anyhow!("{e}"))?;
+        assert_eq!(
+            audio.len(),
+            WINDOW_SAMPLES,
+            "harmonica cqt window must be exactly WINDOW_SAMPLES samples"
+        );
+        let input = Tensor::from_array(([1, WINDOW_SAMPLES], audio.to_vec()))
+            .map_err(|e| anyhow!("{e}"))?;
+        let outputs = self
+            .cqt
+            .run(ort::inputs!["audio" => input])
+            .map_err(|e| anyhow!("{e}"))?;
         Ok(extract_parts(&outputs, "cqt_mag", 1)?.remove(0))
     }
 
@@ -438,9 +507,15 @@ impl HarmonicaModel {
         let (t, f) = cqt_mag.dim();
         // Flatten row-major regardless of the view's own memory layout
         // (it may be a slice of a larger array, not necessarily contiguous).
-        let data: Vec<f32> = cqt_mag.outer_iter().flat_map(|row| row.into_iter().copied()).collect();
+        let data: Vec<f32> = cqt_mag
+            .outer_iter()
+            .flat_map(|row| row.into_iter().copied())
+            .collect();
         let input = Tensor::from_array(([1, t, f], data)).map_err(|e| anyhow!("{e}"))?;
-        let outputs = self.net.run(ort::inputs!["cqt_mag" => input]).map_err(|e| anyhow!("{e}"))?;
+        let outputs = self
+            .net
+            .run(ort::inputs!["cqt_mag" => input])
+            .map_err(|e| anyhow!("{e}"))?;
         let n = PARTS.len();
         let onset = extract_parts(&outputs, "onset", n)?;
         let sustain = extract_parts(&outputs, "sustain", n)?;
@@ -448,7 +523,12 @@ impl HarmonicaModel {
         Ok(PARTS
             .iter()
             .zip(onset.into_iter().zip(sustain).zip(offset))
-            .map(|(&part, ((onset, sustain), offset))| PartProbs { part, onset, sustain, offset })
+            .map(|(&part, ((onset, sustain), offset))| PartProbs {
+                part,
+                onset,
+                sustain,
+                offset,
+            })
             .collect())
     }
 }
@@ -488,7 +568,10 @@ mod tests {
     fn harmonica_model_choice_parses_auto_and_sizes() {
         assert_eq!("auto".parse::<ModelChoice>().unwrap(), ModelChoice::Auto);
         assert_eq!("AUTO".parse::<ModelChoice>().unwrap(), ModelChoice::Auto);
-        assert_eq!("m".parse::<ModelChoice>().unwrap(), ModelChoice::Fixed(ModelSize::Medium));
+        assert_eq!(
+            "m".parse::<ModelChoice>().unwrap(),
+            ModelChoice::Fixed(ModelSize::Medium)
+        );
         assert!("mix".parse::<ModelChoice>().is_err());
     }
 }

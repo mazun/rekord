@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { pipeline } from "../pipeline.svelte";
   import { fitText } from "../fitText";
+  import { pipeline } from "../pipeline.svelte";
 </script>
 
 <div class="chord-block">

@@ -41,7 +41,12 @@ pub struct StereoRing {
 impl StereoRing {
     pub fn new(rate: u32, cap_frames: usize) -> Self {
         assert!(cap_frames > 0, "ring capacity must be positive");
-        Self { data: Vec::new(), cap_frames, written: 0, rate }
+        Self {
+            data: Vec::new(),
+            cap_frames,
+            written: 0,
+            rate,
+        }
     }
 
     /// First frame still held (older ones were overwritten).
@@ -161,7 +166,11 @@ mod tests {
         assert_eq!(ring.read_f32(2, &mut out), 4);
         for (i, want) in [0.3f32, 0.4, 0.5, 0.6].iter().enumerate() {
             assert!((out[2 * i] - want).abs() < 1e-4, "left {i}: {}", out[2 * i]);
-            assert!((out[2 * i + 1] + want).abs() < 1e-4, "right {i}: {}", out[2 * i + 1]);
+            assert!(
+                (out[2 * i + 1] + want).abs() < 1e-4,
+                "right {i}: {}",
+                out[2 * i + 1]
+            );
         }
     }
 
@@ -216,10 +225,16 @@ mod tests {
     fn tap_replaces_the_ring_on_begin() {
         let shared: SharedRing = Arc::new(Mutex::new(None));
         let mut tap = RingTap::new(Arc::clone(&shared));
-        tap.begin(CaptureFormat { sample_rate: 100, channels: 2 });
+        tap.begin(CaptureFormat {
+            sample_rate: 100,
+            channels: 2,
+        });
         tap.chunk(&[0.1, 0.1, 0.2, 0.2]);
         assert_eq!(shared.lock().unwrap().as_ref().unwrap().end_frame(), 2);
-        tap.begin(CaptureFormat { sample_rate: 100, channels: 2 });
+        tap.begin(CaptureFormat {
+            sample_rate: 100,
+            channels: 2,
+        });
         assert_eq!(shared.lock().unwrap().as_ref().unwrap().end_frame(), 0);
     }
 }

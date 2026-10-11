@@ -14,10 +14,10 @@
 //! for hours; the lines it produces are identical (tested). The line lists themselves stay
 //! whole-history in both modes: ~2 floats/s per list is ~60 KB/h each.
 
-use rekord_beat_dbn::DbnDecoder;
 use crate::beat_model::{BeatModel, HOP, N_FFT, N_MELS, SAMPLE_RATE};
 use anyhow::Result;
 use ndarray::ArrayView2;
+use rekord_beat_dbn::DbnDecoder;
 use std::ops::{Index, IndexMut, Range};
 use std::time::Instant;
 
@@ -60,7 +60,10 @@ struct Tail<T> {
 
 impl<T: Copy> Tail<T> {
     fn new() -> Self {
-        Self { base: 0, v: Vec::new() }
+        Self {
+            base: 0,
+            v: Vec::new(),
+        }
     }
     /// Absolute end (one past the last element), like `Vec::len` on the untrimmed buffer.
     fn len(&self) -> usize {
@@ -218,7 +221,10 @@ impl BeatTracker {
     /// Same lines as `new`, but only the last `RETAIN_FRAMES` of audio/spect/activations are
     /// kept, so memory stays flat over a long live session.
     pub fn bounded(model: BeatModel, reset: bool) -> Self {
-        Self { bounded: true, ..Self::new(model, reset) }
+        Self {
+            bounded: true,
+            ..Self::new(model, reset)
+        }
     }
 
     // ------------------------------------------------------------------ accessors
@@ -273,7 +279,10 @@ impl BeatTracker {
         }
         let last5 = &pb_known[pb_known.len() - 5..];
         let diffs: Vec<f64> = last5.windows(2).map(|w| w[1] - w[0]).collect();
-        Some(BeatGrid { anchor_s: *pb_known.last().unwrap(), period_s: median(diffs) })
+        Some(BeatGrid {
+            anchor_s: *pb_known.last().unwrap(),
+            period_s: median(diffs),
+        })
     }
 
     // ------------------------------------------------------------------ input
@@ -372,7 +381,11 @@ impl BeatTracker {
 
     fn provisional(&mut self, final_: bool) {
         let a = self.prov_scan.saturating_sub(2 * PEAK_WIN + 2);
-        let end = if final_ { self.filled } else { self.filled.saturating_sub(PEAK_WIN + 1) };
+        let end = if final_ {
+            self.filled
+        } else {
+            self.filled.saturating_sub(PEAK_WIN + 1)
+        };
         if end <= self.prov_scan {
             return;
         }
@@ -426,7 +439,10 @@ impl BeatTracker {
         let lw_cmax = ((SC_LW + SC_CMAX) * FPS) as usize; // 550
         let off = t.saturating_sub(lw_cmax);
         let n_rows = t - off;
-        let x64: Vec<f64> = self.spect_flat[off * N_MELS..t * N_MELS].iter().map(|&v| v as f64).collect();
+        let x64: Vec<f64> = self.spect_flat[off * N_MELS..t * N_MELS]
+            .iter()
+            .map(|&v| v as f64)
+            .collect();
         let cmax_f = (SC_CMAX * FPS) as usize; // 150
         let cmin_f = (SC_CMIN * FPS) as usize; // 50
         let lw_f = (SC_LW * FPS) as usize; // 400
@@ -467,7 +483,12 @@ impl BeatTracker {
         let c0 = py_round(c * FPS).max(0) as usize;
         let a = c0.saturating_sub(SC_W);
         let (b, _d) = self.dbn_window(a, c0);
-        let prov: Vec<f64> = self.prov_b.iter().cloned().filter(|&x| x > c + 0.3 && x < t - PROV_DELAY).collect();
+        let prov: Vec<f64> = self
+            .prov_b
+            .iter()
+            .cloned()
+            .filter(|&x| x > c + 0.3 && x < t - PROV_DELAY)
+            .collect();
         if b.len() < 5 || prov.len() < 3 {
             return None;
         }
@@ -520,7 +541,8 @@ impl BeatTracker {
 
     fn dbn_steps(&mut self, final_: bool) {
         loop {
-            let cond = self.next_dbn <= self.filled || (final_ && self.next_dbn - DBN_STEP < self.filled);
+            let cond =
+                self.next_dbn <= self.filled || (final_ && self.next_dbn - DBN_STEP < self.filled);
             if !cond {
                 break;
             }
@@ -532,7 +554,14 @@ impl BeatTracker {
                     if cut > self.committed_until {
                         let a = self.floor_dbn.max(c.saturating_sub(DBN_W));
                         let (b, d) = self.dbn_window(a, c);
-                        commit(&mut self.com_b, &mut self.com_d, &b, &d, self.committed_until, cut);
+                        commit(
+                            &mut self.com_b,
+                            &mut self.com_d,
+                            &b,
+                            &d,
+                            self.committed_until,
+                            cut,
+                        );
                         self.committed_until = cut;
                     }
                     self.floor_dbn = c;
@@ -541,8 +570,19 @@ impl BeatTracker {
             let a = self.floor_dbn.max(end.saturating_sub(DBN_W));
             let (b, d) = self.dbn_window(a, end);
             let last = final_ && end >= self.filled;
-            let limit = if last { end as f64 / FPS + 1.0 } else { end as f64 / FPS - LAG };
-            commit(&mut self.com_b, &mut self.com_d, &b, &d, self.committed_until, limit);
+            let limit = if last {
+                end as f64 / FPS + 1.0
+            } else {
+                end as f64 / FPS - LAG
+            };
+            commit(
+                &mut self.com_b,
+                &mut self.com_d,
+                &b,
+                &d,
+                self.committed_until,
+                limit,
+            );
             self.committed_until = self.committed_until.max(limit);
             self.next_dbn += DBN_STEP;
             if last {
@@ -567,7 +607,10 @@ impl BeatTracker {
             committed_downbeats: tail(&self.com_d, from),
             provisional_beats: tail(&self.prov_b, prov_from),
             provisional_downbeats: tail(&self.prov_d, prov_from),
-            predicted: pred.into_iter().filter(|p| p.time <= now && p.time >= from).collect(),
+            predicted: pred
+                .into_iter()
+                .filter(|p| p.time <= now && p.time >= from)
+                .collect(),
         }
     }
 }
@@ -636,17 +679,29 @@ fn peaks_dedup(act: &[f32], win: usize, offset: usize) -> Vec<f64> {
     for i in 0..n {
         let lo = i.saturating_sub(win);
         let hi = (i + win + 1).min(n);
-        let m = act[lo..hi].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let m = act[lo..hi]
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
         if act[i] > 0.5 && act[i] == m {
             idx.push(i as i64);
         }
     }
-    dedup_peaks(&idx, 1).into_iter().map(|x| x + offset as f64).collect()
+    dedup_peaks(&idx, 1)
+        .into_iter()
+        .map(|x| x + offset as f64)
+        .collect()
 }
 
 /// stream_eval._segments: split [0, n) at runs of >= min_gap s with beat_act < low; drop
 /// parts < min_len s.
-fn segments(beat_act: &[f32], fps: f64, low: f32, min_gap: f64, min_len: f64) -> Vec<(usize, usize)> {
+fn segments(
+    beat_act: &[f32],
+    fps: f64,
+    low: f32,
+    min_gap: f64,
+    min_len: f64,
+) -> Vec<(usize, usize)> {
     let n = beat_act.len();
     let quiet: Vec<bool> = beat_act.iter().map(|&v| v < low).collect();
     let g = (min_gap * fps) as usize;
@@ -673,19 +728,19 @@ fn segments(beat_act: &[f32], fps: f64, low: f32, min_gap: f64, min_len: f64) ->
     if n > start {
         segs.push((start, n));
     }
-    segs.into_iter().filter(|&(a, b)| (b - a) as f64 >= min_len * fps).collect()
+    segs.into_iter()
+        .filter(|&(a, b)| (b - a) as f64 >= min_len * fps)
+        .collect()
 }
 
 /// stream_eval._commit: append newly decoded beats in [lo, hi) that are more than 0.1s
 /// after the last committed one; a beat is a downbeat if it exactly matches an entry of `d`.
 fn commit(beats: &mut Vec<f64>, downs: &mut Vec<f64>, b: &[f64], d: &[f64], lo: f64, hi: f64) {
     for &x in b {
-        if x >= lo && x < hi {
-            if beats.is_empty() || x - beats[beats.len() - 1] > 0.1 {
-                beats.push(x);
-                if d.iter().any(|&dd| (dd - x).abs() < 1e-6) {
-                    downs.push(x);
-                }
+        if x >= lo && x < hi && (beats.is_empty() || x - beats[beats.len() - 1] > 0.1) {
+            beats.push(x);
+            if d.iter().any(|&dd| (dd - x).abs() < 1e-6) {
+                downs.push(x);
             }
         }
     }
@@ -700,7 +755,10 @@ fn matched_fraction(refs: &[f64], est: &[f64], tol: f64) -> f64 {
     if est.is_empty() {
         return 0.0;
     }
-    let matched = refs.iter().filter(|&&r| est.iter().any(|&e| (e - r).abs() <= tol)).count();
+    let matched = refs
+        .iter()
+        .filter(|&&r| est.iter().any(|&e| (e - r).abs() <= tol))
+        .count();
     matched as f64 / refs.len() as f64
 }
 
@@ -760,7 +818,9 @@ fn predicted_lines(pb: &[f64], pd: &[f64], t: f64) -> (Vec<PredictedLine>, Optio
     let pd_known = settled(pd, t);
     let bar_len = bar_len(pb_known, pd_known);
     let last = *pb_known.last().unwrap();
-    let since: Option<i64> = pd_known.last().map(|&last_pd| (pb_known.len() - pb_known.partition_point(|&x| x <= last_pd + 1e-4)) as i64);
+    let since: Option<i64> = pd_known.last().map(|&last_pd| {
+        (pb_known.len() - pb_known.partition_point(|&x| x <= last_pd + 1e-4)) as i64
+    });
     let mut out = Vec::new();
     for k in 1..=MAX_AHEAD {
         let x = last + k as f64 * big_t;
@@ -785,7 +845,11 @@ fn nearest_beat(beats: &[f64], x: f64) -> Option<(usize, f64)> {
     let after = beats.partition_point(|&y| y * FPS < x);
     let dist = |k: usize| (beats[k] * FPS - x).abs();
     match (after.checked_sub(1), (after < beats.len()).then_some(after)) {
-        (Some(b), Some(a)) => Some(if dist(b) <= dist(a) { (b, dist(b)) } else { (a, dist(a)) }),
+        (Some(b), Some(a)) => Some(if dist(b) <= dist(a) {
+            (b, dist(b))
+        } else {
+            (a, dist(a))
+        }),
         (Some(k), None) | (None, Some(k)) => Some((k, dist(k))),
         (None, None) => None,
     }
@@ -799,10 +863,20 @@ fn bar_len(pb_known: &[f64], pd_known: &[f64]) -> i64 {
     if pd_known.len() < 2 {
         return 4;
     }
-    let last5 = if pd_known.len() >= 5 { &pd_known[pd_known.len() - 5..] } else { pd_known };
-    let idx: Vec<i64> = last5.iter().map(|&v| lower_bound(pb_known, v - 1e-4) as i64).collect();
+    let last5 = if pd_known.len() >= 5 {
+        &pd_known[pd_known.len() - 5..]
+    } else {
+        pd_known
+    };
+    let idx: Vec<i64> = last5
+        .iter()
+        .map(|&v| lower_bound(pb_known, v - 1e-4) as i64)
+        .collect();
     let diffs: Vec<i64> = idx.windows(2).map(|w| w[1] - w[0]).collect();
-    let lens: Vec<i64> = diffs.into_iter().filter(|&x| x == 2 || x == 3 || x == 4 || x == 6).collect();
+    let lens: Vec<i64> = diffs
+        .into_iter()
+        .filter(|&x| x == 2 || x == 3 || x == 4 || x == 6)
+        .collect();
     if lens.is_empty() {
         return 4;
     }
@@ -843,7 +917,9 @@ mod tests {
     fn beats_and_downbeats(n: usize, seed: u64) -> (Vec<f64>, Vec<f64>) {
         let mut state = seed;
         let mut next = move || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (state >> 33) as f64 / (1u64 << 31) as f64
         };
         let mut t = 0.3;
@@ -861,24 +937,41 @@ mod tests {
     }
 
     /// `predicted_lines` as it was before it sliced instead of copying the settled beats.
-    fn predicted_lines_reference(pb: &[f64], pd: &[f64], t: f64) -> (Vec<PredictedLine>, Option<f64>) {
-        let pb_known: Vec<f64> = pb.iter().cloned().filter(|&x| x + PROV_DELAY <= t).collect();
+    fn predicted_lines_reference(
+        pb: &[f64],
+        pd: &[f64],
+        t: f64,
+    ) -> (Vec<PredictedLine>, Option<f64>) {
+        let pb_known: Vec<f64> = pb
+            .iter()
+            .cloned()
+            .filter(|&x| x + PROV_DELAY <= t)
+            .collect();
         if pb_known.len() < 5 {
             return (Vec::new(), None);
         }
         let last5 = &pb_known[pb_known.len() - 5..];
         let big_t = median(last5.windows(2).map(|w| w[1] - w[0]).collect());
-        let pd_known: Vec<f64> = pd.iter().cloned().filter(|&x| x + PROV_DELAY <= t).collect();
+        let pd_known: Vec<f64> = pd
+            .iter()
+            .cloned()
+            .filter(|&x| x + PROV_DELAY <= t)
+            .collect();
         let bar_len = bar_len(&pb_known, &pd_known);
         let last = *pb_known.last().unwrap();
-        let since: Option<i64> = pd_known.last().map(|&last_pd| pb_known.iter().filter(|&&x| x > last_pd + 1e-4).count() as i64);
+        let since: Option<i64> = pd_known
+            .last()
+            .map(|&last_pd| pb_known.iter().filter(|&&x| x > last_pd + 1e-4).count() as i64);
         let mut out = Vec::new();
         for k in 1..=MAX_AHEAD {
             let x = last + k as f64 * big_t;
             if x > t {
                 break;
             }
-            out.push(PredictedLine { time: x, is_bar: since.map(|s| (s + k) % bar_len == 0).unwrap_or(false) });
+            out.push(PredictedLine {
+                time: x,
+                is_bar: since.map(|s| (s + k) % bar_len == 0).unwrap_or(false),
+            });
         }
         (out, Some(last))
     }
@@ -906,7 +999,11 @@ mod tests {
         let (pb, _) = beats_and_downbeats(40, 7);
         for i in 0..400 {
             let t = i as f64 * 0.06;
-            let want: Vec<f64> = pb.iter().cloned().filter(|&x| x + PROV_DELAY <= t).collect();
+            let want: Vec<f64> = pb
+                .iter()
+                .cloned()
+                .filter(|&x| x + PROV_DELAY <= t)
+                .collect();
             assert_eq!(settled(&pb, t), want.as_slice(), "t {t}");
         }
     }
@@ -938,16 +1035,31 @@ mod tests {
     #[test]
     fn matches_python_golden_stream() {
         let Some(dir) = golden_dir() else { return };
-        let mut npz = NpzReader::new(std::fs::File::open(dir.join("stream_s00_90s.npz")).unwrap()).unwrap();
-        let audio: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>("audio").unwrap();
-        let spect_ref: Array2<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix2>("spect").unwrap();
+        let mut npz =
+            NpzReader::new(std::fs::File::open(dir.join("stream_s00_90s.npz")).unwrap()).unwrap();
+        let audio: Array1<f32> = npz
+            .by_name::<ndarray::OwnedRepr<f32>, Ix1>("audio")
+            .unwrap();
+        let spect_ref: Array2<f32> = npz
+            .by_name::<ndarray::OwnedRepr<f32>, Ix2>("spect")
+            .unwrap();
         let beat_ref: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>("beat").unwrap();
         let down_ref: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>("down").unwrap();
-        let prov_b_ref: Array1<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix1>("prov_b").unwrap();
-        let prov_d_ref: Array1<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix1>("prov_d").unwrap();
-        let com_b_ref: Array1<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix1>("com_b").unwrap();
-        let com_d_ref: Array1<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix1>("com_d").unwrap();
-        let resets_ref: Array2<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix2>("resets").unwrap();
+        let prov_b_ref: Array1<f64> = npz
+            .by_name::<ndarray::OwnedRepr<f64>, Ix1>("prov_b")
+            .unwrap();
+        let prov_d_ref: Array1<f64> = npz
+            .by_name::<ndarray::OwnedRepr<f64>, Ix1>("prov_d")
+            .unwrap();
+        let com_b_ref: Array1<f64> = npz
+            .by_name::<ndarray::OwnedRepr<f64>, Ix1>("com_b")
+            .unwrap();
+        let com_d_ref: Array1<f64> = npz
+            .by_name::<ndarray::OwnedRepr<f64>, Ix1>("com_d")
+            .unwrap();
+        let resets_ref: Array2<f64> = npz
+            .by_name::<ndarray::OwnedRepr<f64>, Ix2>("resets")
+            .unwrap();
         let chunk = 1000usize; // golden() always pushes in 1000-sample chunks (see online.py)
 
         let model = BeatModel::load(1).unwrap();
@@ -981,32 +1093,80 @@ mod tests {
             .zip(down_ref.iter())
             .fold(0.0f32, |acc, (&a, &b)| acc.max((a - b).abs()));
         println!("max |beat_act diff| = {dmax_beat:.6}, max |down_act diff| = {dmax_down:.6}");
-        assert!(dmax_beat < 1e-2, "beat activation diff too large: {dmax_beat}");
-        assert!(dmax_down < 1e-2, "down activation diff too large: {dmax_down}");
+        assert!(
+            dmax_beat < 1e-2,
+            "beat activation diff too large: {dmax_beat}"
+        );
+        assert!(
+            dmax_down < 1e-2,
+            "down activation diff too large: {dmax_down}"
+        );
 
         // resets: equal
         let resets = tr.resets();
         assert_eq!(resets.len(), resets_ref.nrows(), "reset count mismatch");
         for (i, &(t, c)) in resets.iter().enumerate() {
-            assert!((t - resets_ref[[i, 0]]).abs() < 1e-9, "reset {i} detect time mismatch");
-            assert!((c - resets_ref[[i, 1]]).abs() < 1e-9, "reset {i} cut time mismatch");
+            assert!(
+                (t - resets_ref[[i, 0]]).abs() < 1e-9,
+                "reset {i} detect time mismatch"
+            );
+            assert!(
+                (c - resets_ref[[i, 1]]).abs() < 1e-9,
+                "reset {i} cut time mismatch"
+            );
         }
 
         // provisional / committed lines: same count, times within 1e-6
-        assert_eq!(tr.provisional_beats().len(), prov_b_ref.len(), "prov_b count mismatch");
-        for (i, (&a, &b)) in tr.provisional_beats().iter().zip(prov_b_ref.iter()).enumerate() {
+        assert_eq!(
+            tr.provisional_beats().len(),
+            prov_b_ref.len(),
+            "prov_b count mismatch"
+        );
+        for (i, (&a, &b)) in tr
+            .provisional_beats()
+            .iter()
+            .zip(prov_b_ref.iter())
+            .enumerate()
+        {
             assert!((a - b).abs() < 1e-6, "prov_b[{i}] {a} vs {b}");
         }
-        assert_eq!(tr.provisional_downbeats().len(), prov_d_ref.len(), "prov_d count mismatch");
-        for (i, (&a, &b)) in tr.provisional_downbeats().iter().zip(prov_d_ref.iter()).enumerate() {
+        assert_eq!(
+            tr.provisional_downbeats().len(),
+            prov_d_ref.len(),
+            "prov_d count mismatch"
+        );
+        for (i, (&a, &b)) in tr
+            .provisional_downbeats()
+            .iter()
+            .zip(prov_d_ref.iter())
+            .enumerate()
+        {
             assert!((a - b).abs() < 1e-6, "prov_d[{i}] {a} vs {b}");
         }
-        assert_eq!(tr.committed_beats().len(), com_b_ref.len(), "com_b count mismatch");
-        for (i, (&a, &b)) in tr.committed_beats().iter().zip(com_b_ref.iter()).enumerate() {
+        assert_eq!(
+            tr.committed_beats().len(),
+            com_b_ref.len(),
+            "com_b count mismatch"
+        );
+        for (i, (&a, &b)) in tr
+            .committed_beats()
+            .iter()
+            .zip(com_b_ref.iter())
+            .enumerate()
+        {
             assert!((a - b).abs() < 1e-6, "com_b[{i}] {a} vs {b}");
         }
-        assert_eq!(tr.committed_downbeats().len(), com_d_ref.len(), "com_d count mismatch");
-        for (i, (&a, &b)) in tr.committed_downbeats().iter().zip(com_d_ref.iter()).enumerate() {
+        assert_eq!(
+            tr.committed_downbeats().len(),
+            com_d_ref.len(),
+            "com_d count mismatch"
+        );
+        for (i, (&a, &b)) in tr
+            .committed_downbeats()
+            .iter()
+            .zip(com_d_ref.iter())
+            .enumerate()
+        {
             assert!((a - b).abs() < 1e-6, "com_d[{i}] {a} vs {b}");
         }
 
@@ -1030,19 +1190,37 @@ mod tests {
         // the buffers are trimmed many times (including across both resets) and every line
         // must still come out as in the reference.
         let Some(dir) = golden_dir() else { return };
-        let mut npz = NpzReader::new(std::fs::File::open(dir.join("stream_s00_90s.npz")).unwrap()).unwrap();
-        let audio: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>("audio").unwrap();
+        let mut npz =
+            NpzReader::new(std::fs::File::open(dir.join("stream_s00_90s.npz")).unwrap()).unwrap();
+        let audio: Array1<f32> = npz
+            .by_name::<ndarray::OwnedRepr<f32>, Ix1>("audio")
+            .unwrap();
         let mut tr = BeatTracker::bounded(BeatModel::load(1).unwrap(), true);
         for chunk in audio.as_slice().unwrap().chunks(1000) {
             tr.push(chunk).unwrap();
-            assert!(tr.beat.v.len() <= 2 * RETAIN_FRAMES + 2 * S, "activations not trimmed");
-            assert!(tr.spect_flat.v.len() <= (2 * RETAIN_FRAMES + 2 * S) * N_MELS, "spect not trimmed");
-            assert!(tr.audio.v.len() <= 2 * 2000 + N_FFT + 2 * HOP, "audio not trimmed");
+            assert!(
+                tr.beat.v.len() <= 2 * RETAIN_FRAMES + 2 * S,
+                "activations not trimmed"
+            );
+            assert!(
+                tr.spect_flat.v.len() <= (2 * RETAIN_FRAMES + 2 * S) * N_MELS,
+                "spect not trimmed"
+            );
+            assert!(
+                tr.audio.v.len() <= 2 * 2000 + N_FFT + 2 * HOP,
+                "audio not trimmed"
+            );
         }
         tr.flush().unwrap();
         assert!(tr.beat.start() > 0 && tr.spect_flat.start() > 0);
-        let resets_ref: Array2<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix2>("resets").unwrap();
-        assert_eq!(tr.resets().len(), resets_ref.nrows(), "reset count mismatch");
+        let resets_ref: Array2<f64> = npz
+            .by_name::<ndarray::OwnedRepr<f64>, Ix2>("resets")
+            .unwrap();
+        assert_eq!(
+            tr.resets().len(),
+            resets_ref.nrows(),
+            "reset count mismatch"
+        );
         for (name, ours) in [
             ("prov_b", tr.provisional_beats()),
             ("prov_d", tr.provisional_downbeats()),
@@ -1071,10 +1249,18 @@ mod tests {
         let mut npz = NpzReader::new(std::fs::File::open(path).unwrap()).unwrap();
         let dbn = DbnDecoder::new(50.0);
         for i in 0..8 {
-            let beat: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>(&format!("beat_{i}")).unwrap();
-            let down: Array1<f32> = npz.by_name::<ndarray::OwnedRepr<f32>, Ix1>(&format!("down_{i}")).unwrap();
-            let beats_ref: Array1<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix1>(&format!("beats_{i}")).unwrap();
-            let downs_ref: Array1<f64> = npz.by_name::<ndarray::OwnedRepr<f64>, Ix1>(&format!("downs_{i}")).unwrap();
+            let beat: Array1<f32> = npz
+                .by_name::<ndarray::OwnedRepr<f32>, Ix1>(&format!("beat_{i}"))
+                .unwrap();
+            let down: Array1<f32> = npz
+                .by_name::<ndarray::OwnedRepr<f32>, Ix1>(&format!("down_{i}"))
+                .unwrap();
+            let beats_ref: Array1<f64> = npz
+                .by_name::<ndarray::OwnedRepr<f64>, Ix1>(&format!("beats_{i}"))
+                .unwrap();
+            let downs_ref: Array1<f64> = npz
+                .by_name::<ndarray::OwnedRepr<f64>, Ix1>(&format!("downs_{i}"))
+                .unwrap();
             let (b, d) = dbn.decode(beat.as_slice().unwrap(), down.as_slice().unwrap());
             assert_eq!(b.len(), beats_ref.len(), "window {i} beat count");
             for (k, (&a, &r)) in b.iter().zip(beats_ref.iter()).enumerate() {

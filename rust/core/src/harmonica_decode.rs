@@ -60,7 +60,11 @@ struct PitchState {
 
 impl Default for PitchState {
     fn default() -> Self {
-        Self { prev_on: f32::NEG_INFINITY, pending_on: f32::NEG_INFINITY, active: None }
+        Self {
+            prev_on: f32::NEG_INFINITY,
+            pending_on: f32::NEG_INFINITY,
+            active: None,
+        }
     }
 }
 
@@ -77,7 +81,13 @@ pub struct StreamingDecoder {
 
 impl StreamingDecoder {
     pub fn new(th_on: f32, th_sus: f32) -> Self {
-        Self { th_on, th_sus, frames_seen: 0, finished: false, pitches: [PitchState::default(); N_PITCH] }
+        Self {
+            th_on,
+            th_sus,
+            frames_seen: 0,
+            finished: false,
+            pitches: [PitchState::default(); N_PITCH],
+        }
     }
 
     /// Frames whose note state is final: `frames_seen - 1` while streaming
@@ -94,7 +104,14 @@ impl StreamingDecoder {
     /// Notes currently open (start_frame, midi pitch, velocity), one per
     /// sounding pitch.
     pub fn open_notes(&self) -> Vec<(usize, i32, f32)> {
-        self.pitches.iter().enumerate().filter_map(|(p, st)| st.active.map(|(start, vel)| (start, MIN_MIDI + p as i32, vel))).collect()
+        self.pitches
+            .iter()
+            .enumerate()
+            .filter_map(|(p, st)| {
+                st.active
+                    .map(|(start, vel)| (start, MIN_MIDI + p as i32, vel))
+            })
+            .collect()
     }
 
     /// Decides whether the pending frame (`u - 1`, values in `prev_on`/
@@ -112,7 +129,12 @@ impl StreamingDecoder {
         let is_candidate = v > prev && v >= next && v > self.th_on;
         if is_candidate {
             if let Some((start, vel)) = st.active.take() {
-                out.push(DecodedNote { start_frame: start, end_frame: u - 1, pitch_midi: MIN_MIDI + p as i32, velocity: vel });
+                out.push(DecodedNote {
+                    start_frame: start,
+                    end_frame: u - 1,
+                    pitch_midi: MIN_MIDI + p as i32,
+                    velocity: vel,
+                });
             }
             st.active = Some((u - 1, v));
         }
@@ -147,7 +169,12 @@ impl StreamingDecoder {
                 if let Some((start, vel)) = st.active {
                     if start < u && sus_u < self.th_sus {
                         st.active = None;
-                        out.push(DecodedNote { start_frame: start, end_frame: u, pitch_midi: MIN_MIDI + p as i32, velocity: vel });
+                        out.push(DecodedNote {
+                            start_frame: start,
+                            end_frame: u,
+                            pitch_midi: MIN_MIDI + p as i32,
+                            velocity: vel,
+                        });
                     }
                 }
             }
@@ -170,7 +197,12 @@ impl StreamingDecoder {
         let t = self.frames_seen;
         for (p, st) in self.pitches.iter_mut().enumerate() {
             if let Some((start, vel)) = st.active.take() {
-                out.push(DecodedNote { start_frame: start, end_frame: t, pitch_midi: MIN_MIDI + p as i32, velocity: vel });
+                out.push(DecodedNote {
+                    start_frame: start,
+                    end_frame: t,
+                    pitch_midi: MIN_MIDI + p as i32,
+                    velocity: vel,
+                });
             }
         }
         self.finished = true;
@@ -215,7 +247,15 @@ mod tests {
         assert_eq!(d.push(on2.view(), sus2.view()), vec![]); // opened, not yet closed
 
         let notes = d.finish();
-        assert_eq!(notes, vec![DecodedNote { start_frame: 1, end_frame: 3, pitch_midi: MIN_MIDI, velocity: 0.9 }]);
+        assert_eq!(
+            notes,
+            vec![DecodedNote {
+                start_frame: 1,
+                end_frame: 3,
+                pitch_midi: MIN_MIDI,
+                velocity: 0.9
+            }]
+        );
     }
 
     #[test]
@@ -225,7 +265,15 @@ mod tests {
         let mut d = StreamingDecoder::new(TH_ON, TH_SUS);
         assert_eq!(d.push(on.view(), sus.view()), vec![]);
         let notes = d.finish();
-        assert_eq!(notes, vec![DecodedNote { start_frame: 0, end_frame: 2, pitch_midi: MIN_MIDI, velocity: 0.9 }]);
+        assert_eq!(
+            notes,
+            vec![DecodedNote {
+                start_frame: 0,
+                end_frame: 2,
+                pitch_midi: MIN_MIDI,
+                velocity: 0.9
+            }]
+        );
     }
 
     #[test]
@@ -236,7 +284,15 @@ mod tests {
         let mut d = StreamingDecoder::new(TH_ON, TH_SUS);
         let mut notes = d.push(on.view(), sus.view());
         notes.extend(d.finish());
-        assert_eq!(notes, vec![DecodedNote { start_frame: 1, end_frame: 4, pitch_midi: MIN_MIDI, velocity: 0.9 }]);
+        assert_eq!(
+            notes,
+            vec![DecodedNote {
+                start_frame: 1,
+                end_frame: 4,
+                pitch_midi: MIN_MIDI,
+                velocity: 0.9
+            }]
+        );
     }
 
     #[test]
@@ -247,7 +303,15 @@ mod tests {
         let mut d = StreamingDecoder::new(TH_ON, TH_SUS);
         let mut notes = d.push(on.view(), sus.view());
         notes.extend(d.finish());
-        assert_eq!(notes, vec![DecodedNote { start_frame: 1, end_frame: 2, pitch_midi: MIN_MIDI, velocity: 0.9 }]);
+        assert_eq!(
+            notes,
+            vec![DecodedNote {
+                start_frame: 1,
+                end_frame: 2,
+                pitch_midi: MIN_MIDI,
+                velocity: 0.9
+            }]
+        );
     }
 
     #[test]
@@ -261,8 +325,18 @@ mod tests {
         assert_eq!(
             notes,
             vec![
-                DecodedNote { start_frame: 1, end_frame: 3, pitch_midi: MIN_MIDI, velocity: 0.9 },
-                DecodedNote { start_frame: 3, end_frame: 5, pitch_midi: MIN_MIDI, velocity: 0.9 },
+                DecodedNote {
+                    start_frame: 1,
+                    end_frame: 3,
+                    pitch_midi: MIN_MIDI,
+                    velocity: 0.9
+                },
+                DecodedNote {
+                    start_frame: 3,
+                    end_frame: 5,
+                    pitch_midi: MIN_MIDI,
+                    velocity: 0.9
+                },
             ]
         );
     }
@@ -273,7 +347,15 @@ mod tests {
         let mut d = StreamingDecoder::new(TH_ON, TH_SUS);
         assert_eq!(d.push(on.view(), sus.view()), vec![]);
         let notes = d.finish();
-        assert_eq!(notes, vec![DecodedNote { start_frame: 1, end_frame: 4, pitch_midi: MIN_MIDI, velocity: 0.9 }]);
+        assert_eq!(
+            notes,
+            vec![DecodedNote {
+                start_frame: 1,
+                end_frame: 4,
+                pitch_midi: MIN_MIDI,
+                velocity: 0.9
+            }]
+        );
     }
 
     #[test]
@@ -286,9 +368,24 @@ mod tests {
         let onset = vec![0.1, 0.6, 0.6, 0.2, 0.05, 0.9, 0.9, 0.9, 0.1, 0.7, 0.1];
         let sustain = vec![1.0f32; onset.len()];
         let expected = vec![
-            DecodedNote { start_frame: 1, end_frame: 5, pitch_midi: MIN_MIDI, velocity: 0.6 },
-            DecodedNote { start_frame: 5, end_frame: 9, pitch_midi: MIN_MIDI, velocity: 0.9 },
-            DecodedNote { start_frame: 9, end_frame: 11, pitch_midi: MIN_MIDI, velocity: 0.7 },
+            DecodedNote {
+                start_frame: 1,
+                end_frame: 5,
+                pitch_midi: MIN_MIDI,
+                velocity: 0.6,
+            },
+            DecodedNote {
+                start_frame: 5,
+                end_frame: 9,
+                pitch_midi: MIN_MIDI,
+                velocity: 0.9,
+            },
+            DecodedNote {
+                start_frame: 9,
+                end_frame: 11,
+                pitch_midi: MIN_MIDI,
+                velocity: 0.7,
+            },
         ];
 
         let run = |splits: &[usize]| {

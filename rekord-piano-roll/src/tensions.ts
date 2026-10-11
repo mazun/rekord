@@ -13,11 +13,18 @@ const mod12 = (n: number) => ((n % 12) + 12) % 12;
 
 /** The tensions (names, in the vocabulary's canonical order) of the pitch classes in `pcs` (bit `pc` set)
  * over the chord `rootPc` + `quality`. */
-export function tensionsFor(vocabulary: ChordVocabulary, pcs: number, rootPc: number, quality: string): string[] {
+export function tensionsFor(
+  vocabulary: ChordVocabulary,
+  pcs: number,
+  rootPc: number,
+  quality: string,
+): string[] {
   const template = vocabulary.templates.find((t) => t.quality === quality);
   if (!template) return [];
   let templateMask = 0;
   for (const interval of template.intervals) templateMask |= 1 << mod12(rootPc + interval);
   const extra = pcs & ~templateMask;
-  return vocabulary.tensions.filter(({ interval }) => extra & (1 << mod12(rootPc + interval))).map((t) => t.name);
+  return vocabulary.tensions
+    .filter(({ interval }) => extra & (1 << mod12(rootPc + interval)))
+    .map((t) => t.name);
 }

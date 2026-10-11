@@ -17,7 +17,8 @@ function reference(beats: number[], t: number): number {
   for (let i = 0; i < beats.length; i++) {
     if (beats[i] > t + SNAP_MAX_BEAT_GAP_S) break;
     consider(beats[i]);
-    if (i + 1 < beats.length && beats[i + 1] - beats[i] <= SNAP_MAX_BEAT_GAP_S) consider((beats[i] + beats[i + 1]) / 2);
+    if (i + 1 < beats.length && beats[i + 1] - beats[i] <= SNAP_MAX_BEAT_GAP_S)
+      consider((beats[i] + beats[i + 1]) / 2);
   }
   return best;
 }
@@ -43,7 +44,12 @@ for (let t = -1; t < beats[beats.length - 1] + 2; t += 0.0137) {
 }
 // exactly on beats, on midpoints, and halfway between a beat and a midpoint (ties)
 for (let i = 0; i + 1 < beats.length; i++) {
-  for (const t of [beats[i], (beats[i] + beats[i + 1]) / 2, (3 * beats[i] + beats[i + 1]) / 4, (beats[i] + 3 * beats[i + 1]) / 4]) {
+  for (const t of [
+    beats[i],
+    (beats[i] + beats[i + 1]) / 2,
+    (3 * beats[i] + beats[i + 1]) / 4,
+    (beats[i] + 3 * beats[i + 1]) / 4,
+  ]) {
     assert.equal(snapToBeats(beats, t), reference(beats, t), `t ${t}`);
     checked++;
   }
@@ -54,6 +60,14 @@ assert.equal(snapToBeats([], 3), 3);
 assert.equal(snapToBeats([2], 2.1), 2.1);
 assert.equal(snapToBeats([1, 2], 0.5), 0.5, "before the first beat");
 assert.equal(snapToBeats([1, 2], 2.5), 2.5, "after the last beat");
-assert.equal(snapToBeats([1, 2, 10, 11], 5), 2, "inside a gap: the nearest beat in reach, no midpoint across the gap");
-assert.equal(snapToBeats([1, 2, 10, 11], 8), 10, "a beat within reach after t wins over a far one before it");
+assert.equal(
+  snapToBeats([1, 2, 10, 11], 5),
+  2,
+  "inside a gap: the nearest beat in reach, no midpoint across the gap",
+);
+assert.equal(
+  snapToBeats([1, 2, 10, 11], 8),
+  10,
+  "a beat within reach after t wins over a far one before it",
+);
 console.log("ok   edges: no beats, outside the beats, across a gap");

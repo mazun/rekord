@@ -76,14 +76,25 @@ pub enum PlaybackEvent {
     /// The recording time `pos_s` is audible at `at_epoch_ms` (unix epoch, ms).
     /// `gen` is the frontend-chosen generation of the play/seek command the
     /// position belongs to; reports of an older generation are stale.
-    Position { gen: u32, pos_s: f64, at_epoch_ms: f64 },
+    Position {
+        gen: u32,
+        pos_s: f64,
+        at_epoch_ms: f64,
+    },
     /// The last frame of the recording has been heard.
     Ended { gen: u32 },
 }
 
 enum Tick {
-    Pos { gen: u32, pos_s: f64, at_epoch_ms: f64 },
-    End { gen: u32, at_epoch_ms: f64 },
+    Pos {
+        gen: u32,
+        pos_s: f64,
+        at_epoch_ms: f64,
+    },
+    End {
+        gen: u32,
+        at_epoch_ms: f64,
+    },
 }
 
 enum Cmd {
@@ -125,12 +136,17 @@ impl Shared {
     }
 
     fn set_params(&self, p: &PlaybackParams) {
-        self.original_gain.store(p.original_gain.to_bits(), Ordering::Relaxed);
-        self.notes_gain.store(p.notes_gain.to_bits(), Ordering::Relaxed);
+        self.original_gain
+            .store(p.original_gain.to_bits(), Ordering::Relaxed);
+        self.notes_gain
+            .store(p.notes_gain.to_bits(), Ordering::Relaxed);
         let mut gains = [0.0f32; PARTS];
         for v in &p.voices {
             let i = v.part as usize;
-            self.waves[i].store(WAVES.iter().position(|&w| w == v.wave).unwrap_or(0) as u8, Ordering::Relaxed);
+            self.waves[i].store(
+                WAVES.iter().position(|&w| w == v.wave).unwrap_or(0) as u8,
+                Ordering::Relaxed,
+            );
             gains[i] = v.gain;
         }
         for (slot, gain) in self.part_gains.iter().zip(gains.iter()) {
@@ -144,7 +160,9 @@ impl Shared {
             original: gain(&self.original_gain),
             notes: gain(&self.notes_gain),
             voices: Voices {
-                waves: std::array::from_fn(|i| WAVES[self.waves[i].load(Ordering::Relaxed) as usize % WAVES.len()]),
+                waves: std::array::from_fn(|i| {
+                    WAVES[self.waves[i].load(Ordering::Relaxed) as usize % WAVES.len()]
+                }),
                 gains: std::array::from_fn(|i| gain(&self.part_gains[i])),
             },
         }
@@ -152,7 +170,10 @@ impl Shared {
 }
 
 fn now_epoch_ms() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +225,12 @@ impl Renderer {
         from_s: f64,
         gen: u32,
     ) -> Result<Self> {
-        let info = ring.lock().unwrap().as_ref().map(|r| r.info()).context("no recording")?;
+        let info = ring
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|r| r.info())
+            .context("no recording")?;
         let mut notes = notes;
         notes.sort_by(|a, b| a.start_s.total_cmp(&b.start_s));
         let mut r = Self {
@@ -234,7 +260,11 @@ impl Renderer {
         let frame = self.from_s * self.src_rate as f64;
         // Same rate: a whole-frame start makes the copy bit-exact (no
         // fractional-delay smoothing from the interpolation below).
-        self.base_src_frame = if self.src_rate == self.out_rate { frame.round() } else { frame };
+        self.base_src_frame = if self.src_rate == self.out_rate {
+            frame.round()
+        } else {
+            frame
+        };
         self.frames_done = 0;
         self.finished = false;
     }
@@ -252,7 +282,14 @@ impl Renderer {
             ring.read_f32(i0 as u64, &mut self.src);
         }
         self.mono.resize(n, 0.0);
-        render_notes(&self.notes, pos_s, self.out_rate, &mix.voices, &self.prev_mix.voices.gains, &mut self.mono);
+        render_notes(
+            &self.notes,
+            pos_s,
+            self.out_rate,
+            &mix.voices,
+            &self.prev_mix.voices.gains,
+            &mut self.mono,
+        );
 
         let ch = self.out_channels;
         let mut samples = vec![0.0f32; n * ch];
@@ -283,7 +320,12 @@ impl Renderer {
         self.frames_done += n as u64;
         let next_pos_s = self.from_s + self.frames_done as f64 / self.out_rate as f64;
         self.finished = next_pos_s >= self.end_s;
-        Block { gen: self.gen, pos_s, samples, last: self.finished }
+        Block {
+            gen: self.gen,
+            pos_s,
+            samples,
+            last: self.finished,
+        }
     }
 }
 
@@ -337,7 +379,11 @@ impl OutputState {
                 }
                 continue;
             }
-            if self.cur.as_ref().is_none_or(|b| self.offset >= b.samples.len() / ch) {
+            if self
+                .cur
+                .as_ref()
+                .is_none_or(|b| self.offset >= b.samples.len() / ch)
+            {
                 self.cur = None;
                 self.offset = 0;
                 while let Ok(b) = self.rx.try_recv() {
@@ -370,19 +416,32 @@ impl OutputState {
             }
         }
 
-        self.shared.next_pos_bits.store(next_pos.to_bits(), Ordering::Relaxed);
-        self.shared.paused_ack.store(paused && self.ramp <= 0.0, Ordering::Release);
+        self.shared
+            .next_pos_bits
+            .store(next_pos.to_bits(), Ordering::Relaxed);
+        self.shared
+            .paused_ack
+            .store(paused && self.ramp <= 0.0, Ordering::Release);
 
-        let heard_ms = |frame_index: usize| now_epoch_ms() + (latency.as_secs_f64() + frame_index as f64 / rate) * 1000.0;
+        let heard_ms = |frame_index: usize| {
+            now_epoch_ms() + (latency.as_secs_f64() + frame_index as f64 / rate) * 1000.0
+        };
         if let Some((pos_s, index)) = first {
             self.frames_since_tick += frames as u32;
             if self.frames_since_tick >= self.tick_every {
                 self.frames_since_tick = 0;
-                let _ = self.tick_tx.send(Tick::Pos { gen, pos_s, at_epoch_ms: heard_ms(index) });
+                let _ = self.tick_tx.send(Tick::Pos {
+                    gen,
+                    pos_s,
+                    at_epoch_ms: heard_ms(index),
+                });
             }
         }
         if let Some(index) = ended_at {
-            let _ = self.tick_tx.send(Tick::End { gen, at_epoch_ms: heard_ms(index) });
+            let _ = self.tick_tx.send(Tick::End {
+                gen,
+                at_epoch_ms: heard_ms(index),
+            });
         }
     }
 
@@ -420,17 +479,39 @@ pub fn start(
     gen: u32,
     on_event: impl FnMut(PlaybackEvent) + Send + 'static,
 ) -> Result<PlaybackSession> {
-    let info = ring.lock().unwrap().as_ref().map(|r| r.info()).context("no recording to play")?;
-    let shared = Arc::new(Shared::new(gen, from_s.clamp(info.start_s, info.end_s), params));
+    let info = ring
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|r| r.info())
+        .context("no recording to play")?;
+    let shared = Arc::new(Shared::new(
+        gen,
+        from_s.clamp(info.start_s, info.end_s),
+        params,
+    ));
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (init_tx, init_rx) = sync_channel::<Result<(), String>>(1);
 
     let thread_shared = Arc::clone(&shared);
     let thread = std::thread::spawn(move || {
-        engine_thread(ring, notes, from_s, gen, thread_shared, cmd_rx, init_tx, on_event);
+        engine_thread(
+            ring,
+            notes,
+            from_s,
+            gen,
+            thread_shared,
+            cmd_rx,
+            init_tx,
+            on_event,
+        );
     });
     match init_rx.recv() {
-        Ok(Ok(())) => Ok(PlaybackSession { shared, cmd_tx, thread: Some(thread) }),
+        Ok(Ok(())) => Ok(PlaybackSession {
+            shared,
+            cmd_tx,
+            thread: Some(thread),
+        }),
         Ok(Err(message)) => {
             let _ = thread.join();
             Err(anyhow!(message))
@@ -463,7 +544,9 @@ impl PlaybackSession {
             bail!("playback has ended");
         }
         self.shared.gen.store(gen, Ordering::Release);
-        self.cmd_tx.send(Cmd::Seek { pos_s, gen }).map_err(|_| anyhow!("playback has ended"))?;
+        self.cmd_tx
+            .send(Cmd::Seek { pos_s, gen })
+            .map_err(|_| anyhow!("playback has ended"))?;
         self.shared.paused.store(false, Ordering::SeqCst);
         Ok(())
     }
@@ -538,7 +621,15 @@ fn engine_thread(
         }
         while let Ok(tick) = tick_rx.try_recv() {
             match tick {
-                Tick::Pos { gen, pos_s, at_epoch_ms } => on_event(PlaybackEvent::Position { gen, pos_s, at_epoch_ms }),
+                Tick::Pos {
+                    gen,
+                    pos_s,
+                    at_epoch_ms,
+                } => on_event(PlaybackEvent::Position {
+                    gen,
+                    pos_s,
+                    at_epoch_ms,
+                }),
                 Tick::End { gen, at_epoch_ms } => {
                     if gen != shared.gen.load(Ordering::Acquire) {
                         continue; // a seek happened after the callback queued this
@@ -557,9 +648,17 @@ fn engine_thread(
 
 type Opened = (cpal::Stream, Renderer, SyncSender<Block>, Receiver<Tick>);
 
-fn open_stream(ring: SharedRing, notes: Vec<SynthNote>, from_s: f64, gen: u32, shared: &Arc<Shared>) -> Result<Opened> {
+fn open_stream(
+    ring: SharedRing,
+    notes: Vec<SynthNote>,
+    from_s: f64,
+    gen: u32,
+    shared: &Arc<Shared>,
+) -> Result<Opened> {
     let host = cpal::default_host();
-    let device = host.default_output_device().context("no default output device found")?;
+    let device = host
+        .default_output_device()
+        .context("no default output device found")?;
     let config = device.default_output_config().map_err(|e| anyhow!("{e}"))?;
     let out_rate = config.sample_rate();
     let channels = config.channels() as usize;
@@ -624,21 +723,28 @@ mod tests {
 
     /// Original and notes at the given linear gains, every part a sine at full gain.
     fn mix(original: f32, notes: f32) -> Mix {
-        Mix { original, notes, voices: Voices::uniform(Wave::Sine, 1.0) }
+        Mix {
+            original,
+            notes,
+            voices: Voices::uniform(Wave::Sine, 1.0),
+        }
     }
 
     /// A ring of `frames` frames at `rate` whose left channel ramps up
     /// (frame / 1000) and whose right channel is its negative.
     fn ramp_ring(rate: u32, frames: usize) -> SharedRing {
         let mut ring = StereoRing::new(rate, frames);
-        let data: Vec<f32> = (0..frames).flat_map(|i| [i as f32 / 1000.0, -(i as f32) / 1000.0]).collect();
+        let data: Vec<f32> = (0..frames)
+            .flat_map(|i| [i as f32 / 1000.0, -(i as f32) / 1000.0])
+            .collect();
         ring.push_f32(&data, 2);
         Arc::new(Mutex::new(Some(ring)))
     }
 
     #[test]
     fn same_rate_copies_the_recording_exactly() {
-        let mut r = Renderer::new(ramp_ring(1000, 500), vec![], 1000, 2, mix(1.0, 0.0), 0.0, 0).unwrap();
+        let mut r =
+            Renderer::new(ramp_ring(1000, 500), vec![], 1000, 2, mix(1.0, 0.0), 0.0, 0).unwrap();
         r.seek(0.1, 7);
         let block = r.next_block(10, &mix(1.0, 0.0));
         assert_eq!(block.gen, 7);
@@ -653,14 +759,18 @@ mod tests {
 
     #[test]
     fn marks_the_last_block_and_pads_with_silence() {
-        let mut r = Renderer::new(ramp_ring(1000, 25), vec![], 1000, 2, mix(1.0, 0.0), 0.0, 0).unwrap();
+        let mut r =
+            Renderer::new(ramp_ring(1000, 25), vec![], 1000, 2, mix(1.0, 0.0), 0.0, 0).unwrap();
         r.seek(0.0, 1);
         assert!(!r.next_block(10, &mix(1.0, 0.0)).last);
         assert!(!r.next_block(10, &mix(1.0, 0.0)).last);
         let tail = r.next_block(10, &mix(1.0, 0.0));
         assert!(tail.last);
         assert!(r.finished);
-        assert!(tail.samples[2 * 5..].iter().all(|&s| s == 0.0), "past the end is silent");
+        assert!(
+            tail.samples[2 * 5..].iter().all(|&s| s == 0.0),
+            "past the end is silent"
+        );
         assert!(tail.samples[2 * 4].abs() > 0.0);
     }
 
@@ -674,25 +784,50 @@ mod tests {
         r.seek(0.2, 1);
         for _ in 0..3 {
             let block = r.next_block(15, &mix(1.0, 0.0));
-            assert!(block.samples.iter().all(|s| (s - 0.5).abs() < 1e-3), "{:?}", block.samples);
+            assert!(
+                block.samples.iter().all(|s| (s - 0.5).abs() < 1e-3),
+                "{:?}",
+                block.samples
+            );
         }
     }
 
     #[test]
     fn mono_devices_get_the_channel_average_and_notes_are_mixed_in() {
-        let note = SynthNote { start_s: 0.0, end_s: 1.0, pitch: 69, velocity: 1.0, part: Part::Other };
-        let mut r = Renderer::new(ramp_ring(48_000, 48_000), vec![note], 48_000, 1, mix(0.0, 1.0), 0.0, 0).unwrap();
+        let note = SynthNote {
+            start_s: 0.0,
+            end_s: 1.0,
+            pitch: 69,
+            velocity: 1.0,
+            part: Part::Other,
+        };
+        let mut r = Renderer::new(
+            ramp_ring(48_000, 48_000),
+            vec![note],
+            48_000,
+            1,
+            mix(0.0, 1.0),
+            0.0,
+            0,
+        )
+        .unwrap();
         r.seek(0.5, 1);
         let block = r.next_block(480, &mix(0.0, 1.0));
         assert_eq!(block.samples.len(), 480);
-        assert!(block.samples.iter().any(|s| s.abs() > 0.05), "the notes are audible with the original muted");
+        assert!(
+            block.samples.iter().any(|s| s.abs() > 0.05),
+            "the notes are audible with the original muted"
+        );
         let mut silent = mix(0.0, 1.0);
         silent.voices.gains = [0.0; PARTS];
         let muted = r.next_block(480, &silent);
         // the gain ramps down across the block that mutes, then stays at zero
         assert!(muted.samples[470].abs() < 0.01);
         let muted = r.next_block(480, &silent);
-        assert!(muted.samples.iter().all(|&s| s == 0.0), "no original, every part muted: silence");
+        assert!(
+            muted.samples.iter().all(|&s| s == 0.0),
+            "no original, every part muted: silence"
+        );
     }
 
     #[test]
@@ -701,8 +836,16 @@ mod tests {
             original_gain: 0.5,
             notes_gain: 1.0,
             voices: vec![
-                PartVoice { part: Part::Bass, wave: Wave::Saw, gain: 0.5 },
-                PartVoice { part: Part::Vocal, wave: Wave::Triangle, gain: 1.0 },
+                PartVoice {
+                    part: Part::Bass,
+                    wave: Wave::Saw,
+                    gain: 0.5,
+                },
+                PartVoice {
+                    part: Part::Vocal,
+                    wave: Wave::Triangle,
+                    gain: 1.0,
+                },
             ],
         };
         let mix = Shared::new(0, 0.0, params).mix();
@@ -711,6 +854,10 @@ mod tests {
         assert_eq!(mix.voices.waves[Part::Bass as usize], Wave::Saw);
         assert_eq!(mix.voices.waves[Part::Vocal as usize], Wave::Triangle);
         assert_eq!(mix.voices.gains[Part::Bass as usize], 0.25);
-        assert_eq!(mix.voices.gains[Part::Other as usize], 0.0, "a part that wasn't listed is silent");
+        assert_eq!(
+            mix.voices.gains[Part::Other as usize],
+            0.0,
+            "a part that wasn't listed is silent"
+        );
     }
 }

@@ -49,7 +49,17 @@ impl HoldParams {
     /// minute, majmin_inv .739, the same as without the slash (docs/chord-layers.md, section 11).
     /// The chord itself is still named after 0.15 s; the slash follows 0.4 s later.
     pub fn instant() -> Self {
-        Self { window_s: 0.4, decay_s: 0.1, hold_s: 0.05, bass_hold_s: 0.4, backdate_s: 0.1, margin: 0.4, silence_hold_s: 0.25, coarse: 0, snap: false }
+        Self {
+            window_s: 0.4,
+            decay_s: 0.1,
+            hold_s: 0.05,
+            bass_hold_s: 0.4,
+            backdate_s: 0.1,
+            margin: 0.4,
+            silence_hold_s: 0.25,
+            coarse: 0,
+            snap: false,
+        }
     }
 
     /// The settled layer: the chord naming that was the only one before the layers (0.5 s window,
@@ -60,7 +70,17 @@ impl HoldParams {
     /// tetrads .588 -> .597 at the same delay (docs/chord-layers.md, section 10). Longer or
     /// decaying windows, other holds and other backdates were not better.
     pub fn settled() -> Self {
-        Self { window_s: 0.5, decay_s: 0.0, hold_s: 0.25, bass_hold_s: 0.25, backdate_s: 0.3, margin: 0.2, silence_hold_s: 0.5, coarse: 0, snap: true }
+        Self {
+            window_s: 0.5,
+            decay_s: 0.0,
+            hold_s: 0.25,
+            bass_hold_s: 0.25,
+            backdate_s: 0.3,
+            margin: 0.2,
+            silence_hold_s: 0.5,
+            coarse: 0,
+            snap: true,
+        }
     }
 
     /// Overrides from a comma-separated `key=value` list (the keys of the replay tool's
@@ -68,8 +88,13 @@ impl HoldParams {
     /// silence hold, `c` coarse level, `snap` (0/1). An empty string changes nothing.
     pub fn apply_tune(&mut self, tune: &str) -> Result<(), String> {
         for kv in tune.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            let (k, v) = kv.split_once('=').ok_or_else(|| format!("expected key=value, got {kv:?}"))?;
-            let num = || v.parse::<f32>().map_err(|_| format!("{k} needs a number, got {v:?}"));
+            let (k, v) = kv
+                .split_once('=')
+                .ok_or_else(|| format!("expected key=value, got {kv:?}"))?;
+            let num = || {
+                v.parse::<f32>()
+                    .map_err(|_| format!("{k} needs a number, got {v:?}"))
+            };
             match k {
                 "w" => self.window_s = num()?,
                 "d" => self.decay_s = num()?,
@@ -138,8 +163,19 @@ impl HoldLayer {
         }
     }
 
-    fn commit(&mut self, chord: ChordAt, raw: Option<(i32, &'static str)>, start: f32, ctx: &StepCtx, out: &mut Vec<LayerChange>) {
-        let start = if self.params.snap { snap_to_beat_grid(start, ctx.beat_grid) } else { start };
+    fn commit(
+        &mut self,
+        chord: ChordAt,
+        raw: Option<(i32, &'static str)>,
+        start: f32,
+        ctx: &StepCtx,
+        out: &mut Vec<LayerChange>,
+    ) {
+        let start = if self.params.snap {
+            snap_to_beat_grid(start, ctx.beat_grid)
+        } else {
+            start
+        };
         let t = start.max(self.last_change_t).max(self.decided_s);
         out.push(LayerChange { t, chord });
         self.displayed = Some(chord);
@@ -152,7 +188,16 @@ impl HoldLayer {
 impl ChordLayer for HoldLayer {
     fn step(&mut self, t: f32, ctx: &StepCtx, out: &mut Vec<LayerChange>) -> f32 {
         let p = self.params;
-        let named = evaluate_chord(ctx.notes, t, ctx.key.as_ref(), p.window_s, p.decay_s, p.silence_hold_s, self.displayed_raw, p.margin);
+        let named = evaluate_chord(
+            ctx.notes,
+            t,
+            ctx.key.as_ref(),
+            p.window_s,
+            p.decay_s,
+            p.silence_hold_s,
+            self.displayed_raw,
+            p.margin,
+        );
         let raw = match named {
             Some(ChordAt::Match(m)) => Some((m.root_pc, m.quality)),
             _ => None,
@@ -191,7 +236,11 @@ impl ChordLayer for HoldLayer {
                             (cur, candidate),
                             (ChordAt::Match(a), ChordAt::Match(b)) if a.root_pc == b.root_pc && a.quality == b.quality
                         );
-                        let hold = if bass_only { p.bass_hold_s.max(p.hold_s) } else { p.hold_s };
+                        let hold = if bass_only {
+                            p.bass_hold_s.max(p.hold_s)
+                        } else {
+                            p.hold_s
+                        };
                         if t - since >= hold {
                             self.commit(candidate, raw, since - p.backdate_s, ctx, out);
                         }
@@ -206,7 +255,8 @@ impl ChordLayer for HoldLayer {
         let earliest = if self.displayed.is_none() {
             t
         } else {
-            (self.pending.map_or(t, |(_, since)| since.min(t)) - p.backdate_s).max(self.last_change_t)
+            (self.pending.map_or(t, |(_, since)| since.min(t)) - p.backdate_s)
+                .max(self.last_change_t)
         };
         self.decided_s = self.decided_s.max(earliest);
         self.decided_s
@@ -228,12 +278,17 @@ mod tests {
 
     /// A block chord of `pitches` over `[start, end)`, one note per pitch.
     fn chord(start: f32, end: f32, pitches: &[i32]) -> Vec<NoteEvent> {
-        pitches.iter().map(|&p| (start, end, p, 0.8, Part::Other)).collect()
+        pitches
+            .iter()
+            .map(|&p| (start, end, p, 0.8, Part::Other))
+            .collect()
     }
 
     fn name(c: ChordAt) -> (i32, &'static str) {
         match c {
-            ChordAt::Match(ChordMatch { root_pc, quality, .. }) => (root_pc, quality),
+            ChordAt::Match(ChordMatch {
+                root_pc, quality, ..
+            }) => (root_pc, quality),
             ChordAt::Silence => (-1, "silence"),
         }
     }
@@ -257,13 +312,33 @@ mod tests {
             if t > end_s {
                 break;
             }
-            let visible: Vec<NoteEvent> = notes.iter().filter(|n| n.0 <= t).map(|&(s, e, p, v, part)| (s, e.min(t), p, v, part)).collect();
+            let visible: Vec<NoteEvent> = notes
+                .iter()
+                .filter(|n| n.0 <= t)
+                .map(|&(s, e, p, v, part)| (s, e.min(t), p, v, part))
+                .collect();
             let mut out = Vec::new();
-            let new_decided = layer.step(t, &StepCtx { notes: &visible, key: None, beat_grid: None }, &mut out);
+            let new_decided = layer.step(
+                t,
+                &StepCtx {
+                    notes: &visible,
+                    key: None,
+                    beat_grid: None,
+                },
+                &mut out,
+            );
             assert!(new_decided >= decided, "decided_s went back at {t}");
             for c in &out {
-                assert!(c.t >= decided - 1e-4, "change at {} precedes the previous decided_s {decided}", c.t);
-                assert!(c.t <= new_decided + 1e-4, "change at {} is past decided_s {new_decided}", c.t);
+                assert!(
+                    c.t >= decided - 1e-4,
+                    "change at {} precedes the previous decided_s {decided}",
+                    c.t
+                );
+                assert!(
+                    c.t <= new_decided + 1e-4,
+                    "change at {} is past decided_s {new_decided}",
+                    c.t
+                );
                 announced.push((t, *c));
             }
             decided = new_decided;
@@ -279,7 +354,11 @@ mod tests {
         assert_eq!(named, vec![(0, "maj"), (9, "m"), (5, "maj")], "{named:?}");
         // each is announced well within 0.5 s of the notes starting
         for ((announced_at, c), onset) in changes.iter().zip([0.0f32, 2.0, 4.0]) {
-            assert!(*announced_at - onset < 0.5, "{} announced at {announced_at}", name(c.chord).1);
+            assert!(
+                *announced_at - onset < 0.5,
+                "{} announced at {announced_at}",
+                name(c.chord).1
+            );
         }
     }
 
@@ -287,7 +366,8 @@ mod tests {
     fn the_settled_layer_is_slower_but_names_the_same_chords() {
         let instant = run(HoldParams::instant());
         let settled = run(HoldParams::settled());
-        let names = |v: &[(f32, LayerChange)]| v.iter().map(|(_, c)| name(c.chord)).collect::<Vec<_>>();
+        let names =
+            |v: &[(f32, LayerChange)]| v.iter().map(|(_, c)| name(c.chord)).collect::<Vec<_>>();
         assert_eq!(names(&instant), names(&settled));
         // (the first chord is named at the first checkpoint by both: nothing is shown before it)
         for ((at_instant, _), (at_settled, _)) in instant.iter().zip(&settled).skip(1) {
@@ -299,7 +379,11 @@ mod tests {
     fn a_change_is_never_announced_before_it_can_be_seen() {
         for params in [HoldParams::instant(), HoldParams::settled()] {
             for (announced_at, c) in run(params) {
-                assert!(c.t <= announced_at, "change at {} announced early at {announced_at}", c.t);
+                assert!(
+                    c.t <= announced_at,
+                    "change at {} announced early at {announced_at}",
+                    c.t
+                );
             }
         }
     }
@@ -311,12 +395,31 @@ mod tests {
         notes.push((0.0, 2.0, 36, 0.8, Part::Bass));
         notes.push((2.0, 4.0, 40, 0.8, Part::Bass));
         let slash_announced = |bass_hold_s: f32| {
-            let changes = run_notes(HoldParams { bass_hold_s, ..HoldParams::instant() }, &notes, 4.0);
-            changes.iter().find(|(_, c)| matches!(c.chord, ChordAt::Match(m) if m.bass_pc == Some(4))).map(|&(at, _)| at)
+            let changes = run_notes(
+                HoldParams {
+                    bass_hold_s,
+                    ..HoldParams::instant()
+                },
+                &notes,
+                4.0,
+            );
+            changes
+                .iter()
+                .find(|(_, c)| matches!(c.chord, ChordAt::Match(m) if m.bass_pc == Some(4)))
+                .map(|&(at, _)| at)
         };
-        let (quick, steady) = (slash_announced(0.05).expect("C/E is named"), slash_announced(0.4).expect("C/E is named"));
-        assert!(steady - quick > 0.25, "a 0.4 s bass hold announces C/E at {steady}, a 0.05 s one at {quick}");
-        assert!(steady < 2.0 + 0.4 + 0.5, "but still within about a second of the bass note: {steady}");
+        let (quick, steady) = (
+            slash_announced(0.05).expect("C/E is named"),
+            slash_announced(0.4).expect("C/E is named"),
+        );
+        assert!(
+            steady - quick > 0.25,
+            "a 0.4 s bass hold announces C/E at {steady}, a 0.05 s one at {quick}"
+        );
+        assert!(
+            steady < 2.0 + 0.4 + 0.5,
+            "but still within about a second of the bass note: {steady}"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { PARTS, saveVolumes, settings, WAVES, type NotePart, type Wave } from "../settings.svelte";
-  import { pushPlaybackParams } from "../transport.svelte";
   import { t } from "../i18n.svelte";
+  import { type NotePart, PARTS, saveVolumes, settings, WAVES, type Wave } from "../settings.svelte";
+  import { pushPlaybackParams } from "../transport.svelte";
 
   // A speaker button opening a small panel with the playback mix: the recorded audio, the notes'
   // overall volume, and each part's wave shape and volume, each with a mute

@@ -5,8 +5,8 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
-use std::time::Duration;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -18,8 +18,8 @@ use crate::harmonica_decode::ConfirmedNote;
 use crate::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, ModelSize, Part};
 use crate::harmonica_stream::NoteTranscriber;
 use crate::key_estimator::{KeyEstimate, KeyEstimator};
-use crate::spelling::{note_name, Accidental};
 use crate::live_capture;
+use crate::spelling::{note_name, Accidental};
 
 pub use crate::chord_layers::ChordAt;
 
@@ -57,7 +57,12 @@ pub struct NoteModelInfo {
 
 impl NoteModelInfo {
     pub fn of(model: &HarmonicaModel, future_frames: usize) -> Self {
-        Self { size: model.size(), device: model.device(), future_frames, over_budget: model.may_exceed_budget() }
+        Self {
+            size: model.size(),
+            device: model.device(),
+            future_frames,
+            over_budget: model.may_exceed_budget(),
+        }
     }
 }
 
@@ -125,19 +130,34 @@ pub enum PipelineEvent {
     ///
     /// `chord_vocabulary` is the chord table the tensions are computed from on the frontend (see
     /// `ActiveNotes`), so that table lives in one place, `chord_templates.rs`.
-    Started { total_latency_s: f32, note_model: NoteModelInfo, chord_vocabulary: ChordVocabulary },
+    Started {
+        total_latency_s: f32,
+        note_model: NoteModelInfo,
+        chord_vocabulary: ChordVocabulary,
+    },
     /// A note whose onset is decided but which is still sounding (as far as
     /// the decoder knows); `NoteConfirmed` follows with the same `start_s`,
     /// `pitch_midi` and `part` once it ends. Lets the piano roll draw the note
     /// from its onset, growing, instead of only once it is over.
-    NoteStarted { start_s: f32, pitch_midi: i32, velocity: f32, part: Part },
+    NoteStarted {
+        start_s: f32,
+        pitch_midi: i32,
+        velocity: f32,
+        part: Part,
+    },
     /// `velocity` is the onset probability at the note's onset frame (see
     /// `harmonica_decode::ConfirmedNote::velocity`) -- a frontend can use it
     /// to shade/intensify the note by how strongly it sounded, correctly
     /// distinguishing notes within the same chord.
     ///
     /// `part` is the model's own output part (vocal/bass/other).
-    NoteConfirmed { start_s: f32, end_s: f32, pitch_midi: i32, velocity: f32, part: Part },
+    NoteConfirmed {
+        start_s: f32,
+        end_s: f32,
+        pitch_midi: i32,
+        velocity: f32,
+        part: Part,
+    },
     /// What one chord layer newly decided (see `chord_layers` and docs/chord-layers.md): the chords
     /// it says begin at the given times, and `decided_s`, the time up to which it has decided
     /// everything (all `changes` are at or before it, and nothing before it is ever revised).
@@ -145,7 +165,11 @@ pub enum PipelineEvent {
     /// one; the frontend shows each layer's decisions for the span only it has decided. A change
     /// with the same `t` as the layer's previous one replaces it (the chord respelled after the
     /// sharp/flat setting changed).
-    ChordLayer { layer: ChordLayerId, changes: Vec<LayerChord>, decided_s: f32 },
+    ChordLayer {
+        layer: ChordLayerId,
+        changes: Vec<LayerChord>,
+        decided_s: f32,
+    },
     /// The pitch classes sounding (every part, the sung melody included) from each `t` on, sent
     /// when the set changes. The tensions over the shown chord are read from this: the notes
     /// outside the chord's own template, in the fixed canonical order (b9, 9, #9, 11, #11, b13,
@@ -158,7 +182,11 @@ pub enum PipelineEvent {
     /// a single held chord's duration, not just at the next chord
     /// boundary. `t` is the checkpoint time of the estimate (audio time,
     /// like every other timestamp here).
-    KeyChange { t: f32, key_name: String, tonic_pc: i32 },
+    KeyChange {
+        t: f32,
+        key_name: String,
+        tonic_pc: i32,
+    },
     /// Every beat line at or after `from_s`, replacing the previous `BeatLines` over that
     /// range (lines before `from_s` are unchanged and already final). Three layers of the
     /// same beats at increasing delay and confidence (see beat_tracker.rs):
@@ -183,11 +211,19 @@ const BEAT_LINES_WINDOW_S: f64 = 30.0;
 fn beat_lines(beats: &[f64], downbeats: &[f64]) -> Vec<BeatLine> {
     // downbeats are always one of the beats' exact values (committed: the DBN's; provisional:
     // snapped to the nearest beat), except a provisional downbeat with no beat at all yet
-    let mut out: Vec<BeatLine> =
-        beats.iter().map(|&t| BeatLine { t: t as f32, bar: downbeats.contains(&t) }).collect();
+    let mut out: Vec<BeatLine> = beats
+        .iter()
+        .map(|&t| BeatLine {
+            t: t as f32,
+            bar: downbeats.contains(&t),
+        })
+        .collect();
     for &d in downbeats {
         if !beats.contains(&d) {
-            out.push(BeatLine { t: d as f32, bar: true });
+            out.push(BeatLine {
+                t: d as f32,
+                bar: true,
+            });
         }
     }
     out.sort_by(|a, b| a.t.total_cmp(&b.t));
@@ -225,13 +261,30 @@ pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(
             from_s: from as f32,
             committed: beat_lines(&l.committed_beats, &l.committed_downbeats),
             provisional: beat_lines(&l.provisional_beats, &l.provisional_downbeats),
-            predicted: l.predicted.iter().map(|p| BeatLine { t: p.time as f32, bar: p.is_bar }).collect(),
+            predicted: l
+                .predicted
+                .iter()
+                .map(|p| BeatLine {
+                    t: p.time as f32,
+                    bar: p.is_bar,
+                })
+                .collect(),
         };
         // from_s alone moves on every chunk; only send when a line changed
         let changed = match (&last, &event) {
             (
-                Some(PipelineEvent::BeatLines { committed: c0, provisional: p0, predicted: q0, .. }),
-                PipelineEvent::BeatLines { committed: c1, provisional: p1, predicted: q1, .. },
+                Some(PipelineEvent::BeatLines {
+                    committed: c0,
+                    provisional: p0,
+                    predicted: q0,
+                    ..
+                }),
+                PipelineEvent::BeatLines {
+                    committed: c1,
+                    provisional: p1,
+                    predicted: q1,
+                    ..
+                },
             ) => c0 != c1 || p0 != p1 || q0 != q1,
             _ => true,
         };
@@ -313,9 +366,20 @@ pub fn run_live_session(
         let beat_grid_ref = &beat_grid;
         scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref, beat_grid_ref));
         let mut emit = |event| (on_event.lock().unwrap())(event);
-        let result = run_note_pipeline(config, hop_seconds, duration_s, &stop, &key_mode, &accidental, &beat_grid, tap, |chunk| {
-            let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
-        }, &mut emit);
+        let result = run_note_pipeline(
+            config,
+            hop_seconds,
+            duration_s,
+            &stop,
+            &key_mode,
+            &accidental,
+            &beat_grid,
+            tap,
+            |chunk| {
+                let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
+            },
+            &mut emit,
+        );
         drop(beat_tx); // lets the beat thread flush and exit; the scope joins it
         result
     })
@@ -339,13 +403,26 @@ fn run_note_pipeline(
     let mut key_estimator = KeyEstimator::new();
     let mut chords = ChordEngine::standard();
     // What the user can change while the session runs, as it is right now.
-    let settings_now = || (*key_mode.lock().unwrap(), *accidental.lock().unwrap(), *beat_grid.lock().unwrap());
+    let settings_now = || {
+        (
+            *key_mode.lock().unwrap(),
+            *accidental.lock().unwrap(),
+            *beat_grid.lock().unwrap(),
+        )
+    };
     let mut elapsed = 0.0f32;
 
-    let (_stream, rx) =
-        live_capture::spawn_loopback_capture(hop_seconds, [harmonica_model::SAMPLE_RATE, beat_model::SAMPLE_RATE], tap)?;
+    let (_stream, rx) = live_capture::spawn_loopback_capture(
+        hop_seconds,
+        [harmonica_model::SAMPLE_RATE, beat_model::SAMPLE_RATE],
+        tap,
+    )?;
     let total_latency_s = transcriber.max_note_delay_s() + hop_seconds + LATENCY_SAFETY_MARGIN_S;
-    on_event(PipelineEvent::Started { total_latency_s, note_model, chord_vocabulary: chord_templates::vocabulary() });
+    on_event(PipelineEvent::Started {
+        total_latency_s,
+        note_model,
+        chord_vocabulary: chord_templates::vocabulary(),
+    });
     loop {
         // Loopback delivers no packets while nothing is playing, so the stop flag is polled
         // while waiting too -- otherwise stopping in silence would hang until sound resumed.
@@ -368,10 +445,23 @@ fn run_note_pipeline(
             let covered = transcriber.covered_seconds();
             emit_confirmed_notes(notes, &mut key_estimator, &mut on_event);
             for n in transcriber.take_started_notes() {
-                on_event(PipelineEvent::NoteStarted { start_s: n.start_s, pitch_midi: n.pitch_midi, velocity: n.velocity, part: n.part });
+                on_event(PipelineEvent::NoteStarted {
+                    start_s: n.start_s,
+                    pitch_midi: n.pitch_midi,
+                    velocity: n.velocity,
+                    part: n.part,
+                });
             }
             let (current_key_mode, current_accidental, current_beat_grid) = settings_now();
-            chords.advance(&note_events, covered, &mut key_estimator, &current_key_mode, current_accidental, current_beat_grid, &mut on_event);
+            chords.advance(
+                &note_events,
+                covered,
+                &mut key_estimator,
+                &current_key_mode,
+                current_accidental,
+                current_beat_grid,
+                &mut on_event,
+            );
         }
         if let Some(d) = duration_s {
             if elapsed >= d {
@@ -401,7 +491,11 @@ fn run_note_pipeline(
         current_beat_grid,
         &mut on_event,
     );
-    chords.finish(transcriber.covered_seconds(), current_accidental, &mut on_event);
+    chords.finish(
+        transcriber.covered_seconds(),
+        current_accidental,
+        &mut on_event,
+    );
 
     Ok(())
 }

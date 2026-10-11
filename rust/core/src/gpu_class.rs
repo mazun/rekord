@@ -31,20 +31,37 @@ fn classify(dedicated_vram: u64, name: String) -> GpuClass {
 #[cfg(windows)]
 pub fn probe() -> GpuClass {
     use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory6, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+        CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory6, DXGI_ADAPTER_FLAG_SOFTWARE,
+        DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
     };
 
-    let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory6>() }) else { return GpuClass::None };
+    let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory6>() }) else {
+        return GpuClass::None;
+    };
     for index in 0.. {
-        let Ok(adapter) = (unsafe { factory.EnumAdapterByGpuPreference::<IDXGIAdapter1>(index, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE) }) else {
+        let Ok(adapter) = (unsafe {
+            factory.EnumAdapterByGpuPreference::<IDXGIAdapter1>(
+                index,
+                DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+            )
+        }) else {
             break;
         };
-        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else { continue };
+        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else {
+            continue;
+        };
         if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
             continue;
         }
-        let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
-        return classify(desc.DedicatedVideoMemory as u64, String::from_utf16_lossy(&desc.Description[..len]));
+        let len = desc
+            .Description
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(desc.Description.len());
+        return classify(
+            desc.DedicatedVideoMemory as u64,
+            String::from_utf16_lossy(&desc.Description[..len]),
+        );
     }
     GpuClass::None
 }
@@ -60,8 +77,17 @@ mod tests {
 
     #[test]
     fn gpu_class_splits_on_dedicated_memory() {
-        assert_eq!(classify(16 << 30, "dGPU".into()), GpuClass::Discrete("dGPU".into()));
-        assert_eq!(classify(512 << 20, "iGPU".into()), GpuClass::Integrated("iGPU".into()));
-        assert_eq!(classify(1 << 30, "edge".into()), GpuClass::Discrete("edge".into()));
+        assert_eq!(
+            classify(16 << 30, "dGPU".into()),
+            GpuClass::Discrete("dGPU".into())
+        );
+        assert_eq!(
+            classify(512 << 20, "iGPU".into()),
+            GpuClass::Integrated("iGPU".into())
+        );
+        assert_eq!(
+            classify(1 << 30, "edge".into()),
+            GpuClass::Discrete("edge".into())
+        );
     }
 }

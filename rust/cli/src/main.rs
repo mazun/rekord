@@ -50,7 +50,13 @@ struct Printer {
 
 impl Printer {
     fn new(accidental: Accidental, layers: Vec<ChordLayerId>) -> Self {
-        Self { accidental, layers, chord: None, pcs: 0, tensions: Vec::new() }
+        Self {
+            accidental,
+            layers,
+            chord: None,
+            pcs: 0,
+            tensions: Vec::new(),
+        }
     }
 
     fn update_tensions(&mut self) {
@@ -76,12 +82,26 @@ impl Printer {
                 if !self.layers.contains(&layer) {
                     return;
                 }
-                let tag = if self.layers.len() > 1 { format!("  [{layer:?}]") } else { String::new() };
+                let tag = if self.layers.len() > 1 {
+                    format!("  [{layer:?}]")
+                } else {
+                    String::new()
+                };
                 for c in changes {
-                    let suffix = c.roman_numeral.map(|r| format!("  ({r})")).unwrap_or_default();
+                    let suffix = c
+                        .roman_numeral
+                        .map(|r| format!("  ({r})"))
+                        .unwrap_or_default();
                     println!("  t={:6.2}s  chord: {}{suffix}{tag}", c.t, c.label);
                     if layer == self.layers[0] {
-                        self.chord = c.root_pc.zip(c.quality).map(|(root_pc, quality)| ChordMatch { root_pc, quality, bass_pc: None });
+                        self.chord =
+                            c.root_pc
+                                .zip(c.quality)
+                                .map(|(root_pc, quality)| ChordMatch {
+                                    root_pc,
+                                    quality,
+                                    bass_pc: None,
+                                });
                     }
                 }
                 self.update_tensions();
@@ -99,7 +119,11 @@ impl Printer {
 
 fn print_event(event: PipelineEvent, accidental: Accidental) {
     match event {
-        PipelineEvent::Started { total_latency_s, note_model, .. } => {
+        PipelineEvent::Started {
+            total_latency_s,
+            note_model,
+            ..
+        } => {
             println!(
                 "(model: {} on {}, look-ahead {} frames; confirm latency: {total_latency_s:.2}s){}\n",
                 note_model.size.label(),
@@ -108,7 +132,13 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
                 over_budget_note(note_model),
             );
         }
-        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity, part } => {
+        PipelineEvent::NoteConfirmed {
+            start_s,
+            end_s,
+            pitch_midi,
+            velocity,
+            part,
+        } => {
             let role = match part {
                 Part::Vocal => " [vocal]",
                 Part::Bass => " [bass part]",
@@ -189,7 +219,9 @@ fn run_file(
         None,
         |e| printer.print(e),
     );
-    chords.finish(transcriber.covered_seconds(), accidental, |e| printer.print(e));
+    chords.finish(transcriber.covered_seconds(), accidental, |e| {
+        printer.print(e)
+    });
 
     Ok(())
 }
@@ -211,16 +243,29 @@ fn run_live(
     let accidental_setting = std::sync::Arc::new(std::sync::Mutex::new(accidental));
     let mut printed_until = f32::NEG_INFINITY;
     let mut printer = Printer::new(accidental, chord_layers);
-    pipeline::run_live_session(config, hop_seconds, duration_s, never_stop, key_mode, accidental_setting, None, move |event| {
-        if let PipelineEvent::BeatLines { committed, .. } = &event {
-            let from = printed_until;
-            for line in committed.iter().filter(|l| l.t > from) {
-                println!("  {} {:6.2}s", if line.bar { "|| bar " } else { "|  beat" }, line.t);
-                printed_until = line.t;
+    pipeline::run_live_session(
+        config,
+        hop_seconds,
+        duration_s,
+        never_stop,
+        key_mode,
+        accidental_setting,
+        None,
+        move |event| {
+            if let PipelineEvent::BeatLines { committed, .. } = &event {
+                let from = printed_until;
+                for line in committed.iter().filter(|l| l.t > from) {
+                    println!(
+                        "  {} {:6.2}s",
+                        if line.bar { "|| bar " } else { "|  beat" },
+                        line.t
+                    );
+                    printed_until = line.t;
+                }
             }
-        }
-        printer.print(event)
-    })
+            printer.print(event)
+        },
+    )
 }
 
 fn main() -> Result<()> {
@@ -261,18 +306,28 @@ fn main() -> Result<()> {
             }
             "--accidental" => {
                 i += 1;
-                let value = args.get(i).context("--accidental expects auto, sharp or flat")?;
+                let value = args
+                    .get(i)
+                    .context("--accidental expects auto, sharp or flat")?;
                 accidental = value.parse()?;
             }
             "--chord-layer" => {
                 i += 1;
-                let value = args.get(i).context("--chord-layer expects instant, settled, confirmed or all")?;
+                let value = args
+                    .get(i)
+                    .context("--chord-layer expects instant, settled, confirmed or all")?;
                 chord_layers = match value.as_str() {
                     "instant" => vec![ChordLayerId::Instant],
                     "settled" => vec![ChordLayerId::Settled],
                     "confirmed" => vec![ChordLayerId::Confirmed],
-                    "all" => vec![ChordLayerId::Settled, ChordLayerId::Instant, ChordLayerId::Confirmed],
-                    other => bail!("--chord-layer expects instant, settled, confirmed or all, got {other}"),
+                    "all" => vec![
+                        ChordLayerId::Settled,
+                        ChordLayerId::Instant,
+                        ChordLayerId::Confirmed,
+                    ],
+                    other => bail!(
+                        "--chord-layer expects instant, settled, confirmed or all, got {other}"
+                    ),
                 };
             }
             "--cpu" => allow_directml = false,
@@ -292,12 +347,24 @@ fn main() -> Result<()> {
     }
 
     if live {
-        let config = NoteModelConfig { choice, future_frames, allow_directml };
+        let config = NoteModelConfig {
+            choice,
+            future_frames,
+            allow_directml,
+        };
         run_live(config, hop, duration, accidental, chord_layers)
     } else {
         let audio_file = audio_file.context(
             "usage: rekord_engine <audio_file> [--size auto|s|m|l] [--future 8|16] [--accidental auto|sharp|flat] [--chord-layer instant|settled|confirmed|all] [--cpu] [--hop 0.064]",
         )?;
-        run_file(&audio_file, choice, future_frames, allow_directml, hop, accidental, chord_layers)
+        run_file(
+            &audio_file,
+            choice,
+            future_frames,
+            allow_directml,
+            hop,
+            accidental,
+            chord_layers,
+        )
     }
 }

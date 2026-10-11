@@ -1,5 +1,5 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
-import { planChordUpdate, type LaneSegment, type LaneUpdate } from "./chordlane";
+import { type LaneSegment, type LaneUpdate, planChordUpdate } from "./chordlane";
 import { HeldClock, LiveClock, PlaybackClock, type RollClock } from "./clock";
 import { HISTORY_S } from "./recording";
 import type { NotePart } from "./settings.svelte";
@@ -307,7 +307,14 @@ export class PianoRoll {
   /** The part of the note a drag out of the selection was pressed on (null: pressed on empty roll). */
   private dragOutPart: NotePart | null = null;
   // The press in progress, until it moves too far or is released; released in time it is a click.
-  private press: { x: number; clientX: number; clientY: number; ms: number; tS: number; moved: boolean } | null = null;
+  private press: {
+    x: number;
+    clientX: number;
+    clientY: number;
+    ms: number;
+    tS: number;
+    moved: boolean;
+  } | null = null;
   private scrollbarLayer = new Container();
   private scrollbarTrack = new Graphics();
   private scrollbarThumb = new Graphics();
@@ -336,7 +343,9 @@ export class PianoRoll {
   private removeKeyListeners: (() => void) | null = null;
   private selectionLayer = new Container();
   private selectionFill = new Graphics().rect(0, 0, 1, 1).fill({ color: SELECTION_COLOR });
-  private selectionEdges = [0, 1].map(() => new Graphics().rect(0, 0, 1, 1).fill({ color: SELECTION_COLOR }));
+  private selectionEdges = [0, 1].map(() =>
+    new Graphics().rect(0, 0, 1, 1).fill({ color: SELECTION_COLOR }),
+  );
   private cursorLayer = new Container();
   private cursorLine = new Graphics().rect(0, 0, 1, 1).fill({ color: CURSOR_COLOR });
   /** The user clicked the roll at audio time `t` (stopped or playing, not while capturing). */
@@ -385,7 +394,9 @@ export class PianoRoll {
     app.stage.addChild(roll.markerLayer);
     roll.markerLayer.addChild(roll.markerLine, roll.markerFlag);
     roll.markerLine.tint = MARKER_COLOR;
-    roll.markerFlag.poly([-MARKER_FLAG_SIZE, 0, MARKER_FLAG_SIZE, 0, 0, MARKER_FLAG_SIZE * 1.2]).fill({ color: MARKER_COLOR });
+    roll.markerFlag
+      .poly([-MARKER_FLAG_SIZE, 0, MARKER_FLAG_SIZE, 0, 0, MARKER_FLAG_SIZE * 1.2])
+      .fill({ color: MARKER_COLOR });
     roll.markerLayer.visible = false;
     app.stage.addChild(roll.cursorLayer);
     roll.cursorLayer.addChild(roll.cursorLine);
@@ -470,10 +481,22 @@ export class PianoRoll {
       canvas.setPointerCapture(e.pointerId);
       this.press =
         e.button === 0
-          ? { x, clientX: e.clientX, clientY: e.clientY, ms: performance.now(), tS: this.timeAtX(x), moved: false }
+          ? {
+              x,
+              clientX: e.clientX,
+              clientY: e.clientY,
+              ms: performance.now(),
+              tS: this.timeAtX(x),
+              moved: false,
+            }
           : null;
       if (e.button !== 0) return;
-      if (this.held && this.scrollbarLayer.visible && y >= this.app.screen.height - SCROLLBAR_HIT_HEIGHT && x < this.playheadX()) {
+      if (
+        this.held &&
+        this.scrollbarLayer.visible &&
+        y >= this.app.screen.height - SCROLLBAR_HIT_HEIGHT &&
+        x < this.playheadX()
+      ) {
         // Clicking the track outside the thumb centers the thumb there first, then drags it.
         if (x < this.thumbX || x > this.thumbX + this.thumbW) this.setThumbX(x - this.thumbW / 2);
         this.dragMode = "thumb";
@@ -506,9 +529,18 @@ export class PianoRoll {
       if (this.dragMode === "none" && !this.spaceHeld) {
         const x = e.clientX - canvas.getBoundingClientRect().left;
         const onRoll = x < this.playheadX();
-        canvas.style.cursor = onRoll && this.edgeAtX(x) !== null ? "ew-resize" : onRoll && this.insideSelection(this.timeAtX(x)) ? "grab" : "";
+        canvas.style.cursor =
+          onRoll && this.edgeAtX(x) !== null
+            ? "ew-resize"
+            : onRoll && this.insideSelection(this.timeAtX(x))
+              ? "grab"
+              : "";
       }
-      if (this.press && !this.press.moved && Math.hypot(e.clientX - this.press.clientX, e.clientY - this.press.clientY) > CLICK_SLOP_PX) {
+      if (
+        this.press &&
+        !this.press.moved &&
+        Math.hypot(e.clientX - this.press.clientX, e.clientY - this.press.clientY) > CLICK_SLOP_PX
+      ) {
         this.press.moved = true;
       }
       if (this.dragMode === "dragout") {
@@ -546,7 +578,8 @@ export class PianoRoll {
         return;
       }
       if (mode === "select" && this.edgeGrab) return; // a click on an edge changes nothing
-      const isClick = press && !press.moved && mode !== "thumb" && performance.now() - press.ms < CLICK_MAX_MS;
+      const isClick =
+        press && !press.moved && mode !== "thumb" && performance.now() - press.ms < CLICK_MAX_MS;
       // Not on the keyboard: its keys aren't positions.
       if (isClick && press.x < this.playheadX()) {
         // A click inside the selection only moves the position (to play or look at it).
@@ -564,7 +597,12 @@ export class PianoRoll {
       const x = e.clientX - canvas.getBoundingClientRect().left;
       if (this.clock.kind === "live" || !range || x >= this.playheadX()) return;
       const t = this.timeAtX(x);
-      if (t >= range.startS && t <= range.endS && this.onSelectionContextMenu?.(e.clientX, e.clientY)) e.preventDefault();
+      if (
+        t >= range.startS &&
+        t <= range.endS &&
+        this.onSelectionContextMenu?.(e.clientX, e.clientY)
+      )
+        e.preventDefault();
     });
   }
 
@@ -576,8 +614,11 @@ export class PianoRoll {
     const right = this.playheadX();
     const over = x < 0 ? x : x > right ? x - right : 0; // negative: past the left edge
     if (over === 0) return;
-    const pxPerS = Math.min(AUTOSCROLL_MAX_PX_PER_S, AUTOSCROLL_BASE_PX_PER_S + Math.abs(over) * AUTOSCROLL_PX_PER_S_PER_PX);
-    this.scrollBy(Math.sign(-over) * (pxPerS * dtS) / this.pixelsPerSecond);
+    const pxPerS = Math.min(
+      AUTOSCROLL_MAX_PX_PER_S,
+      AUTOSCROLL_BASE_PX_PER_S + Math.abs(over) * AUTOSCROLL_PX_PER_S_PER_PX,
+    );
+    this.scrollBy((Math.sign(-over) * (pxPerS * dtS)) / this.pixelsPerSecond);
   }
 
   /** The selection between the anchor and the pointer's current time (it follows the pointer while
@@ -585,7 +626,10 @@ export class PianoRoll {
   private updateSelection(): void {
     const x = Math.min(this.playheadX(), Math.max(0, this.selectPointerX));
     const t = this.snapTime(this.timeAtX(x));
-    this.setSelection({ startS: Math.min(this.selectAnchorS, t), endS: Math.max(this.selectAnchorS, t) });
+    this.setSelection({
+      startS: Math.min(this.selectAnchorS, t),
+      endS: Math.max(this.selectAnchorS, t),
+    });
   }
 
   /** `t` snapped to the nearest eighth note: a beat line or the middle between two neighbouring ones.
@@ -593,7 +637,10 @@ export class PianoRoll {
    * or across a gap in them. */
   private snapTime(t: number): number {
     if (this.freeSelect) return t;
-    this.snapBeats ??= this.beatLines.filter((b) => !b.dying).map((b) => b.targetT).sort((a, b) => a - b);
+    this.snapBeats ??= this.beatLines
+      .filter((b) => !b.dying)
+      .map((b) => b.targetT)
+      .sort((a, b) => a - b);
     return snapToBeats(this.snapBeats, t);
   }
 
@@ -611,7 +658,13 @@ export class PianoRoll {
       const n = this.notes[i];
       if (!this.partLayers[n.part].visible) continue;
       const w = Math.max(2, (n.end_s - n.start_s) * this.pixelsPerSecond);
-      if (x >= n.graphic.x - pad && x <= n.graphic.x + w + pad && y >= n.graphic.y - pad && y <= n.graphic.y + noteHeightPx + pad) return n;
+      if (
+        x >= n.graphic.x - pad &&
+        x <= n.graphic.x + w + pad &&
+        y >= n.graphic.y - pad &&
+        y <= n.graphic.y + noteHeightPx + pad
+      )
+        return n;
     }
     return null;
   }
@@ -626,8 +679,11 @@ export class PianoRoll {
     return dStart <= dEnd ? "start" : "end";
   }
 
-  private setSelection(range:{ startS: number; endS: number } | null): void {
-    const same = range === null ? this.selection === null : this.selection?.startS === range.startS && this.selection.endS === range.endS;
+  private setSelection(range: { startS: number; endS: number } | null): void {
+    const same =
+      range === null
+        ? this.selection === null
+        : this.selection?.startS === range.startS && this.selection.endS === range.endS;
     if (same) return;
     this.selection = range;
     this.onSelectionChange?.(range);
@@ -711,11 +767,17 @@ export class PianoRoll {
     }
     this.guides.stroke({ width: 1, color: GUIDE_COLOR });
 
-    this.scrollbarTrack.clear().rect(0, 0, noteAreaWidth, SCROLLBAR_HEIGHT).fill({ color: SCROLLBAR_TRACK_COLOR, alpha: 0.85 });
+    this.scrollbarTrack
+      .clear()
+      .rect(0, 0, noteAreaWidth, SCROLLBAR_HEIGHT)
+      .fill({ color: SCROLLBAR_TRACK_COLOR, alpha: 0.85 });
     this.scrollbarLayer.y = height - SCROLLBAR_HEIGHT - SCROLLBAR_BOTTOM_PADDING;
     this.drawnThumb.w = -1; // thumb height follows the layer; redraw it next tick
 
-    this.keyboardBacking.clear().rect(0, 0, KEYBOARD_WIDTH, height).fill({ color: KEYBOARD_BACKING_COLOR });
+    this.keyboardBacking
+      .clear()
+      .rect(0, 0, KEYBOARD_WIDTH, height)
+      .fill({ color: KEYBOARD_BACKING_COLOR });
     this.keyboardBacking.x = noteAreaWidth;
     this.keyboardBacking.y = 0;
 
@@ -781,7 +843,9 @@ export class PianoRoll {
     const h = bottom - top;
     const g = key.graphic.clear();
     if (!key.isBlack) {
-      g.rect(0, 0, KEYBOARD_WIDTH, h).fill({ color: key.active ? WHITE_KEY_ACTIVE_COLOR : WHITE_KEY_COLOR });
+      g.rect(0, 0, KEYBOARD_WIDTH, h).fill({
+        color: key.active ? WHITE_KEY_ACTIVE_COLOR : WHITE_KEY_COLOR,
+      });
       // A line only toward a neighboring white key (E|F, B|C); next to a black key the white key
       // continues and the line is drawn in the black key's row instead.
       if (!isBlackKey(pitch + 1)) g.rect(0, 0, KEYBOARD_WIDTH, line);
@@ -795,11 +859,14 @@ export class PianoRoll {
     const mid = snap(h / 2 - line / 2);
     const gapX = BLACK_KEY_WIDTH;
     const gapW = KEYBOARD_WIDTH - BLACK_KEY_WIDTH;
-    const whiteColor = (p: number) => (this.keys.get(p)?.active ? WHITE_KEY_ACTIVE_COLOR : WHITE_KEY_COLOR);
+    const whiteColor = (p: number) =>
+      this.keys.get(p)?.active ? WHITE_KEY_ACTIVE_COLOR : WHITE_KEY_COLOR;
     g.rect(gapX, 0, gapW, mid).fill({ color: whiteColor(pitch + 1) });
     g.rect(gapX, mid + line, gapW, h - mid - line).fill({ color: whiteColor(pitch - 1) });
     g.rect(gapX, mid, gapW, line).fill({ color: KEY_BORDER_COLOR });
-    g.rect(0, 0, BLACK_KEY_WIDTH, h).fill({ color: key.active ? BLACK_KEY_ACTIVE_COLOR : BLACK_KEY_COLOR });
+    g.rect(0, 0, BLACK_KEY_WIDTH, h).fill({
+      color: key.active ? BLACK_KEY_ACTIVE_COLOR : BLACK_KEY_COLOR,
+    });
   }
 
   private setKeyActive(pitch: number, active: boolean): void {
@@ -886,7 +953,12 @@ export class PianoRoll {
    * where it is and the cursor moves from `fromS` towards the keyboard edge. */
   startPlayback(fromS: number): void {
     if (this.clock.kind === "live") return;
-    this.clock = new PlaybackClock(fromS, this.rangeEndS, this.clock.headS(), this.clock.displayS());
+    this.clock = new PlaybackClock(
+      fromS,
+      this.rangeEndS,
+      this.clock.headS(),
+      this.clock.displayS(),
+    );
   }
 
   onPlaybackPosition(posS: number, atEpochMs: number): void {
@@ -903,7 +975,11 @@ export class PianoRoll {
   stopPlayback(posS?: number): void {
     if (this.clock.kind === "live") return;
     const view = this.clock.displayS();
-    this.clock = new HeldClock(this.clock.headS(), posS === undefined ? view : Math.max(view, posS), posS ?? this.clock.cursorS());
+    this.clock = new HeldClock(
+      this.clock.headS(),
+      posS === undefined ? view : Math.max(view, posS),
+      posS ?? this.clock.cursorS(),
+    );
   }
 
   // The live playhead (keyboard's left edge) shows the audio clock minus the display lag, the
@@ -963,7 +1039,13 @@ export class PianoRoll {
   }
 
   addNote(note: ConfirmedNote): void {
-    const open = this.notes.find((n) => n.open && n.part === note.part && n.pitch_midi === note.pitch_midi && n.start_s === note.start_s);
+    const open = this.notes.find(
+      (n) =>
+        n.open &&
+        n.part === note.part &&
+        n.pitch_midi === note.pitch_midi &&
+        n.start_s === note.start_s,
+    );
     if (open) {
       Object.assign(open, note, { open: false });
       this.drawNote(open.graphic, open);
@@ -1003,11 +1085,20 @@ export class PianoRoll {
     const isSilence = label === SILENCE_LABEL;
     const labelText = new Text({
       text: label,
-      style: { fontFamily: CHORD_FONT_FAMILY, fontSize: CHORD_LABEL_FONT_SIZE, fontWeight: "600", fill: isSilence ? CHORD_SILENCE_COLOR : CHORD_TEXT_COLOR },
+      style: {
+        fontFamily: CHORD_FONT_FAMILY,
+        fontSize: CHORD_LABEL_FONT_SIZE,
+        fontWeight: "600",
+        fill: isSilence ? CHORD_SILENCE_COLOR : CHORD_TEXT_COLOR,
+      },
     });
     const romanText = new Text({
       text: seg.chord.roman_numeral ?? "",
-      style: { fontFamily: CHORD_FONT_FAMILY, fontSize: CHORD_ROMAN_FONT_SIZE, fill: CHORD_ROMAN_COLOR },
+      style: {
+        fontFamily: CHORD_FONT_FAMILY,
+        fontSize: CHORD_ROMAN_FONT_SIZE,
+        fill: CHORD_ROMAN_COLOR,
+      },
     });
     this.chordLayer.addChild(band, boundary, labelText, romanText);
     return {
@@ -1055,7 +1146,12 @@ export class PianoRoll {
       sprite.dying = true;
       sprite.targetAlpha = 0;
       sprite.fadeTau = CHORD_FADE_OUT_TAU_S;
-      this.chordGhostLayer.addChild(sprite.band, sprite.boundary, sprite.labelText, sprite.romanText);
+      this.chordGhostLayer.addChild(
+        sprite.band,
+        sprite.boundary,
+        sprite.labelText,
+        sprite.romanText,
+      );
     }
     for (const { index, kind } of plan.created) {
       this.chordSegments.push(this.makeChordSprite(segs[index], kind === "head" ? 1 : 0));
@@ -1087,10 +1183,15 @@ export class PianoRoll {
     for (const seg of this.chordSegments) {
       seg.shownStartS += (seg.startS - seg.shownStartS) * slide;
       if (seg.endS === null) seg.shownEndS = null;
-      else seg.shownEndS = (seg.shownEndS ?? openEdgeS) + (seg.endS - (seg.shownEndS ?? openEdgeS)) * slide;
+      else
+        seg.shownEndS =
+          (seg.shownEndS ?? openEdgeS) + (seg.endS - (seg.shownEndS ?? openEdgeS)) * slide;
       seg.alpha += (seg.targetAlpha - seg.alpha) * (1 - Math.exp(-dtS / seg.fadeTau));
       seg.tint = lerpColor(seg.tint, seg.targetTint, slide);
-      if ((seg.dying && seg.alpha < 0.02) || (!seg.dying && seg.endS !== null && seg.endS < headS - HISTORY_S)) {
+      if (
+        (seg.dying && seg.alpha < 0.02) ||
+        (!seg.dying && seg.endS !== null && seg.endS < headS - HISTORY_S)
+      ) {
         this.destroyChordSprite(seg);
         continue;
       }
@@ -1134,13 +1235,19 @@ export class PianoRoll {
   setBeatLines(lines: BeatLines): void {
     this.snapBeats = null;
     const incoming = [...lines.committed, ...lines.provisional, ...lines.predicted];
-    const open = this.beatLines.filter((b) => !b.dying && b.targetT >= lines.from_s - BEAT_MATCH_TOLERANCE_S);
+    const open = this.beatLines.filter(
+      (b) => !b.dying && b.targetT >= lines.from_s - BEAT_MATCH_TOLERANCE_S,
+    );
     const matched = new Set<BeatSprite>();
     for (const line of incoming) {
       let best: BeatSprite | null = null;
       for (const b of open) {
         const d = Math.abs(b.targetT - line.t);
-        if (!matched.has(b) && d <= BEAT_MATCH_TOLERANCE_S && (!best || d < Math.abs(best.targetT - line.t))) {
+        if (
+          !matched.has(b) &&
+          d <= BEAT_MATCH_TOLERANCE_S &&
+          (!best || d < Math.abs(best.targetT - line.t))
+        ) {
           best = b;
         }
       }
@@ -1148,7 +1255,16 @@ export class PianoRoll {
         const graphic = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
         graphic.alpha = 0;
         this.beatLayer.addChild(graphic);
-        best = { graphic, t: line.t, targetT: line.t, alpha: 0, targetAlpha: 0, bar: +line.bar, targetBar: 0, dying: false };
+        best = {
+          graphic,
+          t: line.t,
+          targetT: line.t,
+          alpha: 0,
+          targetAlpha: 0,
+          bar: +line.bar,
+          targetBar: 0,
+          dying: false,
+        };
         this.beatLines.push(best);
       }
       matched.add(best);
@@ -1245,7 +1361,8 @@ export class PianoRoll {
       n.graphic.x = x;
       // An open note's end_s only trails the clock; it is still sounding (while capture runs --
       // once it has stopped, an unconfirmed note ends where its end_s froze).
-      if (cursorS >= n.start_s && ((n.open && live) || cursorS <= n.end_s)) activePitches.add(n.pitch_midi);
+      if (cursorS >= n.start_s && ((n.open && live) || cursorS <= n.end_s))
+        activePitches.add(n.pitch_midi);
     }
     this.notes.length = kept;
     // Highlighted at the cursor whatever moves it: the live clock, a scrolled-back stopped roll
@@ -1328,7 +1445,10 @@ export class PianoRoll {
     const trackW = this.playheadX();
     const visibleS = trackW / this.pixelsPerSecond;
     const offsetS = Math.min(span, Math.max(0, this.clock.headS() - this.clock.displayS()));
-    this.thumbW = Math.min(trackW, Math.max(SCROLLBAR_MIN_THUMB_PX, (trackW * visibleS) / (span + visibleS)));
+    this.thumbW = Math.min(
+      trackW,
+      Math.max(SCROLLBAR_MIN_THUMB_PX, (trackW * visibleS) / (span + visibleS)),
+    );
     this.thumbX = (1 - offsetS / span) * (trackW - this.thumbW);
     const active = this.dragMode === "thumb";
     if (this.drawnThumb.w !== this.thumbW || this.drawnThumb.active !== active) {

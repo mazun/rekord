@@ -22,7 +22,8 @@
   --text-dim: #8b93a7;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   height: 100%;
   /* This is a fixed one-screen app shell (header + canvas that fills the

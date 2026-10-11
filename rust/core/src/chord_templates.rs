@@ -16,30 +16,102 @@ pub const CHORD_TEMPLATES: &[ChordTemplate] = &[
     // 3-tone template missing one tone. Its prior (`POWER_CHORD_PRIOR`) is lower than the other
     // ornate qualities' so that it still wins when the 3rd is really absent; the price is that
     // on RWC-Pop it also names some chords whose 3rd the transcription missed (majmin -.04).
-    ChordTemplate { quality: "5", intervals: &[0, 7] },
-    ChordTemplate { quality: "maj", intervals: &[0, 4, 7] },
-    ChordTemplate { quality: "m", intervals: &[0, 3, 7] },
-    ChordTemplate { quality: "dim", intervals: &[0, 3, 6] },
-    ChordTemplate { quality: "aug", intervals: &[0, 4, 8] },
-    ChordTemplate { quality: "sus2", intervals: &[0, 2, 7] },
-    ChordTemplate { quality: "sus4", intervals: &[0, 5, 7] },
-    ChordTemplate { quality: "6", intervals: &[0, 4, 7, 9] },
-    ChordTemplate { quality: "m6", intervals: &[0, 3, 7, 9] },
-    ChordTemplate { quality: "7", intervals: &[0, 4, 7, 10] },
-    ChordTemplate { quality: "maj7", intervals: &[0, 4, 7, 11] },
-    ChordTemplate { quality: "m7", intervals: &[0, 3, 7, 10] },
-    ChordTemplate { quality: "m7b5", intervals: &[0, 3, 6, 10] },
-    ChordTemplate { quality: "dim7", intervals: &[0, 3, 6, 9] },
-    ChordTemplate { quality: "add9", intervals: &[0, 4, 7, 2] },
-    ChordTemplate { quality: "madd9", intervals: &[0, 3, 7, 2] },
-    ChordTemplate { quality: "9", intervals: &[0, 4, 7, 10, 2] },
-    ChordTemplate { quality: "maj9", intervals: &[0, 4, 7, 11, 2] },
-    ChordTemplate { quality: "m9", intervals: &[0, 3, 7, 10, 2] },
-    ChordTemplate { quality: "sus4(7)", intervals: &[0, 5, 7, 10] },
-    ChordTemplate { quality: "11", intervals: &[0, 4, 7, 10, 2, 5] },
-    ChordTemplate { quality: "m11", intervals: &[0, 3, 7, 10, 2, 5] },
-    ChordTemplate { quality: "13", intervals: &[0, 4, 7, 10, 9] },
-    ChordTemplate { quality: "maj13", intervals: &[0, 4, 7, 11, 9] },
+    ChordTemplate {
+        quality: "5",
+        intervals: &[0, 7],
+    },
+    ChordTemplate {
+        quality: "maj",
+        intervals: &[0, 4, 7],
+    },
+    ChordTemplate {
+        quality: "m",
+        intervals: &[0, 3, 7],
+    },
+    ChordTemplate {
+        quality: "dim",
+        intervals: &[0, 3, 6],
+    },
+    ChordTemplate {
+        quality: "aug",
+        intervals: &[0, 4, 8],
+    },
+    ChordTemplate {
+        quality: "sus2",
+        intervals: &[0, 2, 7],
+    },
+    ChordTemplate {
+        quality: "sus4",
+        intervals: &[0, 5, 7],
+    },
+    ChordTemplate {
+        quality: "6",
+        intervals: &[0, 4, 7, 9],
+    },
+    ChordTemplate {
+        quality: "m6",
+        intervals: &[0, 3, 7, 9],
+    },
+    ChordTemplate {
+        quality: "7",
+        intervals: &[0, 4, 7, 10],
+    },
+    ChordTemplate {
+        quality: "maj7",
+        intervals: &[0, 4, 7, 11],
+    },
+    ChordTemplate {
+        quality: "m7",
+        intervals: &[0, 3, 7, 10],
+    },
+    ChordTemplate {
+        quality: "m7b5",
+        intervals: &[0, 3, 6, 10],
+    },
+    ChordTemplate {
+        quality: "dim7",
+        intervals: &[0, 3, 6, 9],
+    },
+    ChordTemplate {
+        quality: "add9",
+        intervals: &[0, 4, 7, 2],
+    },
+    ChordTemplate {
+        quality: "madd9",
+        intervals: &[0, 3, 7, 2],
+    },
+    ChordTemplate {
+        quality: "9",
+        intervals: &[0, 4, 7, 10, 2],
+    },
+    ChordTemplate {
+        quality: "maj9",
+        intervals: &[0, 4, 7, 11, 2],
+    },
+    ChordTemplate {
+        quality: "m9",
+        intervals: &[0, 3, 7, 10, 2],
+    },
+    ChordTemplate {
+        quality: "sus4(7)",
+        intervals: &[0, 5, 7, 10],
+    },
+    ChordTemplate {
+        quality: "11",
+        intervals: &[0, 4, 7, 10, 2, 5],
+    },
+    ChordTemplate {
+        quality: "m11",
+        intervals: &[0, 3, 7, 10, 2, 5],
+    },
+    ChordTemplate {
+        quality: "13",
+        intervals: &[0, 4, 7, 10, 9],
+    },
+    ChordTemplate {
+        quality: "maj13",
+        intervals: &[0, 4, 7, 11, 9],
+    },
 ];
 
 // Scoring of `match_chroma`. All of these are this project's own (no published prescription;
@@ -102,7 +174,11 @@ impl ChordMatch {
     /// `key_estimator::roman_numeral()` so a Roman-numeral label carries
     /// exactly the same quality suffix a normal chord label would show.
     pub fn quality_suffix(&self) -> &'static str {
-        if self.quality == "maj" { "" } else { self.quality }
+        if self.quality == "maj" {
+            ""
+        } else {
+            self.quality
+        }
     }
 
     /// The chord's display name, spelled per `mode` (and, for `Accidental::Auto`, the current
@@ -144,7 +220,12 @@ pub fn bare_fifth_triad(root: usize, share: &[f32], key: &KeyEstimate) -> Option
         return None;
     }
     let base = key.relative_major_pc();
-    let in_scale = |pc: usize| matches!((pc as i32 - base).rem_euclid(12), 0 | 2 | 4 | 5 | 7 | 9 | 11);
+    let in_scale = |pc: usize| {
+        matches!(
+            (pc as i32 - base).rem_euclid(12),
+            0 | 2 | 4 | 5 | 7 | 9 | 11
+        )
+    };
     match (in_scale((root + 4) % 12), in_scale((root + 3) % 12)) {
         (true, false) => Some("maj"),
         (false, true) => Some("m"),
@@ -157,7 +238,11 @@ pub fn bare_fifth_triad(root: usize, share: &[f32], key: &KeyEstimate) -> Option
 /// in the accompaniment (summed overlap with the window, in seconds), `bass` the same for the
 /// bass part alone (or the lowest note at each moment while the bass part is silent). `None` if
 /// fewer than two pitch classes are really present, or nothing sounded at all.
-pub fn match_chroma(all: &[f32; 12], bass: &[f32; 12], key: Option<&KeyEstimate>) -> Option<ChordMatch> {
+pub fn match_chroma(
+    all: &[f32; 12],
+    bass: &[f32; 12],
+    key: Option<&KeyEstimate>,
+) -> Option<ChordMatch> {
     match_chroma_biased(all, bass, key, None, 0.0)
 }
 
@@ -179,15 +264,33 @@ pub fn match_chroma_biased(
     for root in 0..12usize {
         for (index, tpl) in CHORD_TEMPLATES.iter().enumerate() {
             let score = scored.scores[root * TEMPLATE_COUNT + index];
-            if best.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
-                best = Some((ChordMatch { root_pc: root as i32, quality: tpl.quality, bass_pc }, score));
+            if best
+                .as_ref()
+                .is_none_or(|(_, best_score)| score > *best_score)
+            {
+                best = Some((
+                    ChordMatch {
+                        root_pc: root as i32,
+                        quality: tpl.quality,
+                        bass_pc,
+                    },
+                    score,
+                ));
             }
             if margin > 0.0 && prefer == Some((root as i32, tpl.quality)) {
-                preferred = Some((ChordMatch { root_pc: root as i32, quality: tpl.quality, bass_pc }, score));
+                preferred = Some((
+                    ChordMatch {
+                        root_pc: root as i32,
+                        quality: tpl.quality,
+                        bass_pc,
+                    },
+                    score,
+                ));
             }
         }
     }
-    if let (Some((_, best_score)), Some((_, preferred_score))) = (best.as_ref(), preferred.as_ref()) {
+    if let (Some((_, best_score)), Some((_, preferred_score))) = (best.as_ref(), preferred.as_ref())
+    {
         if best_score - preferred_score < margin {
             best = preferred;
         }
@@ -234,8 +337,11 @@ pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScor
             *s = x / bass_total;
         }
     }
-    let bass_pc = (bass_total >= MIN_BASS_ENERGY * total)
-        .then(|| (0..12usize).max_by(|&a, &b| bass[a].partial_cmp(&bass[b]).unwrap()).unwrap() as i32);
+    let bass_pc = (bass_total >= MIN_BASS_ENERGY * total).then(|| {
+        (0..12usize)
+            .max_by(|&a, &b| bass[a].partial_cmp(&bass[b]).unwrap())
+            .unwrap() as i32
+    });
 
     let mut scores = [0.0f32; 12 * TEMPLATE_COUNT];
     for (index, tpl) in CHORD_TEMPLATES.iter().enumerate() {
@@ -256,15 +362,25 @@ pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScor
                 let above = (root + 2) % 12;
                 inside += share[above] * bass_share[above];
             }
-            scores[root * TEMPLATE_COUNT + index] = inside - OUTSIDE_WEIGHT * (1.0 - inside)
+            scores[root * TEMPLATE_COUNT + index] = inside
+                - OUTSIDE_WEIGHT * (1.0 - inside)
                 - MISSING_PENALTY * missing
                 - size_penalty
                 - prior
                 + BASS_ROOT_WEIGHT * bass_share[root]
-                + if is_aug { AUG_WHOLE_TONE_BASS_WEIGHT * bass_share[(root + 2) % 12] } else { 0.0 };
+                + if is_aug {
+                    AUG_WHOLE_TONE_BASS_WEIGHT * bass_share[(root + 2) % 12]
+                } else {
+                    0.0
+                };
         }
     }
-    Some(TemplateScores { share, bass_share, bass_pc, scores })
+    Some(TemplateScores {
+        share,
+        bass_share,
+        bass_pc,
+        scores,
+    })
 }
 
 // Canonical upper-structure tension names by semitone offset from the
@@ -274,8 +390,15 @@ pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScor
 // 11) are deliberately absent: a note there is either already part of
 // the stabilized chord label or was matched by `match_chroma`
 // itself, not something this display is meant to call out.
-const TENSION_NAMES: [(i32, &str); 7] =
-    [(1, "b9"), (2, "9"), (3, "#9"), (5, "11"), (6, "#11"), (8, "b13"), (9, "13")];
+const TENSION_NAMES: [(i32, &str); 7] = [
+    (1, "b9"),
+    (2, "9"),
+    (3, "#9"),
+    (5, "11"),
+    (6, "#11"),
+    (8, "b13"),
+    (9, "13"),
+];
 
 /// Pitch classes in `active_pitch_classes` that fall outside `chord`'s own
 /// template -- e.g. a melodic passing tone sounding over an already-
@@ -344,12 +467,17 @@ mod tests {
                     let above = (root + 2) % 12;
                     inside += share[above] * bass_share[above];
                 }
-                scores[root * TEMPLATE_COUNT + index] = inside - OUTSIDE_WEIGHT * (1.0 - inside)
+                scores[root * TEMPLATE_COUNT + index] = inside
+                    - OUTSIDE_WEIGHT * (1.0 - inside)
                     - MISSING_PENALTY * missing
                     - SIZE_PENALTY * tpl.intervals.len() as f32
                     - quality_prior(tpl.quality)
                     + BASS_ROOT_WEIGHT * bass_share[root]
-                    + if tpl.quality == "aug" { AUG_WHOLE_TONE_BASS_WEIGHT * bass_share[(root + 2) % 12] } else { 0.0 };
+                    + if tpl.quality == "aug" {
+                        AUG_WHOLE_TONE_BASS_WEIGHT * bass_share[(root + 2) % 12]
+                    } else {
+                        0.0
+                    };
             }
         }
         Some(scores)
@@ -359,7 +487,9 @@ mod tests {
     fn template_scores_are_bit_identical_to_the_unhoisted_formula() {
         let mut state = 12345u64;
         let mut next = move || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (state >> 40) as f32 / (1u64 << 24) as f32
         };
         let mut compared = 0;
@@ -396,14 +526,24 @@ mod tests {
         let mut bass = [0.0f32; 12];
         bass[roots_bass as usize] = 1.0;
         let scored = score_templates(&all, &bass).unwrap();
-        let aug = CHORD_TEMPLATES.iter().position(|t| t.quality == "aug").unwrap();
-        [2, 6, 10].iter().map(|&r| (r, scored.scores[r as usize * TEMPLATE_COUNT + aug])).collect()
+        let aug = CHORD_TEMPLATES
+            .iter()
+            .position(|t| t.quality == "aug")
+            .unwrap();
+        [2, 6, 10]
+            .iter()
+            .map(|&r| (r, scored.scores[r as usize * TEMPLATE_COUNT + aug]))
+            .collect()
     }
 
     #[test]
     fn aug_root_is_the_tone_a_whole_tone_below_the_bass() {
         let scores = aug_score(0);
-        let best = scores.iter().copied().fold((0, f32::NEG_INFINITY), |b, s| if s.1 > b.1 { s } else { b });
+        let best =
+            scores
+                .iter()
+                .copied()
+                .fold((0, f32::NEG_INFINITY), |b, s| if s.1 > b.1 { s } else { b });
         assert_eq!(best.0, 10, "B♭aug/C expected, got {scores:?}");
     }
 
@@ -411,7 +551,10 @@ mod tests {
     fn aug_roots_tie_when_the_bass_is_not_a_whole_tone_above_one() {
         // Bass on G♭ itself (root position): the root bonus decides, not the whole-tone one.
         let scores = aug_score(6);
-        assert!(scores[1].1 > scores[0].1 && scores[1].1 > scores[2].1, "{scores:?}");
+        assert!(
+            scores[1].1 > scores[0].1 && scores[1].1 > scores[2].1,
+            "{scores:?}"
+        );
     }
 
     #[test]
@@ -453,7 +596,16 @@ pub struct TensionInfo {
 
 pub fn vocabulary() -> ChordVocabulary {
     ChordVocabulary {
-        templates: CHORD_TEMPLATES.iter().map(|t| TemplateInfo { quality: t.quality, intervals: t.intervals.to_vec() }).collect(),
-        tensions: TENSION_NAMES.iter().map(|&(interval, name)| TensionInfo { interval, name }).collect(),
+        templates: CHORD_TEMPLATES
+            .iter()
+            .map(|t| TemplateInfo {
+                quality: t.quality,
+                intervals: t.intervals.to_vec(),
+            })
+            .collect(),
+        tensions: TENSION_NAMES
+            .iter()
+            .map(|&(interval, name)| TensionInfo { interval, name })
+            .collect(),
     }
 }

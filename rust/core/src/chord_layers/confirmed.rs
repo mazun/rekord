@@ -20,7 +20,9 @@ use std::collections::VecDeque;
 use super::evidence::{snap_to_beat_grid, window_chroma};
 use super::{ChordAt, ChordLayer, LayerChange, StepCtx};
 use crate::beat_tracker::BeatGrid;
-use crate::chord_templates::{bare_fifth_triad, score_templates, ChordMatch, CHORD_TEMPLATES, TEMPLATE_COUNT};
+use crate::chord_templates::{
+    bare_fifth_triad, score_templates, ChordMatch, CHORD_TEMPLATES, TEMPLATE_COUNT,
+};
 use crate::harmonica_model::Part;
 
 /// The groups of states: every (root, template), then silence. Each has 12 bass notes.
@@ -112,8 +114,13 @@ impl ConfirmedParams {
     pub fn apply_tune(&mut self, tune: &str) -> Result<(), String> {
         let mut next = *self;
         for kv in tune.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            let (k, v) = kv.split_once('=').ok_or_else(|| format!("expected key=value, got {kv:?}"))?;
-            let num = || v.parse::<f32>().map_err(|_| format!("{k} needs a number, got {v:?}"));
+            let (k, v) = kv
+                .split_once('=')
+                .ok_or_else(|| format!("expected key=value, got {kv:?}"))?;
+            let num = || {
+                v.parse::<f32>()
+                    .map_err(|_| format!("{k} needs a number, got {v:?}"))
+            };
             match k {
                 "hop" => next.hop_s = num()?,
                 "w" => next.window_s = num()?,
@@ -138,7 +145,11 @@ impl ConfirmedParams {
                 _ => return Err(format!("unknown key {k:?}")),
             }
         }
-        if !(next.hop_s > 0.0) || !(0.0..=1.0).contains(&next.forward) || !(next.window_s > 0.0) || !(next.memory_s > 0.0) {
+        if !(next.hop_s > 0.0)
+            || !(0.0..=1.0).contains(&next.forward)
+            || !(next.window_s > 0.0)
+            || !(next.memory_s > 0.0)
+        {
             return Err("hop, w and mem must be positive, f within 0..1".into());
         }
         *self = next;
@@ -194,13 +205,18 @@ pub struct ConfirmedLayer {
 }
 
 fn position(quality: &str) -> usize {
-    CHORD_TEMPLATES.iter().position(|t| t.quality == quality).expect("the template exists")
+    CHORD_TEMPLATES
+        .iter()
+        .position(|t| t.quality == quality)
+        .expect("the template exists")
 }
 
 /// Whether a quality has a major (0) or a minor (1) 3rd, if it has one.
 fn third_of(quality: &str) -> Option<usize> {
     match quality {
-        "maj" | "6" | "7" | "maj7" | "add9" | "9" | "maj9" | "11" | "13" | "maj13" | "aug" => Some(0),
+        "maj" | "6" | "7" | "maj7" | "add9" | "9" | "maj9" | "11" | "13" | "maj13" | "aug" => {
+            Some(0)
+        }
         "m" | "m6" | "m7" | "m7b5" | "madd9" | "m9" | "m11" | "dim" | "dim7" => Some(1),
         _ => None,
     }
@@ -233,14 +249,22 @@ impl ConfirmedLayer {
 
     /// How many bins the search looks ahead of the one it decides.
     fn lag_bins(&self) -> usize {
-        ((self.params.delay_s - self.ahead()) / self.params.hop_s).round().max(0.0) as usize
+        ((self.params.delay_s - self.ahead()) / self.params.hop_s)
+            .round()
+            .max(0.0) as usize
     }
 
     /// The 3rd this song has mostly shown under the chord on `root` (`"maj"` / `"m"`), if enough.
     fn remembered_third(&self, root: usize) -> Option<&'static str> {
         let [major, minor] = self.memory[root];
         let total = major + minor;
-        (total >= MEMORY_MIN_S && major.max(minor) >= MEMORY_MAJORITY * total).then(|| if major >= minor { "maj" } else { "m" })
+        (total >= MEMORY_MIN_S && major.max(minor) >= MEMORY_MAJORITY * total).then_some({
+            if major >= minor {
+                "maj"
+            } else {
+                "m"
+            }
+        })
     }
 
     /// The bin at moment `g`, from the notes up to `t` (the newest checkpoint; the window is cut there).
@@ -249,8 +273,15 @@ impl ConfirmedLayer {
         let hi = (g + p.window_s * p.forward).min(t);
         let lo = g - p.window_s * (1.0 - p.forward);
         let (near_lo, near_hi) = (g - p.silence_s / 2.0, (g + p.silence_s / 2.0).min(t));
-        let heard = ctx.notes.iter().any(|&(s, e, _p, _a, part)| part != Part::Vocal && s <= near_hi + 1e-6 && e >= near_lo);
-        let mut bin = Bin { chord: [IMPOSSIBLE; CHORDS], silence: IMPOSSIBLE, bass: [0.0; 12], share: [0.0; 12] };
+        let heard = ctx.notes.iter().any(|&(s, e, _p, _a, part)| {
+            part != Part::Vocal && s <= near_hi + 1e-6 && e >= near_lo
+        });
+        let mut bin = Bin {
+            chord: [IMPOSSIBLE; CHORDS],
+            silence: IMPOSSIBLE,
+            bass: [0.0; 12],
+            share: [0.0; 12],
+        };
         if !heard {
             bin.silence = 0.0;
             return bin;
@@ -263,15 +294,31 @@ impl ConfirmedLayer {
         };
         if p.naming != Naming::Off {
             for root in 0..12 {
-                if scored.share[(root + 3) % 12].max(scored.share[(root + 4) % 12]) >= STRONG_THIRD_SHARE {
+                if scored.share[(root + 3) % 12].max(scored.share[(root + 4) % 12])
+                    >= STRONG_THIRD_SHARE
+                {
                     continue;
                 }
-                let remembered = if p.naming == Naming::KeyAndMemory { self.remembered_third(root) } else { None };
-                let quality = remembered.or_else(|| ctx.key.as_ref().and_then(|key| bare_fifth_triad(root, &scored.share, key)));
+                let remembered = if p.naming == Naming::KeyAndMemory {
+                    self.remembered_third(root)
+                } else {
+                    None
+                };
+                let quality = remembered.or_else(|| {
+                    ctx.key
+                        .as_ref()
+                        .and_then(|key| bare_fifth_triad(root, &scored.share, key))
+                });
                 if let Some(quality) = quality {
-                    let triad = root * TEMPLATE_COUNT + if quality == "maj" { self.index_maj } else { self.index_min };
+                    let triad = root * TEMPLATE_COUNT
+                        + if quality == "maj" {
+                            self.index_maj
+                        } else {
+                            self.index_min
+                        };
                     let fifth = root * TEMPLATE_COUNT + self.index_5;
-                    scored.scores[triad] = scored.scores[triad].max(scored.scores[fifth].min(scored.scores[triad] + p.key_lift));
+                    scored.scores[triad] = scored.scores[triad]
+                        .max(scored.scores[fifth].min(scored.scores[triad] + p.key_lift));
                     scored.scores[fifth] = IMPOSSIBLE;
                 }
             }
@@ -322,7 +369,8 @@ impl ConfirmedLayer {
                 let here = if g == SILENCE {
                     bin.silence + if b == 0 { 0.0 } else { IMPOSSIBLE }
                 } else {
-                    bin.chord[g] + p.bass_weight * bin.bass[b] - if b == root { 0.0 } else { p.slash_cost }
+                    bin.chord[g] + p.bass_weight * bin.bass[b]
+                        - if b == root { 0.0 } else { p.slash_cost }
                 };
                 back[s] = how;
                 next[s] = best + here;
@@ -333,12 +381,20 @@ impl ConfirmedLayer {
             *v -= top;
         }
         self.dp = next;
-        self.rows.push_back(Row { back, bass_arg, global_arg: global.1, share: bin.share });
+        self.rows.push_back(Row {
+            back,
+            bass_arg,
+            global_arg: global.1,
+            share: bin.share,
+        });
     }
 
     /// The state of the bin `rows[to]` on the best path ending in the newest bin.
     fn trace(&self, to: usize) -> usize {
-        let mut state = (0..STATES).fold(0, |best, s| if self.dp[s] > self.dp[best] { s } else { best });
+        let mut state = (0..STATES).fold(
+            0,
+            |best, s| if self.dp[s] > self.dp[best] { s } else { best },
+        );
         for i in (to + 1..self.rows.len()).rev() {
             let row = &self.rows[i];
             state = match row.back[state] {
@@ -364,8 +420,12 @@ impl ConfirmedLayer {
         if g < CHORDS {
             let (root, index) = (g / TEMPLATE_COUNT, g % TEMPLATE_COUNT);
             match third_of(CHORD_TEMPLATES[index].quality) {
-                Some(0) if row.share[(root + 4) % 12] >= THIRD_HEARD_SHARE => self.memory[root][0] += p.hop_s,
-                Some(1) if row.share[(root + 3) % 12] >= THIRD_HEARD_SHARE => self.memory[root][1] += p.hop_s,
+                Some(0) if row.share[(root + 4) % 12] >= THIRD_HEARD_SHARE => {
+                    self.memory[root][0] += p.hop_s
+                }
+                Some(1) if row.share[(root + 3) % 12] >= THIRD_HEARD_SHARE => {
+                    self.memory[root][1] += p.hop_s
+                }
                 _ => {}
             }
         }
@@ -383,8 +443,16 @@ impl ConfirmedLayer {
                     bass_pc: (b as i32 != root).then_some(b as i32),
                 })
             };
-            let start = if p.snap { snap_to_beat_grid(bin_start, self.grid) } else { bin_start };
-            let t = start.max(self.last_change_t).max(self.decided_s).min(bin_end).max(0.0);
+            let start = if p.snap {
+                snap_to_beat_grid(bin_start, self.grid)
+            } else {
+                bin_start
+            };
+            let t = start
+                .max(self.last_change_t)
+                .max(self.decided_s)
+                .min(bin_end)
+                .max(0.0);
             out.push(LayerChange { t, chord });
             self.shown = Some(state);
             self.last_change_t = t;
@@ -442,12 +510,17 @@ mod tests {
     use crate::key_estimator::{KeyEstimate, Mode};
 
     fn chord(start: f32, end: f32, pitches: &[i32]) -> Vec<NoteEvent> {
-        pitches.iter().map(|&p| (start, end, p, 0.8, Part::Other)).collect()
+        pitches
+            .iter()
+            .map(|&p| (start, end, p, 0.8, Part::Other))
+            .collect()
     }
 
     fn name(c: ChordAt) -> (i32, &'static str) {
         match c {
-            ChordAt::Match(ChordMatch { root_pc, quality, .. }) => (root_pc, quality),
+            ChordAt::Match(ChordMatch {
+                root_pc, quality, ..
+            }) => (root_pc, quality),
             ChordAt::Silence => (-1, "silence"),
         }
     }
@@ -458,15 +531,32 @@ mod tests {
         run_in_key(params, notes, end_s, None)
     }
 
-    fn run_in_key(params: ConfirmedParams, notes: &[NoteEvent], end_s: f32, key: Option<KeyEstimate>) -> Vec<(f32, LayerChange)> {
+    fn run_in_key(
+        params: ConfirmedParams,
+        notes: &[NoteEvent],
+        end_s: f32,
+        key: Option<KeyEstimate>,
+    ) -> Vec<(f32, LayerChange)> {
         let mut layer = ConfirmedLayer::new(params);
         let mut announced = Vec::new();
         let mut decided = f32::NEG_INFINITY;
-        let check = |at: f32, out: &[LayerChange], new_decided: f32, decided: &mut f32, announced: &mut Vec<(f32, LayerChange)>| {
+        let check = |at: f32,
+                     out: &[LayerChange],
+                     new_decided: f32,
+                     decided: &mut f32,
+                     announced: &mut Vec<(f32, LayerChange)>| {
             assert!(new_decided >= *decided, "decided_s went back at {at}");
             for c in out {
-                assert!(c.t >= *decided - 1e-4, "change at {} precedes the previous decided_s {decided}", c.t);
-                assert!(c.t <= new_decided + 1e-4, "change at {} is past decided_s {new_decided}", c.t);
+                assert!(
+                    c.t >= *decided - 1e-4,
+                    "change at {} precedes the previous decided_s {decided}",
+                    c.t
+                );
+                assert!(
+                    c.t <= new_decided + 1e-4,
+                    "change at {} is past decided_s {new_decided}",
+                    c.t
+                );
                 announced.push((at, *c));
             }
             *decided = new_decided;
@@ -477,9 +567,21 @@ mod tests {
             if t > end_s {
                 break;
             }
-            let visible: Vec<NoteEvent> = notes.iter().filter(|n| n.0 <= t).map(|&(s, e, p, v, part)| (s, e.min(t), p, v, part)).collect();
+            let visible: Vec<NoteEvent> = notes
+                .iter()
+                .filter(|n| n.0 <= t)
+                .map(|&(s, e, p, v, part)| (s, e.min(t), p, v, part))
+                .collect();
             let mut out = Vec::new();
-            let new_decided = layer.step(t, &StepCtx { notes: &visible, key, beat_grid: None }, &mut out);
+            let new_decided = layer.step(
+                t,
+                &StepCtx {
+                    notes: &visible,
+                    key,
+                    beat_grid: None,
+                },
+                &mut out,
+            );
             check(t, &out, new_decided, &mut decided, &mut announced);
             k += 1;
         }
@@ -498,13 +600,29 @@ mod tests {
 
     #[test]
     fn names_a_progression_about_two_seconds_after_each_change() {
-        let params = ConfirmedParams { snap: false, ..ConfirmedParams::standard() };
+        let params = ConfirmedParams {
+            snap: false,
+            ..ConfirmedParams::standard()
+        };
         let changes = run(params, &progression(), 14.0);
         let named: Vec<_> = changes.iter().map(|(_, c)| name(c.chord)).collect();
-        assert_eq!(named, vec![(0, "maj"), (9, "m"), (5, "maj"), (-1, "silence")], "{named:?}");
+        assert_eq!(
+            named,
+            vec![(0, "maj"), (9, "m"), (5, "maj"), (-1, "silence")],
+            "{named:?}"
+        );
         for ((announced_at, c), onset) in changes.iter().zip([0.0f32, 4.0, 8.0, 12.0]) {
-            assert!((c.t - onset).abs() < 0.3, "{} starts at {} for an onset at {onset}", name(c.chord).1, c.t);
-            assert!(*announced_at - onset > 1.5 && *announced_at - onset < 2.8, "{} announced at {announced_at}", name(c.chord).1);
+            assert!(
+                (c.t - onset).abs() < 0.3,
+                "{} starts at {} for an onset at {onset}",
+                name(c.chord).1,
+                c.t
+            );
+            assert!(
+                *announced_at - onset > 1.5 && *announced_at - onset < 2.8,
+                "{} announced at {announced_at}",
+                name(c.chord).1
+            );
         }
     }
 
@@ -525,9 +643,20 @@ mod tests {
         let mut notes = chord(0.0, 4.0, &[45, 52]);
         notes.extend(chord(0.8, 4.0, &[61]));
         for naming in [Naming::Off, Naming::Key, Naming::KeyAndMemory] {
-            let changes = run(ConfirmedParams { naming, ..ConfirmedParams::standard() }, &notes, 6.0);
+            let changes = run(
+                ConfirmedParams {
+                    naming,
+                    ..ConfirmedParams::standard()
+                },
+                &notes,
+                6.0,
+            );
             let named: Vec<_> = changes.iter().map(|(_, c)| name(c.chord)).collect();
-            assert_eq!(named, vec![(9, "maj"), (-1, "silence")], "{naming:?}: {named:?}");
+            assert_eq!(
+                named,
+                vec![(9, "maj"), (-1, "silence")],
+                "{naming:?}: {named:?}"
+            );
         }
     }
 
@@ -544,7 +673,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(basses, vec![(0, "maj", None), (0, "maj", Some(4))], "{basses:?}");
+        assert_eq!(
+            basses,
+            vec![(0, "maj", None), (0, "maj", Some(4))],
+            "{basses:?}"
+        );
     }
 
     #[test]
@@ -555,13 +688,39 @@ mod tests {
         let mut notes = chord(0.0, 4.0, &[50, 57, 66]);
         notes.extend(chord(4.0, 7.0, &[43, 55, 59, 62]));
         notes.extend(chord(7.0, 11.0, &[50, 57]));
-        let b_flat_major = Some(KeyEstimate { tonic_pc: 10, mode: Mode::Major });
+        let b_flat_major = Some(KeyEstimate {
+            tonic_pc: 10,
+            mode: Mode::Major,
+        });
         let last = |naming| {
-            let changes = run_in_key(ConfirmedParams { naming, snap: false, ..ConfirmedParams::standard() }, &notes, 14.0, b_flat_major);
-            changes.iter().filter_map(|(_, c)| match c.chord { ChordAt::Match(m) => Some((m.root_pc, m.quality)), _ => None }).last()
+            let changes = run_in_key(
+                ConfirmedParams {
+                    naming,
+                    snap: false,
+                    ..ConfirmedParams::standard()
+                },
+                &notes,
+                14.0,
+                b_flat_major,
+            );
+            changes
+                .iter()
+                .filter_map(|(_, c)| match c.chord {
+                    ChordAt::Match(m) => Some((m.root_pc, m.quality)),
+                    _ => None,
+                })
+                .next_back()
         };
-        assert_eq!(last(Naming::Key), Some((2, "m")), "the key alone names it Dm");
-        assert_eq!(last(Naming::KeyAndMemory), Some((2, "maj")), "the memory names it D");
+        assert_eq!(
+            last(Naming::Key),
+            Some((2, "m")),
+            "the key alone names it Dm"
+        );
+        assert_eq!(
+            last(Naming::KeyAndMemory),
+            Some((2, "maj")),
+            "the memory names it D"
+        );
     }
 
     #[test]

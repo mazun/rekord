@@ -16,6 +16,7 @@
       //                   pane throttles requestAnimationFrame, so the ticker barely runs
       //                   there; call this right before each screenshot.
       import { PianoRoll } from "/src/pianoroll.ts";
+
       const orig = PianoRoll.prototype.setBeatLines;
       PianoRoll.prototype.setBeatLines = function (l) {
         window.__roll = this;
@@ -24,7 +25,10 @@
       window.__settle = () => {
         const r = window.__roll;
         let t = performance.now();
-        for (let i = 0; i < 15; i++) r.app.ticker.update((t += 100));
+        for (let i = 0; i < 15; i++) {
+          t += 100;
+          r.app.ticker.update(t);
+        }
         r.app.render();
         return r.beatLines
           .filter((b) => !b.graphic.destroyed && b.graphic.x > 0)

@@ -18,6 +18,7 @@
       //                     there; call this right before each screenshot.
       import { PianoRoll } from "/src/pianoroll.ts";
       import { recording } from "/src/recording.ts";
+
       window.__recording = recording; // .lane.segments(): the composed chord lane
       const orig = PianoRoll.prototype.setChordSegments;
       PianoRoll.prototype.setChordSegments = function (u) {
@@ -27,7 +28,10 @@
       window.__settle = (n = 15) => {
         const r = window.__roll;
         let t = performance.now();
-        for (let i = 0; i < n; i++) r.app.ticker.update((t += 100));
+        for (let i = 0; i < n; i++) {
+          t += 100;
+          r.app.ticker.update(t);
+        }
         r.app.render();
         return r.chordSegments.map((c) => [c.label, +c.shownStartS.toFixed(2), c.shownEndS === null ? null : +c.shownEndS.toFixed(2), +c.alpha.toFixed(2), c.dying]);
       };

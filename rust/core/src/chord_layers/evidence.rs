@@ -21,7 +21,12 @@ const BASS_FALLBACK_STEPS: usize = 10;
 ///
 /// With `decay_s > 0` a stretch of sound counts its length weighted by `exp(-age / decay_s)`, so
 /// the newest sound counts most; with 0 it counts its plain length.
-pub(crate) fn window_chroma(note_events: &[NoteEvent], t: f32, window_s: f32, decay_s: f32) -> ([f32; 12], [f32; 12]) {
+pub(crate) fn window_chroma(
+    note_events: &[NoteEvent],
+    t: f32,
+    window_s: f32,
+    decay_s: f32,
+) -> ([f32; 12], [f32; 12]) {
     let t0 = t - window_s;
     let weight = |lo: f32, hi: f32| {
         if decay_s > 0.0 {
@@ -59,7 +64,11 @@ pub(crate) fn window_chroma(note_events: &[NoteEvent], t: f32, window_s: f32, de
                 .map(|&(_s, _e, p, ..)| p)
                 .min();
             if let Some(p) = lowest {
-                bass[p.rem_euclid(12) as usize] += if decay_s > 0.0 { weight(tau - step / 2.0, tau + step / 2.0) } else { step };
+                bass[p.rem_euclid(12) as usize] += if decay_s > 0.0 {
+                    weight(tau - step / 2.0, tau + step / 2.0)
+                } else {
+                    step
+                };
             }
         }
     }
@@ -89,12 +98,18 @@ pub(crate) fn evaluate_chord(
     margin: f32,
 ) -> Option<ChordAt> {
     let sounding = |s: f32, e: f32| s <= t + 1e-6 && e >= t;
-    let any_chord_note = note_events.iter().any(|&(s, e, _p, _a, part)| sounding(s, e) && part != Part::Vocal);
+    let any_chord_note = note_events
+        .iter()
+        .any(|&(s, e, _p, _a, part)| sounding(s, e) && part != Part::Vocal);
     if !any_chord_note {
-        let recently_sounding = note_events
-            .iter()
-            .any(|&(s, e, _p, _a, part)| part != Part::Vocal && s <= t + 1e-6 && e >= t - silence_hold_s);
-        return if recently_sounding { None } else { Some(ChordAt::Silence) };
+        let recently_sounding = note_events.iter().any(|&(s, e, _p, _a, part)| {
+            part != Part::Vocal && s <= t + 1e-6 && e >= t - silence_hold_s
+        });
+        return if recently_sounding {
+            None
+        } else {
+            Some(ChordAt::Silence)
+        };
     }
     let (all, bass) = window_chroma(note_events, t, window_s, decay_s);
     match_chroma_biased(&all, &bass, key, prefer, margin).map(ChordAt::Match)

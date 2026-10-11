@@ -131,7 +131,12 @@ async function playFrom(fromS: number): Promise<void> {
     }
   }
   try {
-    await invoke("playback_start", { fromS, notes: recording.synthNotes(), params: params(), gen: myGen });
+    await invoke("playback_start", {
+      fromS,
+      notes: recording.synthNotes(),
+      params: params(),
+      gen: myGen,
+    });
   } catch (err) {
     console.error(err);
     if (gen === myGen) {

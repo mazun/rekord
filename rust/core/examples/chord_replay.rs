@@ -38,7 +38,13 @@ const ARRIVAL_LAG_S: f32 = 0.4;
 fn pc_of(name: &str) -> i32 {
     let mut chars = name.chars();
     let base = match chars.next().unwrap() {
-        'C' => 0, 'D' => 2, 'E' => 4, 'F' => 5, 'G' => 7, 'A' => 9, _ => 11,
+        'C' => 0,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        _ => 11,
     };
     match chars.next() {
         Some('♯') | Some('#') => base + 1,
@@ -56,19 +62,36 @@ fn parse(line: &str) -> Option<(f32, f32, i32, f32, Part)> {
     let e: f32 = e.trim().trim_end_matches('s').parse().ok()?;
     let (name, rest) = rest.split_once(" (vel ")?;
     let (vel, tag) = rest.split_once(") [")?;
-    let octave: i32 = name.trim_start_matches(|c: char| c.is_alphabetic() || c == '♯' || c == '♭' || c == '#').parse().ok()?;
-    let letters: String = name.chars().take_while(|c| !c.is_ascii_digit() && *c != '-').collect();
-    let part = match tag.trim_end_matches(']').trim().split_whitespace().next()? {
+    let octave: i32 = name
+        .trim_start_matches(|c: char| c.is_alphabetic() || c == '♯' || c == '♭' || c == '#')
+        .parse()
+        .ok()?;
+    let letters: String = name
+        .chars()
+        .take_while(|c| !c.is_ascii_digit() && *c != '-')
+        .collect();
+    let part = match tag.trim_end_matches(']').split_whitespace().next()? {
         "vocal" => Part::Vocal,
         "bass" => Part::Bass,
         "other" => Part::Other,
         _ => return None,
     };
-    Some((s, e, 12 * (octave + 1) + pc_of(&letters), vel.parse().ok()?, part))
+    Some((
+        s,
+        e,
+        12 * (octave + 1) + pc_of(&letters),
+        vel.parse().ok()?,
+        part,
+    ))
 }
 
 /// `REKORD_CHORD_TUNE`: which layer to write and the parameters of the layers.
-fn tune() -> (ChordLayerId, HoldParams, HoldParams, Option<ConfirmedParams>) {
+fn tune() -> (
+    ChordLayerId,
+    HoldParams,
+    HoldParams,
+    Option<ConfirmedParams>,
+) {
     let (mut instant, mut settled) = (HoldParams::instant(), HoldParams::settled());
     let mut confirmed = ConfirmedParams::standard();
     let mut chosen = ChordLayerId::Settled;
@@ -101,8 +124,16 @@ fn key_oracle() -> Vec<(f32, KeyEstimate)> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|kv| {
-            let (from, tonic) = kv.split_once(':').unwrap_or_else(|| panic!("REKORD_KEY_ORACLE: expected time:key, got {kv:?}"));
-            (from.parse().unwrap(), KeyEstimate { tonic_pc: pc_of(tonic).rem_euclid(12), mode: Mode::Major })
+            let (from, tonic) = kv
+                .split_once(':')
+                .unwrap_or_else(|| panic!("REKORD_KEY_ORACLE: expected time:key, got {kv:?}"));
+            (
+                from.parse().unwrap(),
+                KeyEstimate {
+                    tonic_pc: pc_of(tonic).rem_euclid(12),
+                    mode: Mode::Major,
+                },
+            )
         })
         .collect()
 }
@@ -118,7 +149,10 @@ fn main() {
         std::fs::create_dir_all(dir).unwrap();
     }
     let ids: Vec<String> = if args.len() > 3 {
-        args[3..].iter().map(|s| format!("{:03}", s.parse::<u32>().unwrap())).collect()
+        args[3..]
+            .iter()
+            .map(|s| format!("{:03}", s.parse::<u32>().unwrap()))
+            .collect()
     } else {
         let mut v: Vec<String> = std::fs::read_dir(raw_dir)
             .unwrap()
@@ -134,7 +168,7 @@ fn main() {
         let mut out = String::new();
         let mut keys = String::new(); // `<time> <key name>` per key change, written to NNN.key
         let mut log = String::new(); // the event log (only filled with REKORD_CHORD_EVENTS_OUT)
-        // (the 2 s layer costs a third more time; only run it when it is wanted)
+                                     // (the 2 s layer costs a third more time; only run it when it is wanted)
         let mut engine = match confirmed {
             Some(confirmed) if chosen == ChordLayerId::Confirmed || events_out.is_some() => {
                 ChordEngine::with_confirmed(instant, settled, confirmed)
@@ -148,14 +182,24 @@ fn main() {
         let keep_log = events_out.is_some();
         let log_event = |wall: f32, event: &PipelineEvent, log: &mut String| {
             if keep_log {
-                writeln!(log, "{{\"wall\":{wall:.4},\"event\":{}}}", serde_json::to_string(event).unwrap()).unwrap();
+                writeln!(
+                    log,
+                    "{{\"wall\":{wall:.4},\"event\":{}}}",
+                    serde_json::to_string(event).unwrap()
+                )
+                .unwrap();
             }
         };
         log_event(
             0.0,
             &PipelineEvent::Started {
                 total_latency_s: 0.88,
-                note_model: NoteModelInfo { size: ModelSize::Large, device: Device::DirectML, future_frames: 8, over_budget: false },
+                note_model: NoteModelInfo {
+                    size: ModelSize::Large,
+                    device: Device::DirectML,
+                    future_frames: 8,
+                    over_budget: false,
+                },
                 chord_vocabulary: chord_templates::vocabulary(),
             },
             &mut log,
@@ -163,18 +207,36 @@ fn main() {
         loop {
             let covered = (k as f32 * 0.256).min(end);
             let wall = covered + ARRIVAL_LAG_S;
-            let mut events: Vec<_> =
-                notes.iter().filter(|n| n.0 <= covered).map(|&(s, e, p, v, part)| (s, e.min(covered), p, v, part)).collect();
+            let mut events: Vec<_> = notes
+                .iter()
+                .filter(|n| n.0 <= covered)
+                .map(|&(s, e, p, v, part)| (s, e.min(covered), p, v, part))
+                .collect();
             events.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
             // The key estimator is fed each note once it has ended, like the file mode does.
             for (i, n) in notes.iter().enumerate() {
                 if !started[i] && n.0 <= covered {
                     started[i] = true;
-                    log_event(wall, &PipelineEvent::NoteStarted { start_s: n.0, pitch_midi: n.2, velocity: n.3, part: n.4 }, &mut log);
+                    log_event(
+                        wall,
+                        &PipelineEvent::NoteStarted {
+                            start_s: n.0,
+                            pitch_midi: n.2,
+                            velocity: n.3,
+                            part: n.4,
+                        },
+                        &mut log,
+                    );
                 }
                 if !fed[i] && n.1 <= covered {
                     fed[i] = true;
-                    let note = ConfirmedNote { start_s: n.0, end_s: n.1, pitch_midi: n.2, part: n.4, velocity: n.3 };
+                    let note = ConfirmedNote {
+                        start_s: n.0,
+                        end_s: n.1,
+                        pitch_midi: n.2,
+                        part: n.4,
+                        velocity: n.3,
+                    };
                     key.observe(&note);
                     log_event(
                         wall,
@@ -194,7 +256,15 @@ fn main() {
                 Some((_, k)) => KeyMode::Manual(*k),
                 None => KeyMode::Auto,
             };
-            engine.advance(&events, covered, &mut key, &key_mode, Accidental::Sharp, None, |e| engine_events.push(e));
+            engine.advance(
+                &events,
+                covered,
+                &mut key,
+                &key_mode,
+                Accidental::Sharp,
+                None,
+                |e| engine_events.push(e),
+            );
             let done = covered >= end;
             if done {
                 engine.finish(covered, Accidental::Sharp, |e| engine_events.push(e));
@@ -206,7 +276,12 @@ fn main() {
                 if let PipelineEvent::ChordLayer { layer, changes, .. } = e {
                     if *layer == chosen {
                         for c in changes {
-                            writeln!(out, "  t={:6.2}s  chord: {}  emit={:.2}", c.t, c.label, c.emit_s).unwrap();
+                            writeln!(
+                                out,
+                                "  t={:6.2}s  chord: {}  emit={:.2}",
+                                c.t, c.label, c.emit_s
+                            )
+                            .unwrap();
                         }
                     }
                 }

@@ -35,10 +35,22 @@ const HF_REVISION: &str = "2f6d67b2864da9499a6c0d589890c846df6bb87d";
 
 /// (file name, lowercase hex SHA-256).
 const HARMONICA_MODELS: [(&str, &str); 4] = [
-    ("cqt156.onnx", "ff88505975e9d6c3e3c413aff5748abe711dfe3e9aee1bdf57bb637e28cf1c6f"),
-    ("okarina_s.onnx", "4081b05ad1f342f4aa9736531611afe732b1b654255d34191eaf6c380c778c39"),
-    ("okarina_m.onnx", "913498037c06b4477053f93ed38bf9925adc165f979dd3eb1d2e1cf3ab25d9ef"),
-    ("okarina_l.onnx", "59ff7984cb03c852b768a5c5c6b0e1d41c240bfc163b15feb35db0a8533cea90"),
+    (
+        "cqt156.onnx",
+        "ff88505975e9d6c3e3c413aff5748abe711dfe3e9aee1bdf57bb637e28cf1c6f",
+    ),
+    (
+        "okarina_s.onnx",
+        "4081b05ad1f342f4aa9736531611afe732b1b654255d34191eaf6c380c778c39",
+    ),
+    (
+        "okarina_m.onnx",
+        "913498037c06b4477053f93ed38bf9925adc165f979dd3eb1d2e1cf3ab25d9ef",
+    ),
+    (
+        "okarina_l.onnx",
+        "59ff7984cb03c852b768a5c5c6b0e1d41c240bfc163b15feb35db0a8533cea90",
+    ),
 ];
 
 // ureq's read_to_vec() defaults to a 10MB cap; cqt156.onnx alone is ~17MB.
@@ -97,11 +109,19 @@ fn download_model(models_dir: &Path, name: &str, sha256: &str, token: Option<&st
     // which rejects a second auth mechanism: never forward Authorization on
     // redirect (this is ureq's own default; pinned explicitly since it matters
     // here).
-    let req = req.config().redirect_auth_headers(RedirectAuthHeaders::Never).build();
+    let req = req
+        .config()
+        .redirect_auth_headers(RedirectAuthHeaders::Never)
+        .build();
 
     let bytes = req
         .call()
-        .and_then(|mut resp| resp.body_mut().with_config().limit(MAX_MODEL_BYTES).read_to_vec())
+        .and_then(|mut resp| {
+            resp.body_mut()
+                .with_config()
+                .limit(MAX_MODEL_BYTES)
+                .read_to_vec()
+        })
         .unwrap_or_else(|e| {
             panic!(
                 "downloading {name} from {url}: {e}\n\
@@ -123,7 +143,8 @@ fn download_model(models_dir: &Path, name: &str, sha256: &str, token: Option<&st
     std::fs::File::create(&tmp_path)
         .and_then(|mut f| f.write_all(&bytes))
         .unwrap_or_else(|e| panic!("writing {}: {e}", tmp_path.display()));
-    std::fs::rename(&tmp_path, &path).unwrap_or_else(|e| panic!("finalizing {}: {e}", path.display()));
+    std::fs::rename(&tmp_path, &path)
+        .unwrap_or_else(|e| panic!("finalizing {}: {e}", path.display()));
 
     eprintln!("Saved {} ({} bytes)", path.display(), bytes.len());
 }
@@ -142,16 +163,26 @@ fn hf_token() -> Option<String> {
         Ok(hf_home) => PathBuf::from(hf_home).join("token"),
         Err(_) => {
             let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-            PathBuf::from(std::env::var(home_var).ok()?).join(".cache").join("huggingface").join("token")
+            PathBuf::from(std::env::var(home_var).ok()?)
+                .join(".cache")
+                .join("huggingface")
+                .join("token")
         }
     };
     let t = std::fs::read_to_string(token_path).ok()?;
     let t = t.trim();
-    if t.is_empty() { None } else { Some(t.to_string()) }
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn export_beat_models(manifest_dir: &Path, models_dir: &Path) {
@@ -177,25 +208,53 @@ fn export_beat_models(manifest_dir: &Path, models_dir: &Path) {
 
     let venv = models_dir.join(".export-venv");
     let _ = std::fs::remove_dir_all(&venv);
-    run(Command::new(&python[0]).args(&python[1..]).arg("-m").arg("venv").arg(&venv), "creating the export venv");
-    let py = if cfg!(windows) { venv.join("Scripts").join("python.exe") } else { venv.join("bin").join("python") };
+    run(
+        Command::new(&python[0])
+            .args(&python[1..])
+            .arg("-m")
+            .arg("venv")
+            .arg(&venv),
+        "creating the export venv",
+    );
+    let py = if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    };
 
-    eprintln!("Installing PyTorch (CPU) and beat_this into {} ...", venv.display());
+    eprintln!(
+        "Installing PyTorch (CPU) and beat_this into {} ...",
+        venv.display()
+    );
     let pip = |args: &[&str], what: &str| {
-        run(Command::new(&py).args(["-m", "pip", "install", "--disable-pip-version-check", "-q"]).args(args), what)
+        run(
+            Command::new(&py)
+                .args(["-m", "pip", "install", "--disable-pip-version-check", "-q"])
+                .args(args),
+            what,
+        )
     };
     // an older bundled pip (e.g. Python 3.11.4's) mis-resolves the PyTorch index's
     // dependency mirrors (typing_extensions name normalization) and fails
     pip(&["--upgrade", "pip"], "upgrading pip");
-    pip(&[&["--index-url", TORCH_INDEX][..], &TORCH_REQS[..]].concat(), "installing torch");
+    pip(
+        &[&["--index-url", TORCH_INDEX][..], &TORCH_REQS[..]].concat(),
+        "installing torch",
+    );
     pip(&OTHER_REQS, "installing beat_this / onnx");
 
     eprintln!("Exporting Beat This! small0 and the log-mel frontend ...");
-    run(Command::new(&py).arg(&script).arg(models_dir), "running export_beat_models.py");
+    run(
+        Command::new(&py).arg(&script).arg(models_dir),
+        "running export_beat_models.py",
+    );
 
     let _ = std::fs::remove_dir_all(&venv);
     for name in BEAT_MODELS {
-        assert!(models_dir.join(name).exists(), "export_beat_models.py did not write {name}");
+        assert!(
+            models_dir.join(name).exists(),
+            "export_beat_models.py did not write {name}"
+        );
     }
 }
 
@@ -209,7 +268,12 @@ fn find_python() -> Option<Vec<String>> {
     candidates.push(vec!["python".into()]);
     let check = "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)";
     candidates.into_iter().find(|c| {
-        Command::new(&c[0]).args(&c[1..]).args(["-c", check]).status().map(|s| s.success()).unwrap_or(false)
+        Command::new(&c[0])
+            .args(&c[1..])
+            .args(["-c", check])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     })
 }
 

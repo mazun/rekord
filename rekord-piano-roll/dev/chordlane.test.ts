@@ -3,24 +3,43 @@
 //   node rekord-piano-roll/dev/chordlane.test.ts
 // (Node 22.18+ strips the types itself). Prints one line per scenario and exits non-zero on a failure.
 import assert from "node:assert/strict";
-import { ChordLane, planChordUpdate, type ChordLayerId, type LayerChord, type SegmentSpan } from "../src/chordlane.ts";
-import { tensionsFor, type ChordVocabulary } from "../src/tensions.ts";
+import {
+  ChordLane,
+  type ChordLayerId,
+  type LayerChord,
+  planChordUpdate,
+  type SegmentSpan,
+} from "../src/chordlane.ts";
+import { type ChordVocabulary, tensionsFor } from "../src/tensions.ts";
 
 const BLOCK = 0.256;
 const LAG: Record<ChordLayerId, number> = { instant: 0, settled: 0.55, confirmed: 2.0 };
 const LAYERS: ChordLayerId[] = ["instant", "settled", "confirmed"];
 
 const chord = (t: number, emit_s: number, label: string): LayerChord => ({
-  t, emit_s, label, roman_numeral: null, root_pc: label === "--" ? null : 0, quality: label === "--" ? null : "maj",
+  t,
+  emit_s,
+  label,
+  roman_numeral: null,
+  root_pc: label === "--" ? null : 0,
+  quality: label === "--" ? null : "maj",
 });
 
 type Opinion = (tau: number) => string;
-const seq = (list: [number, string][]): Opinion => (tau) => {
-  let r = list[0][1];
-  for (const [t, l] of list) if (tau >= t) r = l;
-  return r;
-};
-const truth = seq([[0, "C"], [2, "Am"], [4, "F"], [6, "G"], [8, "C"]]);
+const seq =
+  (list: [number, string][]): Opinion =>
+  (tau) => {
+    let r = list[0][1];
+    for (const [t, l] of list) if (tau >= t) r = l;
+    return r;
+  };
+const truth = seq([
+  [0, "C"],
+  [2, "Am"],
+  [4, "F"],
+  [6, "G"],
+  [8, "C"],
+]);
 
 interface Drawn extends SegmentSpan {
   dying?: boolean;
@@ -28,7 +47,11 @@ interface Drawn extends SegmentSpan {
 
 /** Drives a lane block by block with layers that each decide `opinion[layer]` with their lag, and
  * counts the corrections the drawing would show. */
-function simulate(opinion: Record<ChordLayerId, Opinion>, until = 11, layers: ChordLayerId[] = LAYERS) {
+function simulate(
+  opinion: Record<ChordLayerId, Opinion>,
+  until = 11,
+  layers: ChordLayerId[] = LAYERS,
+) {
   const lane = new ChordLane();
   const lastLabel: Partial<Record<ChordLayerId, string>> = {};
   const lastDecided: Record<ChordLayerId, number> = { instant: 0, settled: 0, confirmed: 0 };
@@ -57,29 +80,45 @@ function simulate(opinion: Record<ChordLayerId, Opinion>, until = 11, layers: Ch
     if (!update) continue;
     const plan = planChordUpdate(drawn, update, prevHead);
     // what is drawn afterwards: what ended before the update's start, then the update's segments
-    const untouched = drawn.filter((d, i) => !d.dying && !(d.endS === null || d.endS > update.fromS + 1e-6) && !plan.removed.includes(i));
-    const rebuilt: Drawn[] = update.segments.map((s) => ({ startS: s.startS, endS: s.endS, label: s.chord.label }));
+    const untouched = drawn.filter(
+      (d, i) =>
+        !d.dying && !(d.endS === null || d.endS > update.fromS + 1e-6) && !plan.removed.includes(i),
+    );
+    const rebuilt: Drawn[] = update.segments.map((s) => ({
+      startS: s.startS,
+      endS: s.endS,
+      label: s.chord.label,
+    }));
     fadeOut += plan.removed.length;
     const corrections = plan.created.filter((x) => x.kind === "fade");
     fadeIn += corrections.length;
     if (plan.removed.length || corrections.length) {
-      log.push(`c=${c.toFixed(2)} out: ${plan.removed.map((i) => drawn[i].label).join(" ") || "-"}  in: ${corrections.map((x) => update.segments[x.index].chord.label).join(" ") || "-"}`);
+      log.push(
+        `c=${c.toFixed(2)} out: ${plan.removed.map((i) => drawn[i].label).join(" ") || "-"}  in: ${corrections.map((x) => update.segments[x.index].chord.label).join(" ") || "-"}`,
+      );
     }
     drawn = [...untouched, ...rebuilt];
     prevHead = update.headS;
-    for (const s of lane.segments()) if (s.endS !== null && s.startS < c - 1) shortest = Math.min(shortest, s.endS - s.startS);
+    for (const s of lane.segments())
+      if (s.endS !== null && s.startS < c - 1) shortest = Math.min(shortest, s.endS - s.startS);
   }
   return { fadeOut, fadeIn, shortest, lane, log };
 }
 
-const clean = (extra: Partial<Record<ChordLayerId, Opinion>> = {}): Record<ChordLayerId, Opinion> => ({
+const clean = (
+  extra: Partial<Record<ChordLayerId, Opinion>> = {},
+): Record<ChordLayerId, Opinion> => ({
   instant: (t) => truth(t - 0.15),
   settled: (t) => truth(t - 0.03),
   confirmed: (t) => truth(t),
   ...extra,
 });
 
-const scenarios: { name: string; opinion: Record<ChordLayerId, Opinion>; check: (r: ReturnType<typeof simulate>) => void }[] = [
+const scenarios: {
+  name: string;
+  opinion: Record<ChordLayerId, Opinion>;
+  check: (r: ReturnType<typeof simulate>) => void;
+}[] = [
   {
     name: "all layers agree, boundaries differ by up to 0.15 s",
     opinion: clean(),
@@ -92,7 +131,10 @@ const scenarios: { name: string; opinion: Record<ChordLayerId, Opinion>; check: 
   },
   {
     name: "settled adds a chord instant missed (Em)",
-    opinion: clean({ settled: (t) => (t >= 3.0 && t < 3.5 ? "Em" : truth(t - 0.03)), confirmed: (t) => (t >= 3.0 && t < 3.5 ? "Em" : truth(t)) }),
+    opinion: clean({
+      settled: (t) => (t >= 3.0 && t < 3.5 ? "Em" : truth(t - 0.03)),
+      confirmed: (t) => (t >= 3.0 && t < 3.5 ? "Em" : truth(t)),
+    }),
     check: (r) => assert.deepEqual([r.fadeOut, r.fadeIn], [0, 2]),
   },
   {
@@ -120,7 +162,7 @@ const scenarios: { name: string; opinion: Record<ChordLayerId, Opinion>; check: 
     },
   },
   {
-    name: "instant calls the whole of Am \"C\"",
+    name: 'instant calls the whole of Am "C"',
     opinion: clean({ instant: (t) => (t >= 2.0 && t < 4.0 ? "C" : truth(t - 0.15)) }),
     check: (r) => assert.deepEqual([r.fadeOut, r.fadeIn], [0, 1]),
   },
@@ -133,7 +175,10 @@ for (const s of scenarios) {
     s.check(result);
     // The finished lane is the confirmed layer's answer, whatever the faster ones said.
     const end = result.lane.segments().filter((x) => x.startS < 8);
-    assert.deepEqual(end.map((x) => x.chord.label).filter((l) => ["Em", "Dm", "X"].includes(l)), s.name.includes("adds a chord") ? ["Em"] : []);
+    assert.deepEqual(
+      end.map((x) => x.chord.label).filter((l) => ["Em", "Dm", "X"].includes(l)),
+      s.name.includes("adds a chord") ? ["Em"] : [],
+    );
     console.log(`ok   ${s.name.padEnd(58)} fade-outs ${result.fadeOut}, fade-ins ${result.fadeIn}`);
   } catch (e) {
     failed++;
@@ -145,7 +190,10 @@ for (const s of scenarios) {
 // Only the instant and the settled layer (the second step of the roadmap): a chord stays what the instant
 // layer said until the settled layer catches up, and what it says then wins.
 {
-  const r = simulate(clean({ settled: (t) => (t >= 4 ? "Dm" : truth(t - 0.03)) }), 11, ["instant", "settled"]);
+  const r = simulate(clean({ settled: (t) => (t >= 4 ? "Dm" : truth(t - 0.03)) }), 11, [
+    "instant",
+    "settled",
+  ]);
   const at = (t: number) => r.lane.at(t)?.chord.label;
   assert.equal(at(1), "C");
   assert.equal(at(5), "Dm");
@@ -158,20 +206,34 @@ for (const s of scenarios) {
   const lane = new ChordLane();
   lane.apply({ layer: "instant", changes: [chord(1, 1.2, "A♯")], decided_s: 1.2 });
   lane.apply({ layer: "instant", changes: [chord(1, 3, "B♭")], decided_s: 3 });
-  assert.deepEqual(lane.segments().map((s) => s.chord.label), ["B♭"]);
+  assert.deepEqual(
+    lane.segments().map((s) => s.chord.label),
+    ["B♭"],
+  );
   console.log("ok   a change at the same time replaces the earlier one");
 }
 
 // takeUpdate: only what changed.
 {
   const lane = new ChordLane();
-  lane.apply({ layer: "instant", changes: [chord(0, 0.1, "C"), chord(2, 2.2, "Am")], decided_s: 2.5 });
+  lane.apply({
+    layer: "instant",
+    changes: [chord(0, 0.1, "C"), chord(2, 2.2, "Am")],
+    decided_s: 2.5,
+  });
   assert.equal(lane.takeUpdate()?.segments.length, 2);
   lane.apply({ layer: "instant", changes: [], decided_s: 3 });
   const u = lane.takeUpdate();
-  assert.deepEqual(u?.segments.map((s) => s.chord.label), ["C", "Am"]); // the newest one moved, and the one before it (its end may have)
+  assert.deepEqual(
+    u?.segments.map((s) => s.chord.label),
+    ["C", "Am"],
+  ); // the newest one moved, and the one before it (its end may have)
   assert.equal(lane.takeUpdate(), null);
-  lane.apply({ layer: "settled", changes: [chord(0, 0.6, "C"), chord(2.1, 2.7, "Am")], decided_s: 2.9 });
+  lane.apply({
+    layer: "settled",
+    changes: [chord(0, 0.6, "C"), chord(2.1, 2.7, "Am")],
+    decided_s: 2.9,
+  });
   assert.ok((lane.takeUpdate()?.fromS ?? 99) <= 0); // the settled layer's first decision may change anything from its start
   console.log("ok   takeUpdate returns only the changed tail");
 }
@@ -179,8 +241,16 @@ for (const s of scenarios) {
 // Tensions over the shown chord (the vocabulary comes from the backend; this is a slice of it).
 {
   const vocabulary: ChordVocabulary = {
-    templates: [{ quality: "maj", intervals: [0, 4, 7] }, { quality: "m7", intervals: [0, 3, 7, 10] }],
-    tensions: [{ interval: 1, name: "b9" }, { interval: 2, name: "9" }, { interval: 5, name: "11" }, { interval: 9, name: "13" }],
+    templates: [
+      { quality: "maj", intervals: [0, 4, 7] },
+      { quality: "m7", intervals: [0, 3, 7, 10] },
+    ],
+    tensions: [
+      { interval: 1, name: "b9" },
+      { interval: 2, name: "9" },
+      { interval: 5, name: "11" },
+      { interval: 9, name: "13" },
+    ],
   };
   const pcs = (...p: number[]) => p.reduce((m, x) => m | (1 << x), 0);
   assert.deepEqual(tensionsFor(vocabulary, pcs(0, 4, 7), 0, "maj"), []); // C E G over C

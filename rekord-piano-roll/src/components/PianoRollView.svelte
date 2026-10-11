@@ -8,7 +8,7 @@
   } from "../debugExport.svelte";
   import { t } from "../i18n.svelte";
   import { dragSelectionAsMidi } from "../midiCopy.svelte";
-  import { PianoRoll, type NotePart } from "../pianoroll";
+  import { type NotePart, PianoRoll } from "../pianoroll";
   import {
     connectPipeline,
     startCapture,
@@ -19,8 +19,8 @@
     connectTransport,
     setPlaybackPartVisible,
   } from "../transport.svelte";
-  import PlaybackVolume from "./PlaybackVolume.svelte";
   import PlayButton from "./PlayButton.svelte";
+  import PlaybackVolume from "./PlaybackVolume.svelte";
 
   let container: HTMLElement;
   let roll: PianoRoll | null = null;

@@ -21,7 +21,10 @@ use rekord_core::beat_model;
 use rekord_core::pipeline::{run_beat_tracker, BeatLine, PipelineEvent};
 
 fn json(v: &[BeatLine]) -> String {
-    let items: Vec<String> = v.iter().map(|l| format!("[{:.4},{}]", l.t, l.bar as u8)).collect();
+    let items: Vec<String> = v
+        .iter()
+        .map(|l| format!("[{:.4},{}]", l.t, l.bar as u8))
+        .collect();
     format!("[{}]", items.join(","))
 }
 
@@ -44,13 +47,23 @@ fn main() -> Result<()> {
 
     let mut audio = load_audio(input, beat_model::SAMPLE_RATE)?;
     audio.truncate(((seconds * beat_model::SAMPLE_RATE as f64) as usize).min(audio.len()));
-    let out = Mutex::new(std::fs::File::create(output).with_context(|| format!("creating {output}"))?);
+    let out =
+        Mutex::new(std::fs::File::create(output).with_context(|| format!("creating {output}"))?);
     let n = (hop * beat_model::SAMPLE_RATE as f64).round() as usize;
-    eprintln!("replaying {:.1}s of {input} in real time ...", audio.len() as f64 / beat_model::SAMPLE_RATE as f64);
+    eprintln!(
+        "replaying {:.1}s of {input} in real time ...",
+        audio.len() as f64 / beat_model::SAMPLE_RATE as f64
+    );
 
     let t0 = Instant::now();
     let on_event = Mutex::new(|event: PipelineEvent| {
-        if let PipelineEvent::BeatLines { from_s, committed, provisional, predicted } = event {
+        if let PipelineEvent::BeatLines {
+            from_s,
+            committed,
+            provisional,
+            predicted,
+        } = event
+        {
             let wall = t0.elapsed().as_secs_f64();
             let line = format!(
                 "{{\"wall\":{wall:.4},\"from_s\":{from_s:.4},\"committed\":{},\"provisional\":{},\"predicted\":{}}}",

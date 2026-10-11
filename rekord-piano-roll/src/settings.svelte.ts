@@ -24,7 +24,9 @@ const DEFAULT_FUTURE_FRAMES = 8;
 
 function loadModelSize(): ModelSize {
   const stored = localStorage.getItem(MODEL_SIZE_STORAGE_KEY);
-  return stored === "auto" || stored === "small" || stored === "medium" || stored === "large" ? stored : DEFAULT_MODEL_SIZE;
+  return stored === "auto" || stored === "small" || stored === "medium" || stored === "large"
+    ? stored
+    : DEFAULT_MODEL_SIZE;
 }
 
 function loadAccidental(): Accidental {
@@ -75,7 +77,8 @@ function loadVoices(): Record<NotePart, Voice> {
     for (const part of PARTS) {
       const { wave, volume } = stored?.[part] ?? {};
       if (WAVES.includes(wave)) voices[part].wave = wave;
-      if (typeof volume === "number" && Number.isFinite(volume)) voices[part].volume = Math.min(1, Math.max(0, volume));
+      if (typeof volume === "number" && Number.isFinite(volume))
+        voices[part].volume = Math.min(1, Math.max(0, volume));
     }
   } catch {
     // garbled: defaults
@@ -121,7 +124,9 @@ export const settings = $state({
 export function saveVolumes(): void {
   localStorage.setItem(VOLUME_ORIGINAL_STORAGE_KEY, String(settings.volumeOriginal));
   localStorage.setItem(VOLUME_NOTES_STORAGE_KEY, String(settings.volumeNotes));
-  const voices = Object.fromEntries(Object.entries(settings.voices).map(([part, v]) => [part, { wave: v.wave, volume: v.volume }]));
+  const voices = Object.fromEntries(
+    Object.entries(settings.voices).map(([part, v]) => [part, { wave: v.wave, volume: v.volume }]),
+  );
   localStorage.setItem(VOICES_STORAGE_KEY, JSON.stringify(voices));
 }
 

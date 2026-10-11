@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { pipeline, startCapture, stopCapture } from "../pipeline.svelte";
   import { t } from "../i18n.svelte";
+  import { pipeline, startCapture, stopCapture } from "../pipeline.svelte";
 
   // One toggle instead of separate Start/Stop buttons: the icon shows what
   // clicking will do (record while stopped, stop while recording), and

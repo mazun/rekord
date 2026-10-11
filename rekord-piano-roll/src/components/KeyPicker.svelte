@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { pipeline, setKeyMode } from "../pipeline.svelte";
   import { t } from "../i18n.svelte";
+  import { pipeline, setKeyMode } from "../pipeline.svelte";
 
   // A toggle plus up/down steppers instead of a dropdown: the collapsed
   // window is only a few rows tall, so a 13-item menu opened from here

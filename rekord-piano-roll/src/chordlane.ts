@@ -118,7 +118,10 @@ export class ChordLane {
 
   /** What each layer reported (not the composed lane): its changes from `fromS` to `toS` -- plus the
    * one in effect at `fromS` -- and how far it had decided. For exporting a stretch of the recording. */
-  layerLogs(fromS: number, toS: number): Record<ChordLayerId, { decided_s: number; changes: LayerChord[] }> {
+  layerLogs(
+    fromS: number,
+    toS: number,
+  ): Record<ChordLayerId, { decided_s: number; changes: LayerChord[] }> {
     const out = {} as Record<ChordLayerId, { decided_s: number; changes: LayerChord[] }>;
     for (const id of LAYER_ORDER) {
       const { entries, decidedS } = this.logs[id];
@@ -146,10 +149,12 @@ export class ChordLane {
     const take = (id: ChordLayerId, after: number, upTo: number, laterThan = -Infinity) => {
       const layer = LAYER_ORDER.indexOf(id);
       for (const chord of this.logs[id].entries) {
-        if (chord.t > after && chord.t <= upTo && chord.t > laterThan) picked.push({ chord, layer });
+        if (chord.t > after && chord.t <= upTo && chord.t > laterThan)
+          picked.push({ chord, layer });
       }
     };
-    const lastTime = (id: ChordLayerId) => this.logs[id].entries[this.logs[id].entries.length - 1]?.t ?? -Infinity;
+    const lastTime = (id: ChordLayerId) =>
+      this.logs[id].entries[this.logs[id].entries.length - 1]?.t ?? -Infinity;
     take("confirmed", -Infinity, d2);
     take("settled", d2, d1);
     take("settled", d2 - HANDOVER_GRACE_S, d2, lastTime("confirmed"));
@@ -182,7 +187,11 @@ export class ChordLane {
     let from = Math.max(all.length - 1, 0);
     while (from > 0 && all[from].startS > this.dirtyFromS + EPS) from--;
     from = Math.max(from - 1, 0);
-    const update: LaneUpdate = { fromS: all[from]?.startS ?? -Infinity, segments: all.slice(from), headS };
+    const update: LaneUpdate = {
+      fromS: all[from]?.startS ?? -Infinity,
+      segments: all.slice(from),
+      headS,
+    };
     this.dirtyFromS = Infinity;
     this.sentHeadS = headS;
     return update;
@@ -246,7 +255,9 @@ export function planChordUpdate(
   for (const o of oldIdx) {
     update.segments.forEach((n, j) => {
       if (drawn[o].label !== n.chord.label) return;
-      const overlap = Math.min(end(drawn[o]), end({ startS: n.startS, endS: n.endS, label: "" })) - Math.max(drawn[o].startS, n.startS);
+      const overlap =
+        Math.min(end(drawn[o]), end({ startS: n.startS, endS: n.endS, label: "" })) -
+        Math.max(drawn[o].startS, n.startS);
       if (overlap > 0) pairs.push({ o, n: j, overlap });
     });
   }
@@ -263,7 +274,9 @@ export function planChordUpdate(
   const created = update.segments
     .map((s, index) => ({
       index,
-      kind: (s.layer === 0 && s.startS >= prevHeadS - HEAD_APPEARANCE_TOLERANCE_S ? "head" : "fade") as "fade" | "head",
+      kind: (s.layer === 0 && s.startS >= prevHeadS - HEAD_APPEARANCE_TOLERANCE_S
+        ? "head"
+        : "fade") as "fade" | "head",
     }))
     .filter((c) => !usedNew.has(c.index));
   return { matched, created, removed: oldIdx.filter((i) => !usedOld.has(i)) };

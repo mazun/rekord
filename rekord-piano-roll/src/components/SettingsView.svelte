@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { i18n, type Locale, setLocale, t } from "../i18n.svelte";
   import { pipeline, setAccidental } from "../pipeline.svelte";
-  import { settings, saveModelSize, saveFutureFrames, saveAccidental, type Accidental, type ModelSize } from "../settings.svelte";
-  import { i18n, t, setLocale, type Locale } from "../i18n.svelte";
+  import { type Accidental, type ModelSize, saveAccidental, saveFutureFrames, saveModelSize, settings } from "../settings.svelte";
   import Segmented from "./Segmented.svelte";
 
   let { hidden, onClose }: { hidden: boolean; onClose: () => void } = $props();

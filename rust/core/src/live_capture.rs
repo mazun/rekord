@@ -24,7 +24,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
 
 /// How often the capture worker checks whether the device has gone quiet.
 const SILENCE_POLL: Duration = Duration::from_millis(50);
@@ -112,7 +114,7 @@ pub fn spawn_loopback_capture<const N: usize>(
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device.build_input_stream(
-            stream_config.clone(),
+            stream_config,
             move |data: &[f32], _| {
                 if raw_tx.try_send(data.to_vec()).is_err() {
                     dropped_chunks_cb.fetch_add(1, Ordering::Relaxed);
@@ -122,7 +124,7 @@ pub fn spawn_loopback_capture<const N: usize>(
             None,
         ),
         cpal::SampleFormat::I16 => device.build_input_stream(
-            stream_config.clone(),
+            stream_config,
             move |data: &[i16], _| {
                 let floats: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                 if raw_tx.try_send(floats).is_err() {
@@ -132,7 +134,11 @@ pub fn spawn_loopback_capture<const N: usize>(
             err_fn,
             None,
         ),
-        other => return Err(anyhow!("unsupported sample format from loopback device: {other:?}")),
+        other => {
+            return Err(anyhow!(
+                "unsupported sample format from loopback device: {other:?}"
+            ))
+        }
     }
     .map_err(|e| anyhow!("{e}"))?;
 
@@ -144,7 +150,10 @@ pub fn spawn_loopback_capture<const N: usize>(
         let mut pending: Vec<f32> = Vec::new();
         let mut last_reported_drops = 0usize;
         if let Some(tap) = tap.as_mut() {
-            tap.begin(CaptureFormat { sample_rate: source_rate as u32, channels });
+            tap.begin(CaptureFormat {
+                sample_rate: source_rate as u32,
+                channels,
+            });
         }
         // Loopback sends nothing while nothing is playing, which would freeze the audio time
         // (every timestamp downstream) while the wall clock goes on, so the roll would draw the
@@ -224,6 +233,12 @@ fn make_resampler(from_rate: usize, to_rate: usize, chunk_size: usize) -> SincFi
         oversampling_factor: 256,
         window: WindowFunction::BlackmanHarris2,
     };
-    SincFixedIn::<f32>::new(to_rate as f64 / from_rate as f64, 2.0, params, chunk_size, 1)
-        .expect("constructing resampler")
+    SincFixedIn::<f32>::new(
+        to_rate as f64 / from_rate as f64,
+        2.0,
+        params,
+        chunk_size,
+        1,
+    )
+    .expect("constructing resampler")
 }

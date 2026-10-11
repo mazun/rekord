@@ -11,7 +11,10 @@ type MidiLayout = "vocal" | "bass" | "other" | "split";
 
 /** Drags the selection's .mid out of the window: the three parts on their own channels, or just the
  * part of the note the drag was pressed on. Resolves when the drag ends. */
-export async function dragSelectionAsMidi(part: NotePart | null, isPartShown: (part: NotePart) => boolean): Promise<void> {
+export async function dragSelectionAsMidi(
+  part: NotePart | null,
+  isPartShown: (part: NotePart) => boolean,
+): Promise<void> {
   const range = debugExport.range;
   if (!range) return;
   try {

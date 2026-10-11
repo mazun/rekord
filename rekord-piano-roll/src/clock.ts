@@ -153,7 +153,9 @@ export class PlaybackClock implements RollClock {
   }
 
   cursorS(): number {
-    let pos = this.anchor ? this.anchor.posS + (epochNowMs() - this.anchor.atEpochMs) / 1000 : this.floorS;
+    let pos = this.anchor
+      ? this.anchor.posS + (epochNowMs() - this.anchor.atEpochMs) / 1000
+      : this.floorS;
     if (this.holdS !== null) pos = Math.min(pos, this.holdS);
     return Math.min(this.endS, Math.max(this.floorS, pos));
   }

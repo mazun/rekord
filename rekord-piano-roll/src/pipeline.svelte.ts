@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ChordLayerEvent, LaneUpdate } from "./chordlane";
 import type { BeatLines, ConfirmedNote, StartedNote } from "./pianoroll";
-import { recording, type DisplayState, type RecordingInfo } from "./recording";
-import { settings, type Accidental } from "./settings.svelte";
+import { type DisplayState, type RecordingInfo, recording } from "./recording";
+import { type Accidental, settings } from "./settings.svelte";
 import type { ChordVocabulary } from "./tensions";
 import { stopPlayback } from "./transport.svelte";
 
@@ -19,7 +19,12 @@ export interface NoteModel {
 }
 
 type PipelineEvent =
-  | { type: "Started"; total_latency_s: number; note_model: NoteModel; chord_vocabulary: ChordVocabulary }
+  | {
+      type: "Started";
+      total_latency_s: number;
+      note_model: NoteModel;
+      chord_vocabulary: ChordVocabulary;
+    }
   | ({ type: "NoteStarted" } & StartedNote)
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
   | ({ type: "ChordLayer" } & ChordLayerEvent)
@@ -74,7 +79,9 @@ export function showDisplay(state: DisplayState): void {
   if (pipeline.keyName !== keyName) pipeline.keyName = keyName;
   if (pipeline.keyPc !== state.keyPc) pipeline.keyPc = state.keyPc;
   // A $state array is a proxy, so compare by content, not identity.
-  const same = state.tensions.length === pipeline.tensions.length && state.tensions.every((v, i) => v === pipeline.tensions[i]);
+  const same =
+    state.tensions.length === pipeline.tensions.length &&
+    state.tensions.every((v, i) => v === pipeline.tensions[i]);
   if (!same) pipeline.tensions = state.tensions;
   if (pipeline.bpm !== state.bpm) pipeline.bpm = state.bpm;
 }
@@ -88,10 +95,14 @@ const SHARP_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A
 const FLAT_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
 const AUTO_MINOR_KEY_NAMES = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "G♯", "A", "B♭", "B"];
 
-export function keyPairLabel(relativeMajorPc: number, mode: Accidental = settings.accidental): string {
+export function keyPairLabel(
+  relativeMajorPc: number,
+  mode: Accidental = settings.accidental,
+): string {
   const minorPc = (relativeMajorPc + 9) % 12; // -3 semitones, wrapped
   const major = mode === "sharp" ? SHARP_NAMES : FLAT_NAMES;
-  const minor = mode === "sharp" ? SHARP_NAMES : mode === "flat" ? FLAT_NAMES : AUTO_MINOR_KEY_NAMES;
+  const minor =
+    mode === "sharp" ? SHARP_NAMES : mode === "flat" ? FLAT_NAMES : AUTO_MINOR_KEY_NAMES;
   return `${major[relativeMajorPc]} Major (${minor[minorPc]} Minor)`;
 }
 
@@ -155,7 +166,11 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
     if (payload.type === "BeatLines") {
       const bpm = recording.bpmAt(Infinity);
       if (pipeline.bpm !== bpm) pipeline.bpm = bpm;
-    } else if (payload.type !== "Started" && payload.type !== "NoteStarted" && payload.type !== "NoteConfirmed") {
+    } else if (
+      payload.type !== "Started" &&
+      payload.type !== "NoteStarted" &&
+      payload.type !== "NoteConfirmed"
+    ) {
       showDisplay(recording.stateAt(Infinity));
     }
   });

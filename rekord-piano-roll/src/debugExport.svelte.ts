@@ -34,7 +34,9 @@ export async function exportSelection(): Promise<void> {
   if (!debugExport.enabled || !range || debugExport.status === "busy") return;
   debugExport.status = "busy";
   try {
-    const path = await invoke<string>("debug_export_range", { range: recording.exportRange(range) });
+    const path = await invoke<string>("debug_export_range", {
+      range: recording.exportRange(range),
+    });
     debugExport.path = path;
     debugExport.status = "done";
     console.info(`exported to ${path}`);

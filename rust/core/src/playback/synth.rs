@@ -96,7 +96,10 @@ pub struct Voices {
 
 impl Voices {
     pub fn uniform(wave: Wave, gain: f32) -> Self {
-        Self { waves: [wave; PARTS], gains: [gain; PARTS] }
+        Self {
+            waves: [wave; PARTS],
+            gains: [gain; PARTS],
+        }
     }
 }
 
@@ -105,7 +108,11 @@ fn envelope(note: &SynthNote, t: f64) -> f64 {
         return 0.0;
     }
     let attack = ((t - note.start_s) / ATTACK_S).min(1.0);
-    let release = if t <= note.end_s { 1.0 } else { (1.0 - (t - note.end_s) / RELEASE_S).max(0.0) };
+    let release = if t <= note.end_s {
+        1.0
+    } else {
+        (1.0 - (t - note.end_s) / RELEASE_S).max(0.0)
+    };
     attack * release
 }
 
@@ -115,7 +122,14 @@ fn envelope(note: &SynthNote, t: f64) -> f64 {
 /// block ended) to `voices.gains` across the block, so changing a volume or
 /// muting doesn't click. Notes of a part silent at both ends are skipped. The
 /// sum is soft-clipped (`tanh`), so `|out| < 1`.
-pub fn render_notes(notes: &[SynthNote], t0_s: f64, rate: u32, voices: &Voices, from_gains: &[f32; PARTS], out: &mut [f32]) {
+pub fn render_notes(
+    notes: &[SynthNote],
+    t0_s: f64,
+    rate: u32,
+    voices: &Voices,
+    from_gains: &[f32; PARTS],
+    out: &mut [f32],
+) {
     out.fill(0.0);
     let n = out.len();
     let dt = 1.0 / rate as f64;
@@ -124,7 +138,8 @@ pub fn render_notes(notes: &[SynthNote], t0_s: f64, rate: u32, voices: &Voices, 
     let mut sounding = 0;
     for note in &notes[..candidates] {
         let part = note.part as usize;
-        if note.end_s + RELEASE_S <= t0_s || (voices.gains[part] == 0.0 && from_gains[part] == 0.0) {
+        if note.end_s + RELEASE_S <= t0_s || (voices.gains[part] == 0.0 && from_gains[part] == 0.0)
+        {
             continue;
         }
         sounding += 1;
@@ -133,7 +148,8 @@ pub fn render_notes(notes: &[SynthNote], t0_s: f64, rate: u32, voices: &Voices, 
         }
         let freq = 440.0 * 2f64.powf((note.pitch as f64 - 69.0) / 12.0);
         let wave = voices.waves[part];
-        let amp = NOTE_AMPLITUDE * wave.level() * (0.5 + 0.5 * note.velocity.clamp(0.0, 1.0) as f64);
+        let amp =
+            NOTE_AMPLITUDE * wave.level() * (0.5 + 0.5 * note.velocity.clamp(0.0, 1.0) as f64);
         let (g0, g1) = (from_gains[part] as f64, voices.gains[part] as f64);
         let from = (((note.start_s - t0_s) / dt).floor().max(0.0)) as usize;
         let to = ((((note.end_s + RELEASE_S) - t0_s) / dt).ceil().max(0.0) as usize).min(n);
@@ -159,7 +175,13 @@ mod tests {
     const RATE: u32 = 48_000;
 
     fn note(start_s: f64, end_s: f64, pitch: u8, part: Part) -> SynthNote {
-        SynthNote { start_s, end_s, pitch, velocity: 1.0, part }
+        SynthNote {
+            start_s,
+            end_s,
+            pitch,
+            velocity: 1.0,
+            part,
+        }
     }
 
     fn render_with(notes: &[SynthNote], t0: f64, n: usize, voices: &Voices) -> Vec<f32> {
@@ -175,21 +197,42 @@ mod tests {
     #[test]
     fn a440_has_the_right_frequency_in_every_wave() {
         for wave in [Wave::Sine, Wave::Triangle, Wave::Square, Wave::Saw] {
-            let out = render_with(&[note(0.0, 1.0, 69, Part::Other)], 0.1, (RATE as f64 * 0.8) as usize, &Voices::uniform(wave, 1.0));
+            let out = render_with(
+                &[note(0.0, 1.0, 69, Part::Other)],
+                0.1,
+                (RATE as f64 * 0.8) as usize,
+                &Voices::uniform(wave, 1.0),
+            );
             let crossings = out.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count();
             // 440 Hz over 0.8 s = 352 rising zero crossings
-            assert!((crossings as i32 - 352).abs() <= 1, "{wave:?}: crossings = {crossings}");
+            assert!(
+                (crossings as i32 - 352).abs() <= 1,
+                "{wave:?}: crossings = {crossings}"
+            );
         }
     }
 
     #[test]
     fn square_and_saw_have_the_expected_shape() {
         // Away from the jumps a square sits at +-level and a sawtooth ramps up.
-        let square = render_with(&[note(0.0, 1.0, 45, Part::Other)], 0.5, 480, &Voices::uniform(Wave::Square, 1.0));
+        let square = render_with(
+            &[note(0.0, 1.0, 45, Part::Other)],
+            0.5,
+            480,
+            &Voices::uniform(Wave::Square, 1.0),
+        );
         let level = (NOTE_AMPLITUDE * Wave::Square.level()).tanh() as f32;
         assert!(square.iter().all(|s| s.abs() <= level * 1.05), "overshoot");
-        assert!(square.iter().filter(|s| s.abs() > level * 0.95).count() > 400, "mostly flat");
-        let saw = render_with(&[note(0.0, 1.0, 45, Part::Other)], 0.5, 200, &Voices::uniform(Wave::Saw, 1.0));
+        assert!(
+            square.iter().filter(|s| s.abs() > level * 0.95).count() > 400,
+            "mostly flat"
+        );
+        let saw = render_with(
+            &[note(0.0, 1.0, 45, Part::Other)],
+            0.5,
+            200,
+            &Voices::uniform(Wave::Saw, 1.0),
+        );
         let rising = saw.windows(2).filter(|w| w[1] > w[0]).count();
         assert!(rising > 190, "ramps up between jumps");
     }
@@ -198,7 +241,9 @@ mod tests {
     fn silent_before_the_onset_and_after_the_release() {
         let notes = [note(1.0, 1.5, 60, Part::Other)];
         assert!(render(&notes, 0.0, 4800).iter().all(|&s| s == 0.0));
-        assert!(render(&notes, 1.5 + RELEASE_S + 0.001, 4800).iter().all(|&s| s == 0.0));
+        assert!(render(&notes, 1.5 + RELEASE_S + 0.001, 4800)
+            .iter()
+            .all(|&s| s == 0.0));
         // starts from silence and ends back at it: no click
         let attack = render(&notes, 1.0, 8);
         assert!(attack[0].abs() < 1e-6);
@@ -208,7 +253,10 @@ mod tests {
 
     #[test]
     fn block_boundaries_do_not_change_the_waveform() {
-        let notes = [note(0.0, 0.9, 57, Part::Other), note(0.2, 0.7, 64, Part::Vocal)];
+        let notes = [
+            note(0.0, 0.9, 57, Part::Other),
+            note(0.2, 0.7, 64, Part::Vocal),
+        ];
         let mut voices = Voices::uniform(Wave::Saw, 1.0);
         voices.waves[Part::Vocal as usize] = Wave::Square;
         let whole = render_with(&notes, 0.3, 4000, &voices);
@@ -225,11 +273,16 @@ mod tests {
         let notes = [note(0.0, 1.0, 60, Part::Vocal)];
         let mut voices = Voices::uniform(Wave::Sine, 1.0);
         voices.gains[Part::Vocal as usize] = 0.0;
-        assert!(render_with(&notes, 0.1, 480, &voices).iter().all(|&s| s == 0.0));
+        assert!(render_with(&notes, 0.1, 480, &voices)
+            .iter()
+            .all(|&s| s == 0.0));
         // another part's wave doesn't change this one
         let mut other = Voices::uniform(Wave::Sine, 1.0);
         other.waves[Part::Bass as usize] = Wave::Square;
-        assert_eq!(render_with(&notes, 0.1, 480, &other), render(&notes, 0.1, 480));
+        assert_eq!(
+            render_with(&notes, 0.1, 480, &other),
+            render(&notes, 0.1, 480)
+        );
     }
 
     #[test]
@@ -244,7 +297,9 @@ mod tests {
 
     #[test]
     fn dense_passages_stay_within_range() {
-        let notes: Vec<SynthNote> = (0..120).map(|i| note(0.0, 1.0, 30 + (i % 60) as u8, Part::Other)).collect();
+        let notes: Vec<SynthNote> = (0..120)
+            .map(|i| note(0.0, 1.0, 30 + (i % 60) as u8, Part::Other))
+            .collect();
         for wave in [Wave::Sine, Wave::Square, Wave::Saw] {
             let out = render_with(&notes, 0.5, 4800, &Voices::uniform(wave, 1.0));
             assert!(out.iter().all(|s| s.abs() < 1.0));

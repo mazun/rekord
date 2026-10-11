@@ -1,7 +1,13 @@
 import { BpmTracker } from "./bpm";
-import { ChordLane, LAYER_ORDER, type ChordLayerEvent, type ChordLayerId, type LayerChord } from "./chordlane";
+import {
+  ChordLane,
+  type ChordLayerEvent,
+  type ChordLayerId,
+  LAYER_ORDER,
+  type LayerChord,
+} from "./chordlane";
 import type { BeatLines, ConfirmedNote, NotePart, StartedNote } from "./pianoroll";
-import { tensionsFor, type ChordVocabulary } from "./tensions";
+import { type ChordVocabulary, tensionsFor } from "./tensions";
 
 // How much of the past is kept (notes, chords, beat lines, and on the backend the audio itself:
 // RECORDING_HISTORY_S in audio_ring.rs) so a stopped roll can be scrolled back through it and
@@ -242,7 +248,13 @@ export class Recording {
     for (const n of this.notes) {
       const end = n.end_s ?? this.endS;
       if (end < this.startS) continue; // older than the audio that was kept
-      out.push({ start_s: n.start_s, end_s: end, pitch: n.pitch_midi, velocity: n.velocity, part: n.part });
+      out.push({
+        start_s: n.start_s,
+        end_s: end,
+        pitch: n.pitch_midi,
+        velocity: n.velocity,
+        part: n.part,
+      });
     }
     return out;
   }
@@ -252,7 +264,9 @@ export class Recording {
    * hidden on the roll are left out. */
   midiRange(selection: { startS: number; endS: number }, isPartShown: (part: NotePart) => boolean) {
     const notes = this.synthNotes()
-      .filter((n) => n.end_s > selection.startS && n.start_s < selection.endS && isPartShown(n.part))
+      .filter(
+        (n) => n.end_s > selection.startS && n.start_s < selection.endS && isPartShown(n.part),
+      )
       .map((n) => ({
         ...n,
         start_s: Math.max(n.start_s, selection.startS) - selection.startS,
@@ -277,8 +291,15 @@ export class Recording {
       lane: this.lane
         .segments()
         .filter((s) => s.startS < windowEndS && (s.endS ?? Infinity) > windowStartS)
-        .map((s) => ({ start_s: s.startS, end_s: s.endS, label: s.chord.label, layer: LAYER_ORDER[s.layer] })),
-      keys: this.keys.between(windowStartS, windowEndS).map((e) => ({ t: e.t, key_name: e.v.name })),
+        .map((s) => ({
+          start_s: s.startS,
+          end_s: s.endS,
+          label: s.chord.label,
+          layer: LAYER_ORDER[s.layer],
+        })),
+      keys: this.keys
+        .between(windowStartS, windowEndS)
+        .map((e) => ({ t: e.t, key_name: e.v.name })),
     };
   }
 
