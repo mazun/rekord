@@ -2,7 +2,7 @@
 //! per-block onset/sustain/offset probabilities (`BlockStreamer`, a port of
 //! harmonica-repro's `harmonica/infer.py::predict_song_stream`) and then
 //! into confirmed notes (`NoteTranscriber`, wrapping a `StreamingDecoder`).
-//! See harmonica_model.rs and harmonica_decode.rs for the two halves this
+//! See okarina_model.rs and okarina_decode.rs for the two halves this
 //! wires together, and harmonica-repro's docs/phase5-report.md
 //! ("ストリーミングの手順" / "音符への変換") for the spec both port.
 
@@ -11,9 +11,9 @@ use std::collections::{HashSet, VecDeque};
 use anyhow::Result;
 use ndarray::s;
 
-use crate::harmonica_decode::{ConfirmedNote, DecodedNote, NoteEvent, StreamingDecoder};
-use crate::harmonica_model::{
-    HarmonicaModel, Part, PartProbs, BLOCK_FRAMES, CHUNK, FRAME_S, HISTORY, HOP, WINDOW_SAMPLES,
+use crate::okarina_decode::{ConfirmedNote, DecodedNote, NoteEvent, StreamingDecoder};
+use crate::okarina_model::{
+    OkarinaModel, Part, PartProbs, BLOCK_FRAMES, CHUNK, FRAME_S, HISTORY, HOP, WINDOW_SAMPLES,
 };
 
 /// How long a finished note stays in `NoteTranscriber::note_events` after it
@@ -68,12 +68,12 @@ pub struct BlockProbs {
     pub parts: Vec<PartProbs>,
 }
 
-/// Feeds arbitrarily-sized audio chunks to a `HarmonicaModel` and emits
+/// Feeds arbitrarily-sized audio chunks to a `OkarinaModel` and emits
 /// `BlockProbs` every BLOCK_FRAMES (8) frames (0.256s), reproducing
 /// `predict_song_stream(..., hop_frames=8)` exactly regardless of how the
 /// caller chunks its `push` calls. See the module doc for the reference.
 pub struct BlockStreamer {
-    model: HarmonicaModel,
+    model: OkarinaModel,
     future_frames: usize,
     /// Most-recently-received audio, trimmed from the front as it stops
     /// being needed by any future window (see `drop_before`) -- memory use
@@ -91,7 +91,7 @@ pub struct BlockStreamer {
 }
 
 impl BlockStreamer {
-    pub fn new(model: HarmonicaModel, future_frames: usize) -> Self {
+    pub fn new(model: OkarinaModel, future_frames: usize) -> Self {
         assert!(
             future_frames + BLOCK_FRAMES <= CHUNK,
             "future_frames + BLOCK_FRAMES must fit in a CHUNK window"
@@ -134,7 +134,7 @@ impl BlockStreamer {
 
         debug_assert!(
             w_start.max(0) >= self.buffer_start_abs as i64,
-            "harmonica history underflow: needed sample {w_start} but buffer starts at {}",
+            "okarina history underflow: needed sample {w_start} but buffer starts at {}",
             self.buffer_start_abs
         );
         // The trailing WINDOW_SAMPLES - HISTORY samples stay 0 (the buffer is zeroed once, and
@@ -283,7 +283,7 @@ pub struct StartedNote {
 }
 
 impl NoteTranscriber {
-    pub fn new(model: HarmonicaModel, future_frames: usize) -> Self {
+    pub fn new(model: OkarinaModel, future_frames: usize) -> Self {
         let decoders = model
             .parts()
             .iter()

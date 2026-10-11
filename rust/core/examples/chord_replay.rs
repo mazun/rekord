@@ -26,9 +26,9 @@ use rekord_core::chord_layers::{
     ChordEngine, ChordLayerId, ConfirmedParams, HoldParams, LiveSettings,
 };
 use rekord_core::chord_templates;
-use rekord_core::harmonica_decode::ConfirmedNote;
-use rekord_core::harmonica_model::{Device, ModelSize, Part};
 use rekord_core::key_estimator::{KeyEstimate, KeyEstimator, Mode};
+use rekord_core::okarina_decode::ConfirmedNote;
+use rekord_core::okarina_model::{Device, ModelSize, Part};
 use rekord_core::pipeline::{KeyMode, NoteModelInfo, PipelineEvent};
 use rekord_core::spelling::Accidental;
 use std::fmt::Write as _;

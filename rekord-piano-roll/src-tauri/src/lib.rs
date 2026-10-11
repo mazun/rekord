@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
 use rekord_core::audio_ring::{RecordingInfo, RingTap, SharedRing};
-use rekord_core::harmonica_model::ModelChoice;
 use rekord_core::key_estimator::{KeyEstimate, Mode};
 use rekord_core::live_capture::CaptureTap;
+use rekord_core::okarina_model::ModelChoice;
 use rekord_core::pipeline::{
     KeyMode, LiveControls, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES,
     FUTURE_FRAME_CHOICES,

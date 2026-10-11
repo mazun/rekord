@@ -14,11 +14,11 @@ use crate::beat_model::{self, BeatModel};
 use crate::beat_tracker::{BeatGrid, BeatTracker};
 use crate::chord_layers::{ActiveChange, ChordEngine, ChordLayerId, LayerChord, LiveSettings};
 use crate::chord_templates::{self, ChordVocabulary};
-use crate::harmonica_decode::ConfirmedNote;
-use crate::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, ModelSize, Part};
-use crate::harmonica_stream::NoteTranscriber;
 use crate::key_estimator::{KeyEstimate, KeyEstimator};
 use crate::live_capture;
+use crate::okarina_decode::ConfirmedNote;
+use crate::okarina_model::{self, Device, ModelChoice, ModelSize, OkarinaModel, Part};
+use crate::okarina_stream::NoteTranscriber;
 use crate::spelling::{note_name, Accidental};
 
 pub use crate::chord_layers::ChordAt;
@@ -43,10 +43,10 @@ pub struct NoteModelConfig {
 }
 
 /// Which model/device a session actually ended up running, after `Auto` and
-/// any DirectML->CPU fallback (see `HarmonicaModel::load`) -- reported in the
+/// any DirectML->CPU fallback (see `OkarinaModel::load`) -- reported in the
 /// `Started` event so a frontend can show what's really running rather than
 /// just echoing back the user's request. `over_budget` is
-/// `HarmonicaModel::may_exceed_budget`.
+/// `OkarinaModel::may_exceed_budget`.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct NoteModelInfo {
     pub size: ModelSize,
@@ -56,7 +56,7 @@ pub struct NoteModelInfo {
 }
 
 impl NoteModelInfo {
-    pub fn of(model: &HarmonicaModel, future_frames: usize) -> Self {
+    pub fn of(model: &OkarinaModel, future_frames: usize) -> Self {
         Self {
             size: model.size(),
             device: model.device(),
@@ -126,7 +126,7 @@ pub enum PipelineEvent {
     /// small safety margin -- see `run_note_pipeline`. A frontend should
     /// anchor its display clock at this event using this figure directly,
     /// not hardcode or re-derive it. `note_model` is the model actually
-    /// loaded, after any DirectML->CPU fallback (see `HarmonicaModel::load`).
+    /// loaded, after any DirectML->CPU fallback (see `OkarinaModel::load`).
     ///
     /// `chord_vocabulary` is the chord table the tensions are computed from on the frontend (see
     /// `ActiveNotes`), so that table lives in one place, `chord_templates.rs`.
@@ -146,7 +146,7 @@ pub enum PipelineEvent {
         part: Part,
     },
     /// `velocity` is the onset probability at the note's onset frame (see
-    /// `harmonica_decode::ConfirmedNote::velocity`) -- a frontend can use it
+    /// `okarina_decode::ConfirmedNote::velocity`) -- a frontend can use it
     /// to shade/intensify the note by how strongly it sounded, correctly
     /// distinguishing notes within the same chord.
     ///
@@ -417,7 +417,7 @@ fn run_note_pipeline(
         accidental,
         beat_grid,
     } = *session;
-    let model = HarmonicaModel::load(config.choice, config.allow_directml)?;
+    let model = OkarinaModel::load(config.choice, config.allow_directml)?;
     let note_model = NoteModelInfo::of(&model, config.future_frames);
     let mut transcriber = NoteTranscriber::new(model, config.future_frames);
     let mut key_estimator = KeyEstimator::new();
@@ -432,7 +432,7 @@ fn run_note_pipeline(
 
     let (_stream, rx) = live_capture::spawn_loopback_capture(
         hop_seconds,
-        [harmonica_model::SAMPLE_RATE, beat_model::SAMPLE_RATE],
+        [okarina_model::SAMPLE_RATE, beat_model::SAMPLE_RATE],
         tap,
     )?;
     let total_latency_s = transcriber.max_note_delay_s() + hop_seconds + LATENCY_SAFETY_MARGIN_S;

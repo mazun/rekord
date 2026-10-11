@@ -21,8 +21,8 @@ pub use hold::{HoldLayer, HoldParams};
 
 use crate::beat_tracker::BeatGrid;
 use crate::chord_templates::ChordMatch;
-use crate::harmonica_decode::NoteEvent;
 use crate::key_estimator::KeyEstimate;
+use crate::okarina_decode::NoteEvent;
 use crate::spelling::Accidental;
 
 /// What's sounding at some time, if anything conclusive can be said. Kept as the matched

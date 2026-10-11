@@ -8,8 +8,8 @@ use super::evidence::{active_mask, chord_checkpoints};
 use super::hold::{HoldLayer, HoldParams};
 use super::{ChordAt, ChordLayer, ChordLayerId, LayerChange, StepCtx};
 use crate::beat_tracker::BeatGrid;
-use crate::harmonica_decode::NoteEvent;
 use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
+use crate::okarina_decode::NoteEvent;
 use crate::pipeline::{KeyMode, PipelineEvent};
 use crate::spelling::Accidental;
 
@@ -358,7 +358,7 @@ impl ChordEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harmonica_model::Part;
+    use crate::okarina_model::Part;
 
     fn chord(start: f32, end: f32, pitches: &[i32]) -> Vec<NoteEvent> {
         pitches

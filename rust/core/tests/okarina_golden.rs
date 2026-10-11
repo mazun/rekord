@@ -34,11 +34,11 @@ use std::path::{Path, PathBuf};
 
 use common::*;
 use ndarray::{s, Array2};
-use rekord_core::harmonica_decode::StreamingDecoder;
-use rekord_core::harmonica_model::{
-    Device, HarmonicaModel, ModelSize, Part, CHUNK, HOP, N_BINS, N_PITCH, WINDOW_SAMPLES,
+use rekord_core::okarina_decode::StreamingDecoder;
+use rekord_core::okarina_model::{
+    Device, ModelSize, OkarinaModel, Part, CHUNK, HOP, N_BINS, N_PITCH, WINDOW_SAMPLES,
 };
-use rekord_core::harmonica_stream::{BlockStreamer, NoteTranscriber};
+use rekord_core::okarina_stream::{BlockStreamer, NoteTranscriber};
 
 const PARTS: [Part; 3] = [Part::Vocal, Part::Bass, Part::Other];
 
@@ -143,10 +143,10 @@ fn goldens() -> Vec<Golden> {
     out
 }
 
-fn load(size: ModelSize, device: Device) -> Option<HarmonicaModel> {
+fn load(size: ModelSize, device: Device) -> Option<OkarinaModel> {
     match device {
         Device::Cpu => {
-            Some(HarmonicaModel::load_on(size, Device::Cpu).expect("cpu load must not fail"))
+            Some(OkarinaModel::load_on(size, Device::Cpu).expect("cpu load must not fail"))
         }
         Device::DirectML => try_load_dml(size),
     }
@@ -175,7 +175,7 @@ fn split_heads_parts(flat: Vec<f32>, rows: usize) -> Vec<PartTriple> {
 #[test]
 fn okarina_metadata() {
     for g in goldens() {
-        let model = HarmonicaModel::load_on(g.size, Device::Cpu).expect("cpu load must not fail");
+        let model = OkarinaModel::load_on(g.size, Device::Cpu).expect("cpu load must not fail");
         assert_eq!(model.size(), g.size);
         assert_eq!(model.parts(), &PARTS);
         for future_frames in [8, 16] {
@@ -412,7 +412,7 @@ fn okarina_future16_rows() {
         let window = g.window_probs();
 
         for (future_frames, block, rows) in [(16usize, 39usize, 132..140), (8, 40, 140..148)] {
-            let model = HarmonicaModel::load_on(g.size, Device::Cpu).unwrap();
+            let model = OkarinaModel::load_on(g.size, Device::Cpu).unwrap();
             let mut streamer = BlockStreamer::new(model, future_frames);
             let mut last_block = None;
             streamer.push(prefix, |b| last_block = Some(b)).unwrap();

@@ -264,8 +264,8 @@ impl ChordLayer for HoldLayer {
 mod tests {
     use super::*;
     use crate::chord_templates::ChordMatch;
-    use crate::harmonica_decode::NoteEvent;
-    use crate::harmonica_model::Part;
+    use crate::okarina_decode::NoteEvent;
+    use crate::okarina_model::Part;
 
     /// A block chord of `pitches` over `[start, end)`, one note per pitch.
     fn chord(start: f32, end: f32, pitches: &[i32]) -> Vec<NoteEvent> {

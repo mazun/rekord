@@ -16,7 +16,7 @@
 
 use ndarray::ArrayView2;
 
-use crate::harmonica_model::{Part, MIN_MIDI, N_PITCH};
+use crate::okarina_model::{Part, MIN_MIDI, N_PITCH};
 
 /// (start_s, end_s, midi pitch, velocity, part) -- the flat tuple form used
 /// by `NoteTranscriber::note_events` for the live in-progress note list.
@@ -37,7 +37,7 @@ pub struct ConfirmedNote {
 }
 
 /// Same as `ConfirmedNote` but in frame units, as produced by
-/// `StreamingDecoder` before `harmonica_stream` converts to seconds.
+/// `StreamingDecoder` before `okarina_stream` converts to seconds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DecodedNote {
     pub start_frame: usize,
@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_decode_candidate_decided_on_next_push() {
+    fn okarina_decode_candidate_decided_on_next_push() {
         // Frame 1's onset (0.9) is the last row of push 1; it can't be
         // decided as a candidate until push 2 supplies frame 2.
         let (on, sus) = col0(&[0.1, 0.9], &[1.0, 1.0]);
@@ -259,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_decode_candidate_at_frame_zero() {
+    fn okarina_decode_candidate_at_frame_zero() {
         // prev = on[-1] = -inf must not block frame 0 from being a candidate.
         let (on, sus) = col0(&[0.9, 0.1], &[1.0, 1.0]);
         let mut d = StreamingDecoder::new(TH_ON, TH_SUS);
@@ -277,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_decode_plateau_prefers_earlier_frame() {
+    fn okarina_decode_plateau_prefers_earlier_frame() {
         // Equal adjacent onset values: `>` on the left, `>=` on the right,
         // so only the earlier of the tied pair is a candidate.
         let (on, sus) = col0(&[0.1, 0.9, 0.9, 0.1], &[1.0, 1.0, 1.0, 1.0]);
@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_decode_sustain_drop_right_after_onset() {
+    fn okarina_decode_sustain_drop_right_after_onset() {
         // Sustain falls below threshold on the very next frame: a valid
         // 1-frame note (the algorithm's stated minimum length).
         let (on, sus) = col0(&[0.1, 0.9, 0.1], &[1.0, 1.0, 0.1]);
@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_decode_reonset_ends_previous_note() {
+    fn okarina_decode_reonset_ends_previous_note() {
         // Sustain stays high throughout, so the first note is only ended by
         // the second onset candidate, at the new candidate's own frame.
         let (on, sus) = col0(&[0.1, 0.9, 0.1, 0.9, 0.1], &[1.0; 5]);
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_decode_open_note_ends_at_finish() {
+    fn okarina_decode_open_note_ends_at_finish() {
         let (on, sus) = col0(&[0.1, 0.9, 0.1, 0.1], &[1.0; 4]);
         let mut d = StreamingDecoder::new(TH_ON, TH_SUS);
         assert_eq!(d.push(on.view(), sus.view()), vec![]);
@@ -359,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_decode_splitting_invariance() {
+    fn okarina_decode_splitting_invariance() {
         // A single pitch's onset trace with three candidates (including a
         // 2-long plateau) and no sustain-based closes, so all closes come
         // from re-onset or finish. Splitting this across push() calls in

@@ -3,14 +3,14 @@
 //! (Krumhansl-Schmuckler-style), with a switching rule (accumulated evidence, see
 //! `estimate_cusum`) so the displayed key
 //! doesn't flicker chord-to-chord. Fed exclusively from `ConfirmedNote`s
-//! (see `harmonica_decode.rs`) -- Harmonica's streaming decode emits each
-//! note exactly once (see `harmonica_stream.rs`'s `RETAINED_SECONDS`), so
+//! (see `okarina_decode.rs`) -- Harmonica's streaming decode emits each
+//! note exactly once (see `okarina_stream.rs`'s `RETAINED_SECONDS`), so
 //! each note contributes to the histogram exactly once.
 
 use std::collections::VecDeque;
 
 use crate::chord_templates::ChordMatch;
-use crate::harmonica_decode::ConfirmedNote;
+use crate::okarina_decode::ConfirmedNote;
 use crate::spelling::{key_name, Accidental};
 
 // Bellman & Budge (1999) key profiles, via
@@ -40,7 +40,7 @@ const BELLMAN_BUDGE_MINOR: [f32; 12] = [
 // finished pieces, not a live rolling window); this is a starting point
 // to tune empirically against sample_audio, mirroring the time-based-not-
 // count-based retention convention already established in
-// `harmonica_stream.rs`'s `RETAINED_SECONDS`.
+// `okarina_stream.rs`'s `RETAINED_SECONDS`.
 //
 // The numbers below were re-tuned on 2026-10-09 (docs/chord-layers.md, section 11) against
 // reference keys read off RWC-Pop's chord annotations (with look-ahead) and one song with
@@ -279,7 +279,7 @@ impl KeyEstimator {
         // Must scan and drop stale entries wherever they sit, not just at
         // the front: `observe()` is called in *confirmation* order
         // (`NoteTranscriber` emits each note exactly once, the moment its
-        // end frame is decided -- see harmonica_stream.rs -- which isn't
+        // end frame is decided -- see okarina_stream.rs -- which isn't
         // necessarily start_s order). A long-held bass note routinely gets
         // confirmed, and so pushed, after a shorter later-starting treble
         // note above it -- an everyday case in real piano playing, not an
@@ -510,7 +510,7 @@ pub fn roman_numeral(key: &KeyEstimate, chord: &ChordMatch) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harmonica_model::Part;
+    use crate::okarina_model::Part;
 
     /// Four one-second chords on `tonic` (I, IV, V, vi of the major scale) repeated for `seconds`
     /// from `from_s`, fed to the estimator as each note ends and estimated every 0.1 s. Returns

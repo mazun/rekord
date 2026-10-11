@@ -6,7 +6,7 @@
 //! Ported from harmonica-repro's `harmonica/infer.py` +
 //! `harmonica/ort_backend.py` -- see that repo's `docs/phase5-report.md` for
 //! the executable spec this follows. Streaming (window construction, block
-//! scheduling) lives in `harmonica_stream.rs`; this module is just model
+//! scheduling) lives in `okarina_stream.rs`; this module is just model
 //! loading + single-window inference, mirroring `beat_model.rs`'s split.
 
 use std::collections::HashMap;
@@ -145,7 +145,7 @@ impl std::fmt::Display for ModelSize {
 }
 
 /// What the user asked for: a fixed size, or `Auto`, which picks by hardware
-/// (see `HarmonicaModel::load`).
+/// (see `OkarinaModel::load`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelChoice {
     Auto,
@@ -174,7 +174,7 @@ pub struct PartProbs {
     pub offset: Array2<f32>,
 }
 
-/// Which execution provider a `HarmonicaModel` ended up running on --
+/// Which execution provider a `OkarinaModel` ended up running on --
 /// reported to the UI so it can show why (e.g. DirectML unavailable).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -189,7 +189,7 @@ pub enum Device {
 /// is known to corrupt output with bigger batches (see harmonica-repro's
 /// phase5-report.md "見つけた問題" -- Re:Kord never hits that path since it
 /// never batches, but keep it that way).
-pub struct HarmonicaModel {
+pub struct OkarinaModel {
     cqt: Session,
     net: Session,
     size: ModelSize,
@@ -320,7 +320,7 @@ fn extract_parts(
         .collect()
 }
 
-impl HarmonicaModel {
+impl OkarinaModel {
     /// Loads exactly `size` on exactly `device`, no fallback -- callers that
     /// want the hardware-dependent policy should use `load`.
     pub fn load_on(size: ModelSize, device: Device) -> Result<Self> {
@@ -427,7 +427,7 @@ impl HarmonicaModel {
             match Self::load_on(size, Device::DirectML) {
                 Ok(mut model) => {
                     eprintln!(
-                        "HarmonicaModel: {} on DirectML ({})",
+                        "OkarinaModel: {} on DirectML ({})",
                         size.label(),
                         match &gpu {
                             GpuClass::Discrete(name) => format!("discrete GPU {name}"),
@@ -439,7 +439,7 @@ impl HarmonicaModel {
                     return Ok(model);
                 }
                 Err(e) => {
-                    eprintln!("HarmonicaModel: DirectML load failed ({e}); falling back to the CPU")
+                    eprintln!("OkarinaModel: DirectML load failed ({e}); falling back to the CPU")
                 }
             }
         }
@@ -484,12 +484,12 @@ impl HarmonicaModel {
 
     /// audio: exactly WINDOW_SAMPLES mono 16kHz samples. Returns [CHUNK,
     /// N_BINS] |CQT| magnitudes (untrimmed -- callers zero out-of-range rows
-    /// themselves, see `harmonica_stream.rs`).
+    /// themselves, see `okarina_stream.rs`).
     pub fn cqt(&mut self, audio: &[f32]) -> Result<Array2<f32>> {
         assert_eq!(
             audio.len(),
             WINDOW_SAMPLES,
-            "harmonica cqt window must be exactly WINDOW_SAMPLES samples"
+            "okarina cqt window must be exactly WINDOW_SAMPLES samples"
         );
         let input = Tensor::from_array(([1, WINDOW_SAMPLES], audio.to_vec()))
             .map_err(|e| anyhow!("{e}"))?;
@@ -540,7 +540,7 @@ mod tests {
     const JSON: &str = r#"{"vocal": [0.25, 0.3], "bass": [0.25, 0.9], "other": [0.1, 0.2]}"#;
 
     #[test]
-    fn harmonica_thresholds_follow_the_given_part_order() {
+    fn okarina_thresholds_follow_the_given_part_order() {
         let th = parse_thresholds(JSON, &[Part::Other, Part::Vocal]).unwrap();
         assert_eq!(th, vec![(0.1, 0.2), (0.25, 0.3)]);
         let th = parse_thresholds(JSON, &PARTS).unwrap();
@@ -548,14 +548,14 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_thresholds_reject_missing_part_and_bad_json() {
+    fn okarina_thresholds_reject_missing_part_and_bad_json() {
         assert!(parse_thresholds(r#"{"vocal": [0.25, 0.3]}"#, &PARTS).is_err());
         assert!(parse_thresholds(r#"{"vocal": [0.25]}"#, &[Part::Vocal]).is_err());
         assert!(parse_thresholds("not json", &PARTS).is_err());
     }
 
     #[test]
-    fn harmonica_model_size_names_round_trip() {
+    fn okarina_model_size_names_round_trip() {
         for size in [ModelSize::Small, ModelSize::Medium, ModelSize::Large] {
             assert_eq!(size.to_string().parse::<ModelSize>().unwrap(), size);
         }
@@ -565,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn harmonica_model_choice_parses_auto_and_sizes() {
+    fn okarina_model_choice_parses_auto_and_sizes() {
         assert_eq!("auto".parse::<ModelChoice>().unwrap(), ModelChoice::Auto);
         assert_eq!("AUTO".parse::<ModelChoice>().unwrap(), ModelChoice::Auto);
         assert_eq!(

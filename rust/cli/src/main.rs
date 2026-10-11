@@ -3,9 +3,9 @@ use anyhow::{bail, Context, Result};
 use rekord_core::audio_io;
 use rekord_core::chord_layers::{ChordEngine, ChordLayerId, LiveSettings};
 use rekord_core::chord_templates::{extra_tensions, ChordMatch};
-use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, Part};
-use rekord_core::harmonica_stream::NoteTranscriber;
 use rekord_core::key_estimator::KeyEstimator;
+use rekord_core::okarina_model::{self, Device, ModelChoice, OkarinaModel, Part};
+use rekord_core::okarina_stream::NoteTranscriber;
 use rekord_core::pipeline::{
     self, midi_to_name, NoteModelConfig, NoteModelInfo, PipelineEvent, CAPTURE_HOP_S,
     DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
@@ -171,18 +171,18 @@ fn run_file(
     chord_layers: Vec<ChordLayerId>,
 ) -> Result<()> {
     println!("Loading {audio_path} ...");
-    let audio = audio_io::load_audio(audio_path, harmonica_model::SAMPLE_RATE)?;
-    let duration = audio.len() as f32 / harmonica_model::SAMPLE_RATE as f32;
+    let audio = audio_io::load_audio(audio_path, okarina_model::SAMPLE_RATE)?;
+    let duration = audio.len() as f32 / okarina_model::SAMPLE_RATE as f32;
     println!("Duration: {duration:.1}s, simulating stream with {hop_seconds:.2}s hops\n");
 
-    let model = HarmonicaModel::load(choice, allow_directml).context("loading Okarina model")?;
+    let model = OkarinaModel::load(choice, allow_directml).context("loading Okarina model")?;
     print_model_info(NoteModelInfo::of(&model, future_frames));
     let mut transcriber = NoteTranscriber::new(model, future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut chords = ChordEngine::standard();
     let mut printer = Printer::new(accidental, chord_layers);
 
-    let hop_samples = (hop_seconds * harmonica_model::SAMPLE_RATE as f32).round() as usize;
+    let hop_samples = (hop_seconds * okarina_model::SAMPLE_RATE as f32).round() as usize;
     let mut pos = 0usize;
     while pos < audio.len() {
         let end = (pos + hop_samples).min(audio.len());

@@ -23,7 +23,7 @@ use crate::beat_tracker::BeatGrid;
 use crate::chord_templates::{
     bare_fifth_triad, score_templates, ChordMatch, CHORD_TEMPLATES, TEMPLATE_COUNT,
 };
-use crate::harmonica_model::Part;
+use crate::okarina_model::Part;
 
 /// The groups of states: every (root, template), then silence. Each has 12 bass notes.
 const CHORDS: usize = 12 * TEMPLATE_COUNT;
@@ -510,8 +510,8 @@ impl ChordLayer for ConfirmedLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harmonica_decode::NoteEvent;
     use crate::key_estimator::{KeyEstimate, Mode};
+    use crate::okarina_decode::NoteEvent;
 
     fn chord(start: f32, end: f32, pitches: &[i32]) -> Vec<NoteEvent> {
         pitches

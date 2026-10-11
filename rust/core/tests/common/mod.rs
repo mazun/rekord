@@ -6,11 +6,11 @@ use std::path::Path;
 use std::time::Instant;
 
 use ndarray::{s, Array2};
-use rekord_core::harmonica_decode::DecodedNote;
-use rekord_core::harmonica_model::{
-    Device, HarmonicaModel, ModelSize, Part, FRAME_S, HOP, MIN_MIDI, N_PITCH,
+use rekord_core::okarina_decode::DecodedNote;
+use rekord_core::okarina_model::{
+    Device, ModelSize, OkarinaModel, Part, FRAME_S, HOP, MIN_MIDI, N_PITCH,
 };
-use rekord_core::harmonica_stream::{BlockProbs, BlockStreamer};
+use rekord_core::okarina_stream::{BlockProbs, BlockStreamer};
 
 pub fn read_f32_file(path: &Path) -> Vec<f32> {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
@@ -185,8 +185,8 @@ pub fn check_notes_match(
 /// Tries to load `size` on DirectML; prints a skip message and returns None
 /// if that fails (DirectML unavailable on this machine), rather than
 /// failing the test.
-pub fn try_load_dml(size: ModelSize) -> Option<HarmonicaModel> {
-    match HarmonicaModel::load_on(size, Device::DirectML) {
+pub fn try_load_dml(size: ModelSize) -> Option<OkarinaModel> {
+    match OkarinaModel::load_on(size, Device::DirectML) {
         Ok(m) => Some(m),
         Err(e) => {
             eprintln!("skipping (DirectML unavailable): {e}");
@@ -213,7 +213,7 @@ pub struct StreamResult {
 /// repeated) chunk sizes, then `finish()`s it, reassembling the full
 /// per-part [T, N_PITCH] probability arrays and per-block wall-clock timings.
 pub fn collect_stream(
-    model: HarmonicaModel,
+    model: OkarinaModel,
     audio: &[f32],
     future_frames: usize,
     chunk_sizes: &[usize],

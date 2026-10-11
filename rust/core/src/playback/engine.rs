@@ -24,7 +24,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use super::synth::{render_notes, SynthNote, Voices, Wave, PARTS};
 use crate::audio_ring::SharedRing;
-use crate::harmonica_model::Part;
+use crate::okarina_model::Part;
 
 /// Length of one rendered block.
 const BLOCK_S: f64 = 0.010;

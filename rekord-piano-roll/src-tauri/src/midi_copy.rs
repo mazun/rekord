@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use rekord_core::harmonica_model::Part;
+use rekord_core::okarina_model::Part;
 use rekord_core::playback::SynthNote;
 use serde::Deserialize;
 

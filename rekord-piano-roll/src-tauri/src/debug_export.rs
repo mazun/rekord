@@ -165,7 +165,7 @@ fn wav_bytes(rate: u32, pcm: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rekord_core::harmonica_model::Part;
+    use rekord_core::okarina_model::Part;
 
     #[test]
     fn wav_header_describes_the_data() {

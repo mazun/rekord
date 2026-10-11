@@ -1,5 +1,5 @@
 //! Tells a discrete GPU from an integrated one, so the Okarina size can be
-//! chosen automatically (see `harmonica_model::ModelChoice::Auto`).
+//! chosen automatically (see `okarina_model::ModelChoice::Auto`).
 //!
 //! DirectML runs on adapter 0 (`DirectML::default()`); the DXGI enumeration
 //! here uses the high-performance order, so its first non-software adapter is

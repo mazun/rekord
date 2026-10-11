@@ -7,9 +7,9 @@ use std::collections::BTreeSet;
 use super::{ChordAt, HoldParams};
 use crate::beat_tracker::BeatGrid;
 use crate::chord_templates::match_chroma_biased;
-use crate::harmonica_decode::NoteEvent;
-use crate::harmonica_model::Part;
 use crate::key_estimator::KeyEstimate;
+use crate::okarina_decode::NoteEvent;
+use crate::okarina_model::Part;
 
 // Sub-steps over the window when there is no bass part and the bass is taken as the lowest
 // sounding note at each of them.

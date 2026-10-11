@@ -8,7 +8,7 @@ change behavior there first, regenerate its golden vectors, then port. Don't
 tune the Rust side alone.** Both ports match the reference on the golden
 vectors; the tests skip when the golden data is absent.
 
-## Note transcription (Okarina S/M/L; `harmonica_{model,stream,decode}.rs`)
+## Note transcription (Okarina S/M/L; `okarina_{model,stream,decode}.rs`)
 
 Okarina is an unofficial Harmonica derivative (the module names predate it).
 Spec, accuracy, speed, parameter choices: `docs/phase5-report.md`,

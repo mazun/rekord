@@ -32,7 +32,7 @@ design and measurements: [docs/chord-layers.md](../docs/chord-layers.md).
 
 ## Map
 
-- Notes: `harmonica_{model,stream,decode}.rs` (file names predate Okarina);
+- Notes: `okarina_{model,stream,decode}.rs` (file names predate Okarina);
   Okarina S/M/L, all with 3 parts (vocal/bass/other), vocal notes feed only
   tensions. Size is `auto` by default (`gpu_class.rs` tells dGPU from iGPU).
   Latency is structural.

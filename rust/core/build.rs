@@ -8,7 +8,7 @@
 //!   (its internal file names are mix_{small,medium,large}_v2.onnx).
 //!   Downloaded from the Hugging Face
 //!   model repo mazun/rekord at a pinned revision and checked against
-//!   pinned SHA-256s (`fetch_harmonica_models`). That repo is private for
+//!   pinned SHA-256s (`fetch_okarina_models`). That repo is private for
 //!   now, so a read-access token is needed (HF_TOKEN, or huggingface's own
 //!   token file). The weights are for non-commercial use only, see the
 //!   model card at https://huggingface.co/mazun/rekord.
@@ -34,7 +34,7 @@ const HF_REPO: &str = "mazun/rekord";
 const HF_REVISION: &str = "2f6d67b2864da9499a6c0d589890c846df6bb87d";
 
 /// (file name, lowercase hex SHA-256).
-const HARMONICA_MODELS: [(&str, &str); 4] = [
+const OKARINA_MODELS: [(&str, &str); 4] = [
     (
         "cqt156.onnx",
         "ff88505975e9d6c3e3c413aff5748abe711dfe3e9aee1bdf57bb637e28cf1c6f",
@@ -73,16 +73,16 @@ fn main() {
     let models_dir = manifest_dir.join("models");
     std::fs::create_dir_all(&models_dir).expect("creating models/ directory");
 
-    fetch_harmonica_models(&models_dir);
+    fetch_okarina_models(&models_dir);
     export_beat_models(&manifest_dir, &models_dir);
 }
 
-fn fetch_harmonica_models(models_dir: &Path) {
+fn fetch_okarina_models(models_dir: &Path) {
     println!("cargo:rerun-if-env-changed=HF_TOKEN");
     println!("cargo:rerun-if-env-changed=HF_HOME");
     let token = hf_token();
 
-    for (name, sha256) in HARMONICA_MODELS {
+    for (name, sha256) in OKARINA_MODELS {
         let path = models_dir.join(name);
         println!("cargo:rerun-if-changed={}", path.display());
 

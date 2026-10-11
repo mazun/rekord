@@ -10,7 +10,7 @@
 
 use std::f64::consts::TAU;
 
-use crate::harmonica_model::Part;
+use crate::okarina_model::Part;
 
 /// Linear fade-in from a note's onset (avoids a click at the start).
 pub const ATTACK_S: f64 = 0.008;
