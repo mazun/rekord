@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { saveVolumes, settings, WAVES, type VoicePart, type Wave } from "../settings.svelte";
+  import { PARTS, saveVolumes, settings, WAVES, type NotePart, type Wave } from "../settings.svelte";
   import { pushPlaybackParams } from "../transport.svelte";
   import { t } from "../i18n.svelte";
 
@@ -7,8 +7,6 @@
   // overall volume, and each part's wave shape and volume, each with a mute
   // button. It lives next to the play button rather than on the settings page: opening settings stops
   // playback, and the point is to adjust the balance while listening.
-  const PARTS = ["vocal", "bass", "other"] as const;
-
   let open = $state(false);
   let root: HTMLElement;
 
@@ -58,7 +56,7 @@
   </button>
 {/snippet}
 
-{#snippet wavePicker(part: VoicePart)}
+{#snippet wavePicker(part: NotePart)}
   <div class="waves" role="radiogroup" aria-label={t(`wave.${settings.voices[part].wave}`)}>
     {#each WAVES as wave (wave)}
       <button

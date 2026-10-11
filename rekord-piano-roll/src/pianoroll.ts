@@ -2,6 +2,7 @@ import { Application, Container, Graphics, Text } from "pixi.js";
 import { planChordUpdate, type LaneSegment, type LaneUpdate } from "./chordlane";
 import { HeldClock, LiveClock, PlaybackClock, type RollClock } from "./clock";
 import { HISTORY_S } from "./recording";
+import type { NotePart } from "./settings.svelte";
 
 const MIN_PITCH = 21; // A0
 const MAX_PITCH = 108; // C8
@@ -155,7 +156,7 @@ function lerpColor(from: number, to: number, t: number): number {
 }
 
 // Which output part of the note model a note came from (rekord_core's Part).
-export type NotePart = "vocal" | "bass" | "other";
+export type { NotePart };
 
 export interface ConfirmedNote {
   start_s: number;

@@ -122,7 +122,7 @@ pub struct PredictedLine {
 /// A local beat grid: `anchor_s` is a settled provisional beat's time and `period_s` the
 /// seconds-per-beat around it (from the same last-5-beats median `predicted_lines` itself
 /// extrapolates from), usable to snap an arbitrary timestamp to the nearest fine subdivision
-/// without being limited to `lines()`'s own `MAX_AHEAD`-beat horizon.
+/// without being limited to `lines_since`'s own `MAX_AHEAD`-beat horizon.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BeatGrid {
     pub anchor_s: f64,
@@ -238,9 +238,6 @@ impl BeatTracker {
     pub fn resets(&self) -> &[(f64, f64)] {
         &self.resets
     }
-    pub fn committed_until(&self) -> f64 {
-        self.committed_until
-    }
     pub fn timing(&self) -> Timing {
         self.timing
     }
@@ -258,11 +255,8 @@ impl BeatTracker {
     pub fn spect_rows(&self) -> usize {
         self.spect_rows
     }
-    pub fn audio_len(&self) -> usize {
-        self.audio.len()
-    }
 
-    /// Default `now` for `lines()`: audio pushed so far, in seconds, minus the half-frame
+    /// Default `now` for `lines_since`: audio pushed so far, in seconds, minus the half-frame
     /// leading pad. Mirrors `OnlineTracker.lines`'s default.
     pub fn now(&self) -> f64 {
         (self.audio.len() as f64 - (N_FFT as f64 / 2.0)) / SAMPLE_RATE as f64
@@ -567,15 +561,11 @@ impl BeatTracker {
 
     // ------------------------------------------------------------------ display
 
-    /// What the piano roll shows at `now`: committed, provisional (after the committed
-    /// frontier) and predicted lines. Mirrors `OnlineTracker.lines`.
-    pub fn lines(&self, now: f64) -> Lines {
-        self.lines_since(now, f64::NEG_INFINITY)
-    }
-
-    /// `lines(now)` restricted to lines at or after `from` (what can still be on screen), so
-    /// a long session doesn't copy its whole history on every update. All four line lists
-    /// are sorted (they are only ever appended to past their last element).
+    /// What the piano roll shows at `now`, restricted to lines at or after `from` (what can
+    /// still be on screen, so a long session doesn't copy its whole history on every update):
+    /// committed, provisional (after the committed frontier) and predicted lines. Mirrors
+    /// `OnlineTracker.lines`. All four line lists are sorted (they are only ever appended to
+    /// past their last element).
     pub fn lines_since(&self, now: f64, from: f64) -> Lines {
         let (pred, _last) = predicted_lines(&self.prov_b, &self.prov_d, now + PROV_DELAY + 1.0);
         let tail = |v: &[f64], lo: f64| v[v.partition_point(|&x| x < lo)..].to_vec();

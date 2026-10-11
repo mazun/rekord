@@ -15,10 +15,8 @@ use crate::harmonica_decode::{ConfirmedNote, DecodedNote, NoteEvent, StreamingDe
 use crate::harmonica_model::{HarmonicaModel, Part, PartProbs, BLOCK_FRAMES, CHUNK, FRAME_S, HISTORY, HOP, WINDOW_SAMPLES};
 
 /// How long a finished note stays in `NoteTranscriber::note_events` after it
-/// ends. Those events are the context chord matching (`pipeline.rs`) and the
-/// melody/bass labeling (`melody_bass.rs`) look at around the notes being
-/// judged, which only needs the last few seconds; the value keeps what the
-/// basic-pitch extractor used to retain.
+/// ends. Those events are the context the chord layers (`chord_layers`) look
+/// at around the notes being judged, which only needs the last few seconds.
 pub const RETAINED_SECONDS: f32 = 3.3;
 
 /// One streaming block's output: per output part, onset/sustain/offset
@@ -214,10 +212,10 @@ impl BlockStreamer {
 }
 
 /// `BlockStreamer` + one `StreamingDecoder` per output part + a short
-/// retained-note history for display. There is no confirm margin (unlike
-/// basic-pitch's `NoteStitcher`): the streaming decode never revises a note
-/// once it's decided a note has ended, so each is emitted exactly once, the
-/// moment that becomes known -- nothing to "confirm" later.
+/// retained-note history for display. There is no confirm margin: the
+/// streaming decode never revises a note once it's decided a note has ended,
+/// so each is emitted exactly once, the moment that becomes known -- nothing
+/// to "confirm" later.
 pub struct NoteTranscriber {
     streamer: BlockStreamer,
     /// One decoder per model part, in the model's `parts()` order, each with

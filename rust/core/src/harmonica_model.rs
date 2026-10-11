@@ -397,14 +397,6 @@ impl HarmonicaModel {
         self.device
     }
 
-    /// The name of the GPU DirectML runs on, when known (`load` on DirectML).
-    pub fn gpu_name(&self) -> Option<&str> {
-        match &self.gpu {
-            GpuClass::Discrete(name) | GpuClass::Integrated(name) => Some(name),
-            GpuClass::None => None,
-        }
-    }
-
     /// Whether a block can be expected to take longer than the 0.256 s it
     /// covers: L outside a discrete GPU (273 ms on an iGPU, 278 ms on 8 CPU
     /// threads). Only a fixed choice can end up here; `Auto` never picks it.

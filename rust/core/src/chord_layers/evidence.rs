@@ -16,8 +16,8 @@ use crate::key_estimator::KeyEstimate;
 const BASS_FALLBACK_STEPS: usize = 10;
 
 /// How long each pitch class sounded in `[t - window_s, t]` among the non-vocal notes, and
-/// the same for the bass: the bass part's notes if it has any in the window, otherwise (single-part
-/// models) the lowest sounding note at evenly spaced moments.
+/// the same for the bass: the bass part's notes if it has any in the window, otherwise (the bass
+/// part is silent) the lowest sounding note at evenly spaced moments.
 ///
 /// With `decay_s > 0` a stretch of sound counts its length weighted by `exp(-age / decay_s)`, so
 /// the newest sound counts most; with 0 it counts its plain length.
@@ -70,14 +70,12 @@ pub(crate) fn window_chroma(note_events: &[NoteEvent], t: f32, window_s: f32, de
 /// no chord note has sounded for `silence_hold_s`, `None` if notes are present (or sounded just
 /// now) but nothing matched well enough / it's just a brief gap (ambiguous -- the caller should
 /// keep what it shows). Note ends are taken as exact: Harmonica's decode closes a note on the
-/// frame its sustain drops, so there's no grace period after it (basic-pitch needed 0.2 s for its
-/// ragged ends, which with Harmonica only let the previous chord linger into the next as a mixed
-/// chord, e.g. Am7 for C -> Am).
+/// frame its sustain drops, so there's no grace period after it (one would only let the previous
+/// chord linger into the next as a mixed chord, e.g. Am7 for C -> Am).
 ///
-/// With the Mix model the chord is named from the accompaniment only (bass and other): the sung
-/// melody is mostly non-chord tones, so it's kept out of the match (it still shows as a tension
-/// over the displayed chord, see `active_mask`). Vocal-only moments therefore read as silence
-/// for the chord lane. Single-part models have no vocal part, so they behave as before.
+/// The chord is named from the accompaniment only (bass and other): the sung melody is mostly
+/// non-chord tones, so it's kept out of the match (it still shows as a tension over the displayed
+/// chord, see `active_mask`). Vocal-only moments therefore read as silence for the chord lane.
 ///
 /// `prefer`/`margin`: see `match_chroma_biased`.
 pub(crate) fn evaluate_chord(
@@ -118,7 +116,7 @@ pub(crate) fn active_mask(note_events: &[NoteEvent], t: f32) -> u16 {
 // judged satisfied -- onset-only checkpoints suffice for a chord change, but a clean block chord
 // (every note onsetting together, then nothing else until the next chord's onset) generates only
 // one tightly-clustered checkpoint and then silence until whatever triggers the next one.
-// Harmonica's streaming blocks complete every 0.256s, so without this grid a solid block chord
+// The note model's streaming blocks complete every 0.256s, so without this grid a solid block chord
 // with no follow-up onset could go unconfirmed for the rest of its duration. The grid step just
 // needs to be smaller than the shortest hold; this has ample margin either way.
 pub const CHORD_CHECKPOINT_GRID_S: f32 = 0.05;

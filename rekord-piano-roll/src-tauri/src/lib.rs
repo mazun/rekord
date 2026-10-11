@@ -3,7 +3,7 @@ mod debug_export;
 mod midi_copy;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
 use rekord_core::audio_ring::{RecordingInfo, RingTap, SharedRing};
@@ -37,17 +37,21 @@ struct PlaybackState {
     session: Option<PlaybackSession>,
 }
 
+fn lock<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, String> {
+    mutex.lock().map_err(|e| e.to_string())
+}
+
 // Dropping the session stops the audio and joins its thread; that is done after
 // the state lock is released.
 fn stop_playback(state: &Mutex<PlaybackState>) -> Result<(), String> {
-    let session = state.lock().map_err(|e| e.to_string())?.session.take();
+    let session = lock(state)?.session.take();
     drop(session);
     Ok(())
 }
 
 // Runs `f` on the playback in progress, if it hasn't ended.
 fn with_playback<T>(state: &Mutex<PlaybackState>, f: impl FnOnce(&PlaybackSession) -> Result<T, String>) -> Result<T, String> {
-    let guard = state.lock().map_err(|e| e.to_string())?;
+    let guard = lock(state)?;
     match guard.session.as_ref() {
         Some(session) if !session.is_finished() => f(session),
         _ => Err("no playback".into()),
@@ -68,7 +72,7 @@ fn start_capture(
     // clears the recording being played anyway).
     stop_playback(&playback_state)?;
 
-    let mut guard = state.lock().map_err(|e| e.to_string())?;
+    let mut guard = lock(&state)?;
     if guard.handle.is_some() {
         return Ok(()); // already running
     }
@@ -87,7 +91,7 @@ fn start_capture(
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_thread = Arc::clone(&stop_flag);
     let key_mode_thread = Arc::clone(&guard.key_mode);
-    *guard.accidental.lock().map_err(|e| e.to_string())? = accidental.parse().unwrap_or_default();
+    *lock(&guard.accidental)? = accidental.parse().unwrap_or_default();
     let accidental_thread = Arc::clone(&guard.accidental);
     let app_for_thread = app.clone();
     let tap: Box<dyn CaptureTap> = Box::new(RingTap::new(Arc::clone(&ring)));
@@ -121,12 +125,12 @@ fn start_capture(
 // a manual pick doesn't need a separate major/minor choice.
 #[tauri::command]
 fn set_key_mode(state: State<Mutex<CaptureState>>, tonic_pc: Option<i32>) -> Result<(), String> {
-    let guard = state.lock().map_err(|e| e.to_string())?;
+    let guard = lock(&state)?;
     let mode = match tonic_pc {
         Some(pc) => KeyMode::Manual(KeyEstimate { tonic_pc: pc.rem_euclid(12), mode: Mode::Major }),
         None => KeyMode::Auto,
     };
-    *guard.key_mode.lock().map_err(|e| e.to_string())? = mode;
+    *lock(&guard.key_mode)? = mode;
     Ok(())
 }
 
@@ -135,8 +139,8 @@ fn set_key_mode(state: State<Mutex<CaptureState>>, tonic_pc: Option<i32>) -> Res
 // displayed chord and key in the new spelling).
 #[tauri::command]
 fn set_accidental(state: State<Mutex<CaptureState>>, accidental: String) -> Result<(), String> {
-    let guard = state.lock().map_err(|e| e.to_string())?;
-    *guard.accidental.lock().map_err(|e| e.to_string())? = accidental.parse().map_err(|e: anyhow::Error| e.to_string())?;
+    let guard = lock(&state)?;
+    *lock(&guard.accidental)? = accidental.parse().map_err(|e: anyhow::Error| e.to_string())?;
     Ok(())
 }
 
@@ -145,7 +149,7 @@ fn set_accidental(state: State<Mutex<CaptureState>>, accidental: String) -> Resu
 #[tauri::command]
 fn stop_capture(state: State<Mutex<CaptureState>>, ring: State<SharedRing>) -> Result<Option<RecordingInfo>, String> {
     let (stop_flag, handle) = {
-        let mut guard = state.lock().map_err(|e| e.to_string())?;
+        let mut guard = lock(&state)?;
         (guard.stop_flag.take(), guard.handle.take())
     };
     if let Some(flag) = stop_flag {
@@ -156,7 +160,7 @@ fn stop_capture(state: State<Mutex<CaptureState>>, ring: State<SharedRing>) -> R
         // notices the stop flag and flushes any pending notes/chord.
         let _ = handle.join();
     }
-    let info = ring.lock().map_err(|e| e.to_string())?.as_ref().map(|r| r.info());
+    let info = lock(&ring)?.as_ref().map(|r| r.info());
     Ok(info)
 }
 
@@ -176,7 +180,7 @@ async fn playback_start(
     params: PlaybackParams,
     gen: u32,
 ) -> Result<(), String> {
-    if capture.lock().map_err(|e| e.to_string())?.handle.is_some() {
+    if lock(&capture)?.handle.is_some() {
         return Err("capture is running".into());
     }
     stop_playback(&playback_state)?;
@@ -184,7 +188,7 @@ async fn playback_start(
         let _ = app.emit("playback-event", &event);
     })
     .map_err(|e| format!("{e:#}"))?;
-    playback_state.lock().map_err(|e| e.to_string())?.session = Some(session);
+    lock(&playback_state)?.session = Some(session);
     Ok(())
 }
 

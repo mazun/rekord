@@ -46,7 +46,8 @@ export type Wave = "sine" | "triangle" | "square" | "saw";
 export const WAVES: readonly Wave[] = ["sine", "triangle", "square", "saw"];
 
 /** The parts notes are labeled with. */
-export type VoicePart = "vocal" | "bass" | "other";
+export const PARTS = ["vocal", "bass", "other"] as const;
+export type NotePart = (typeof PARTS)[number];
 
 export interface Voice {
   wave: Wave;
@@ -54,7 +55,7 @@ export interface Voice {
   muted: boolean;
 }
 
-const DEFAULT_VOICES: Record<VoicePart, Voice> = {
+const DEFAULT_VOICES: Record<NotePart, Voice> = {
   vocal: { wave: "square", volume: 1, muted: false },
   bass: { wave: "triangle", volume: 1, muted: false },
   other: { wave: "sine", volume: 1, muted: false },
@@ -67,11 +68,11 @@ function loadVolume(key: string, fallback: number): number {
 }
 
 // Wave and volume per part; mute is deliberately not remembered.
-function loadVoices(): Record<VoicePart, Voice> {
+function loadVoices(): Record<NotePart, Voice> {
   const voices = structuredClone(DEFAULT_VOICES);
   try {
     const stored = JSON.parse(localStorage.getItem(VOICES_STORAGE_KEY) ?? "{}");
-    for (const part of Object.keys(voices) as VoicePart[]) {
+    for (const part of PARTS) {
       const { wave, volume } = stored?.[part] ?? {};
       if (WAVES.includes(wave)) voices[part].wave = wave;
       if (typeof volume === "number" && Number.isFinite(volume)) voices[part].volume = Math.min(1, Math.max(0, volume));

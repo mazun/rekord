@@ -1,4 +1,4 @@
-//! Shared live-session driver: turns the extractor/stitcher/chord-matching
+//! Shared live-session driver: turns the note transcription / chord-layer
 //! pipeline into a stream of `PipelineEvent`s so any frontend (the CLI's
 //! `--live` mode, a future GUI) can drive the exact same logic without
 //! duplicating it -- only what happens with each event differs.

@@ -14,7 +14,7 @@
     startCapture,
     stopCapture,
   } from "../pipeline.svelte";
-  import { saveRollZoom, settings, zoomScale } from "../settings.svelte";
+  import { PARTS, saveRollZoom, settings, zoomScale } from "../settings.svelte";
   import {
     connectTransport,
     setPlaybackPartVisible,
@@ -22,13 +22,11 @@
   import PlaybackVolume from "./PlaybackVolume.svelte";
   import PlayButton from "./PlayButton.svelte";
 
-  const PARTS = ["vocal", "bass", "other"] as const;
-
   let container: HTMLElement;
   let roll: PianoRoll | null = null;
   let hiddenParts = $state({ vocal: false, bass: false, other: false });
 
-  function togglePart(part: (typeof PARTS)[number]) {
+  function togglePart(part: NotePart) {
     hiddenParts[part] = !hiddenParts[part];
     roll?.setPartVisible(part, !hiddenParts[part]);
     // A part hidden on the roll is not sounded in playback either.

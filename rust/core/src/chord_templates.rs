@@ -155,7 +155,7 @@ pub fn bare_fifth_triad(root: usize, share: &[f32], key: &KeyEstimate) -> Option
 /// Best-scoring chord for a window's worth of notes (`key`, if known, only decides what a bare
 /// fifth is, see `diatonic_triad_for_bare_fifth`): `all` is how long each pitch class sounded
 /// in the accompaniment (summed overlap with the window, in seconds), `bass` the same for the
-/// bass part alone (or the lowest note at each moment where there is no bass part). `None` if
+/// bass part alone (or the lowest note at each moment while the bass part is silent). `None` if
 /// fewer than two pitch classes are really present, or nothing sounded at all.
 pub fn match_chroma(all: &[f32; 12], bass: &[f32; 12], key: Option<&KeyEstimate>) -> Option<ChordMatch> {
     match_chroma_biased(all, bass, key, None, 0.0)
