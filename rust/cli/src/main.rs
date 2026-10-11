@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 
 use rekord_core::audio_io;
-use rekord_core::chord_layers::{ChordEngine, ChordLayerId};
+use rekord_core::chord_layers::{ChordEngine, ChordLayerId, LiveSettings};
 use rekord_core::chord_templates::{extra_tensions, ChordMatch};
 use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, Part};
 use rekord_core::harmonica_stream::NoteTranscriber;
@@ -197,9 +197,11 @@ fn run_file(
                 &note_events,
                 covered,
                 &mut key_estimator,
-                &pipeline::KeyMode::Auto,
-                accidental,
-                None, // file mode has no beat tracker to snap chord onsets to
+                LiveSettings {
+                    key_mode: pipeline::KeyMode::Auto,
+                    accidental,
+                    beat_grid: None, // file mode has no beat tracker to snap chord onsets to
+                },
                 |e| printer.print(e),
             );
         }
@@ -214,9 +216,11 @@ fn run_file(
         &final_note_events,
         transcriber.covered_seconds(),
         &mut key_estimator,
-        &pipeline::KeyMode::Auto,
-        accidental,
-        None,
+        LiveSettings {
+            key_mode: pipeline::KeyMode::Auto,
+            accidental,
+            beat_grid: None,
+        },
         |e| printer.print(e),
     );
     chords.finish(transcriber.covered_seconds(), accidental, |e| {
@@ -247,9 +251,11 @@ fn run_live(
         config,
         hop_seconds,
         duration_s,
-        never_stop,
-        key_mode,
-        accidental_setting,
+        pipeline::LiveControls {
+            stop: never_stop,
+            key_mode,
+            accidental: accidental_setting,
+        },
         None,
         move |event| {
             if let PipelineEvent::BeatLines { committed, .. } = &event {
@@ -286,7 +292,7 @@ fn main() -> Result<()> {
                 i += 1;
                 let value = args.get(i).context("--hop expects a number")?;
                 hop = value.parse().context("--hop expects a number")?;
-                if !(hop > 0.0) {
+                if hop.is_nan() || hop <= 0.0 {
                     bail!("--hop must be greater than 0, got {hop}");
                 }
             }
@@ -336,7 +342,7 @@ fn main() -> Result<()> {
                 i += 1;
                 let value = args.get(i).context("--duration expects a number")?;
                 let parsed: f32 = value.parse().context("--duration expects a number")?;
-                if !(parsed > 0.0) {
+                if parsed.is_nan() || parsed <= 0.0 {
                     bail!("--duration must be greater than 0, got {parsed}");
                 }
                 duration = Some(parsed);

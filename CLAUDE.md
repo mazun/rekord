@@ -48,8 +48,8 @@ Set-Location rekord-piano-roll; npm run tauri dev
 
 ## Lint / format
 
-- Rust: `cargo fmt --all` and `cargo clippy --release --all-targets` (workspace
-  lints in `rust/Cargo.toml`); keep both clean.
+- Rust: `cargo fmt --all` and `cargo clippy --release --all-targets` with default
+  lints and no `allow`s; keep both clean.
 - Frontend: Biome. `npm run lint` / `npm run format` in `rekord-piano-roll/`
   (config `biome.json`; `.svelte` unused-variable rules are off because Biome
   can't see template usage — `npm run check` covers that).

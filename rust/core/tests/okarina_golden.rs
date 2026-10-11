@@ -313,12 +313,14 @@ fn run_stream_test(device: Device, tol: f32) {
             check_notes_match(
                 &notes,
                 &g.notes(probs.part),
-                &gold.0,
-                &gold.1,
-                th_on,
-                th_sus,
-                tol,
-                t,
+                &GoldenProbs {
+                    onset: &gold.0,
+                    sustain: &gold.1,
+                    th_on,
+                    th_sus,
+                    tol,
+                    t,
+                },
                 &name,
             );
             if g.note_count(probs.part) == 0 {
@@ -477,12 +479,14 @@ fn okarina_transcriber_dml() {
             check_note_keys_match(
                 &keys,
                 &g.notes(part),
-                &gold.0,
-                &gold.1,
-                th_on,
-                th_sus,
-                TOL,
-                t,
+                &GoldenProbs {
+                    onset: &gold.0,
+                    sustain: &gold.1,
+                    th_on,
+                    th_sus,
+                    tol: TOL,
+                    t,
+                },
                 &format!("okarina_transcriber {} {part:?}", g.label()),
             );
             if g.note_count(part) > 0 {

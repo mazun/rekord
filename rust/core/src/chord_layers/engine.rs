@@ -13,6 +13,16 @@ use crate::key_estimator::{roman_numeral, KeyEstimate, KeyEstimator};
 use crate::pipeline::{KeyMode, PipelineEvent};
 use crate::spelling::Accidental;
 
+/// What can change while a session runs, as it is at one `ChordEngine::advance` call.
+#[derive(Clone, Copy)]
+pub struct LiveSettings {
+    pub key_mode: KeyMode,
+    pub accidental: Accidental,
+    /// The beat tracker's current grid, if any is known yet (`None` in file mode, which has no
+    /// beat tracker).
+    pub beat_grid: Option<BeatGrid>,
+}
+
 /// One chord a layer decided, as sent to the frontend: from `t` on (until the layer's next
 /// change) the layer says `label`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -221,19 +231,21 @@ impl ChordEngine {
 
     /// Runs all layers over the checkpoints after the previous call's `covered` up to `covered`
     /// (see `chord_checkpoints`) and reports the key and every layer's new decisions.
-    /// `note_events` is what `NoteTranscriber::note_events()` returned at `covered`; `beat_grid`
-    /// is the beat tracker's current grid, if any is known yet (`None` in file mode, which has no
-    /// beat tracker).
+    /// `note_events` is what `NoteTranscriber::note_events()` returned at `covered`.
     pub fn advance(
         &mut self,
         note_events: &[NoteEvent],
         covered: f32,
         key_estimator: &mut KeyEstimator,
-        key_mode: &KeyMode,
-        accidental: Accidental,
-        beat_grid: Option<BeatGrid>,
+        settings: LiveSettings,
         mut on_event: impl FnMut(PipelineEvent),
     ) {
+        let LiveSettings {
+            key_mode,
+            accidental,
+            beat_grid,
+        } = settings;
+        let key_mode = &key_mode;
         let prev_covered = std::mem::replace(&mut self.last_covered, covered);
         for t in chord_checkpoints(note_events, prev_covered, covered) {
             // Re-evaluate the key first: it can update mid-chord, and doing this before the chords
@@ -383,9 +395,11 @@ mod tests {
                 &visible,
                 covered,
                 &mut key,
-                &KeyMode::Auto,
-                Accidental::Sharp,
-                None,
+                LiveSettings {
+                    key_mode: KeyMode::Auto,
+                    accidental: Accidental::Sharp,
+                    beat_grid: None,
+                },
                 |e| events.push(e),
             );
             if covered >= end_s {
@@ -526,9 +540,11 @@ mod tests {
                 &visible,
                 covered,
                 &mut key,
-                &KeyMode::Auto,
-                accidental,
-                None,
+                LiveSettings {
+                    key_mode: KeyMode::Auto,
+                    accidental,
+                    beat_grid: None,
+                },
                 |e| events.push(e),
             );
         }

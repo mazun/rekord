@@ -188,16 +188,7 @@ impl HoldLayer {
 impl ChordLayer for HoldLayer {
     fn step(&mut self, t: f32, ctx: &StepCtx, out: &mut Vec<LayerChange>) -> f32 {
         let p = self.params;
-        let named = evaluate_chord(
-            ctx.notes,
-            t,
-            ctx.key.as_ref(),
-            p.window_s,
-            p.decay_s,
-            p.silence_hold_s,
-            self.displayed_raw,
-            p.margin,
-        );
+        let named = evaluate_chord(ctx.notes, t, ctx.key.as_ref(), &p, self.displayed_raw);
         let raw = match named {
             Some(ChordAt::Match(m)) => Some((m.root_pc, m.quality)),
             _ => None,

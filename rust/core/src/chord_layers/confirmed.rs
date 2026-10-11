@@ -145,10 +145,14 @@ impl ConfirmedParams {
                 _ => return Err(format!("unknown key {k:?}")),
             }
         }
-        if !(next.hop_s > 0.0)
+        // `is_nan() ||` keeps NaN rejected, as the negated `>` did.
+        if next.hop_s.is_nan()
+            || next.hop_s <= 0.0
             || !(0.0..=1.0).contains(&next.forward)
-            || !(next.window_s > 0.0)
-            || !(next.memory_s > 0.0)
+            || next.window_s.is_nan()
+            || next.window_s <= 0.0
+            || next.memory_s.is_nan()
+            || next.memory_s <= 0.0
         {
             return Err("hop, w and mem must be positive, f within 0..1".into());
         }
@@ -355,9 +359,9 @@ impl ConfirmedLayer {
         let mut next = vec![0.0f32; STATES];
         let mut top = f32::NEG_INFINITY;
         let by_chord = global.0 - p.switch;
-        for g in 0..GROUPS {
+        for (g, &best_in_group) in group_best.iter().enumerate() {
             let root = g / TEMPLATE_COUNT;
-            let by_bass = group_best[g] - p.bass_switch;
+            let by_bass = best_in_group - p.bass_switch;
             for b in 0..12 {
                 let s = g * 12 + b;
                 let (mut best, mut how) = (self.dp[s], 0u8);

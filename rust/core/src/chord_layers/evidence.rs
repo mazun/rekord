@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::ChordAt;
+use super::{ChordAt, HoldParams};
 use crate::beat_tracker::BeatGrid;
 use crate::chord_templates::match_chroma_biased;
 use crate::harmonica_decode::NoteEvent;
@@ -91,12 +91,16 @@ pub(crate) fn evaluate_chord(
     note_events: &[NoteEvent],
     t: f32,
     key: Option<&KeyEstimate>,
-    window_s: f32,
-    decay_s: f32,
-    silence_hold_s: f32,
+    params: &HoldParams,
     prefer: Option<(i32, &str)>,
-    margin: f32,
 ) -> Option<ChordAt> {
+    let HoldParams {
+        window_s,
+        decay_s,
+        silence_hold_s,
+        margin,
+        ..
+    } = *params;
     let sounding = |s: f32, e: f32| s <= t + 1e-6 && e >= t;
     let any_chord_note = note_events
         .iter()
@@ -173,7 +177,7 @@ const CHORD_SNAP_SUBDIVISIONS_PER_BEAT: f64 = 4.0; // sixteenth notes
 /// later corrected: such corrections are rare in practice (confirmed live, 2026-09-27).
 pub fn snap_to_beat_grid(t: f32, grid: Option<BeatGrid>) -> f32 {
     let Some(grid) = grid else { return t };
-    if !(grid.period_s > 0.0) {
+    if grid.period_s.is_nan() || grid.period_s <= 0.0 {
         return t; // guards against a degenerate/zero period rather than trusting it blindly
     }
     let step = grid.period_s / CHORD_SNAP_SUBDIVISIONS_PER_BEAT;

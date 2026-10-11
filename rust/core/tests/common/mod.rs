@@ -75,20 +75,31 @@ pub fn frame_of(seconds: f64) -> i64 {
     (seconds / FRAME_S as f64).round() as i64
 }
 
+/// The golden reference's per-frame onset/sustain probabilities (`t` frames) with the decoder
+/// thresholds and the probability tolerance a mismatch is judged against.
+#[derive(Clone, Copy)]
+pub struct GoldenProbs<'a> {
+    pub onset: &'a Array2<f32>,
+    pub sustain: &'a Array2<f32>,
+    pub th_on: f32,
+    pub th_sus: f32,
+    pub tol: f32,
+    pub t: usize,
+}
+
 /// Whether a note-key mismatch between our decode and the golden decode is
 /// "explained" by the golden reference being within `tol` of a decision
 /// boundary near `frame` for pitch `p`: a near-threshold onset/sustain
 /// value, or a near-tied plateau, within +/-2 frames.
-pub fn near_tie(
-    onset: &Array2<f32>,
-    sustain: &Array2<f32>,
-    th_on: f32,
-    th_sus: f32,
-    frame: usize,
-    p: usize,
-    tol: f32,
-    t: usize,
-) -> bool {
+pub fn near_tie(gold: &GoldenProbs<'_>, frame: usize, p: usize) -> bool {
+    let GoldenProbs {
+        onset,
+        sustain,
+        th_on,
+        th_sus,
+        tol,
+        t,
+    } = *gold;
     if t == 0 || p >= N_PITCH {
         return false;
     }
@@ -119,12 +130,7 @@ pub fn near_tie(
 pub fn check_note_keys_match(
     ours_keys: &HashSet<(i64, i64, i32)>,
     golden: &[(f64, f64, f64)],
-    g_onset: &Array2<f32>,
-    g_sustain: &Array2<f32>,
-    th_on: f32,
-    th_sus: f32,
-    tol: f32,
-    t: usize,
+    probs: &GoldenProbs<'_>,
     label: &str,
 ) {
     let golden_keys: HashSet<(i64, i64, i32)> = golden
@@ -138,25 +144,8 @@ pub fn check_note_keys_match(
         mismatch_count += 1;
         let (start, end, midi) = *key;
         let p = (midi - MIN_MIDI).max(0) as usize;
-        let explained = near_tie(
-            g_onset,
-            g_sustain,
-            th_on,
-            th_sus,
-            start.max(0) as usize,
-            p,
-            tol,
-            t,
-        ) || near_tie(
-            g_onset,
-            g_sustain,
-            th_on,
-            th_sus,
-            end.max(0) as usize,
-            p,
-            tol,
-            t,
-        );
+        let explained =
+            near_tie(probs, start.max(0) as usize, p) || near_tie(probs, end.max(0) as usize, p);
         let which = if ours_keys.contains(key) {
             "ours-only"
         } else {
@@ -183,21 +172,14 @@ pub fn check_note_keys_match(
 pub fn check_notes_match(
     ours: &[DecodedNote],
     golden: &[(f64, f64, f64)],
-    g_onset: &Array2<f32>,
-    g_sustain: &Array2<f32>,
-    th_on: f32,
-    th_sus: f32,
-    tol: f32,
-    t: usize,
+    probs: &GoldenProbs<'_>,
     label: &str,
 ) {
     let keys: HashSet<(i64, i64, i32)> = ours
         .iter()
         .map(|n| (n.start_frame as i64, n.end_frame as i64, n.pitch_midi))
         .collect();
-    check_note_keys_match(
-        &keys, golden, g_onset, g_sustain, th_on, th_sus, tol, t, label,
-    );
+    check_note_keys_match(&keys, golden, probs, label);
 }
 
 /// Tries to load `size` on DirectML; prints a skip message and returns None

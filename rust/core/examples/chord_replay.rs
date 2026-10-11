@@ -22,7 +22,9 @@
 //! one JSON line each with `wall` = when it would arrive -- for the frontend's replay mock
 //! (`rekord-piano-roll/dev/chords.html`).
 
-use rekord_core::chord_layers::{ChordEngine, ChordLayerId, ConfirmedParams, HoldParams};
+use rekord_core::chord_layers::{
+    ChordEngine, ChordLayerId, ConfirmedParams, HoldParams, LiveSettings,
+};
 use rekord_core::chord_templates;
 use rekord_core::harmonica_decode::ConfirmedNote;
 use rekord_core::harmonica_model::{Device, ModelSize, Part};
@@ -260,9 +262,11 @@ fn main() {
                 &events,
                 covered,
                 &mut key,
-                &key_mode,
-                Accidental::Sharp,
-                None,
+                LiveSettings {
+                    key_mode,
+                    accidental: Accidental::Sharp,
+                    beat_grid: None,
+                },
                 |e| engine_events.push(e),
             );
             let done = covered >= end;

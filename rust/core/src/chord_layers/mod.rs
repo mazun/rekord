@@ -16,7 +16,7 @@ pub mod evidence;
 pub mod hold;
 
 pub use confirmed::{ConfirmedLayer, ConfirmedParams, Naming};
-pub use engine::{ActiveChange, ChordEngine, LayerChord};
+pub use engine::{ActiveChange, ChordEngine, LayerChord, LiveSettings};
 pub use hold::{HoldLayer, HoldParams};
 
 use crate::beat_tracker::BeatGrid;

@@ -12,7 +12,7 @@ use rekord_core::key_estimator::{KeyEstimate, Mode};
 use rekord_core::live_capture::CaptureTap;
 use rekord_core::spelling::Accidental;
 use rekord_core::pipeline::{
-    KeyMode, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
+    KeyMode, LiveControls, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
 };
 use rekord_core::playback::{self, PlaybackParams, PlaybackSession, SynthNote};
 use tauri::{AppHandle, Emitter, State};
@@ -101,9 +101,11 @@ fn start_capture(
             config,
             CAPTURE_HOP_S,
             None,
-            stop_flag_thread,
-            key_mode_thread,
-            accidental_thread,
+            LiveControls {
+                stop: stop_flag_thread,
+                key_mode: key_mode_thread,
+                accidental: accidental_thread,
+            },
             Some(tap),
             |event| {
                 let _ = app_for_thread.emit("pipeline-event", &event);

@@ -363,9 +363,9 @@ impl Hmm {
 
         let mut final_state = 0usize;
         let mut best = f64::NEG_INFINITY;
-        for s in 0..num_states {
-            if prev[s] > best {
-                best = prev[s];
+        for (s, &score) in prev[..num_states].iter().enumerate() {
+            if score > best {
+                best = score;
                 final_state = s;
             }
         }
@@ -491,8 +491,7 @@ impl DbnDecoder {
                 // peak = left + argmax(cropped[left:right].ravel()) // 2, first-wins tie-break.
                 let mut best_val = f64::NEG_INFINITY;
                 let mut best_flat = 0usize;
-                for k in left..right {
-                    let (bo, db) = cropped[k];
+                for (k, &(bo, db)) in cropped.iter().enumerate().take(right).skip(left) {
                     let flat0 = 2 * (k - left);
                     if bo > best_val {
                         best_val = bo;

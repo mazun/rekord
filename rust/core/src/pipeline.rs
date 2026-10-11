@@ -12,7 +12,7 @@ use anyhow::Result;
 
 use crate::beat_model::{self, BeatModel};
 use crate::beat_tracker::{BeatGrid, BeatTracker};
-use crate::chord_layers::{ActiveChange, ChordEngine, ChordLayerId, LayerChord};
+use crate::chord_layers::{ActiveChange, ChordEngine, ChordLayerId, LayerChord, LiveSettings};
 use crate::chord_templates::{self, ChordVocabulary};
 use crate::harmonica_decode::ConfirmedNote;
 use crate::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, ModelSize, Part};
@@ -335,6 +335,14 @@ pub fn emit_confirmed_notes(
     }
 }
 
+/// The handles a frontend keeps to steer a running session: `stop` ends it, and the key mode and
+/// the sharp/flat setting can be changed while it runs.
+pub struct LiveControls {
+    pub stop: Arc<AtomicBool>,
+    pub key_mode: Arc<Mutex<KeyMode>>,
+    pub accidental: Arc<Mutex<Accidental>>,
+}
+
 /// Runs a live WASAPI-loopback session, invoking `on_event` for every
 /// confirmed note, chord change and beat-line update (the latter from a
 /// second thread, hence `Send`), until `duration_s` elapses (if given),
@@ -351,9 +359,7 @@ pub fn run_live_session(
     config: NoteModelConfig,
     hop_seconds: f32,
     duration_s: Option<f32>,
-    stop: Arc<AtomicBool>,
-    key_mode: Arc<Mutex<KeyMode>>,
-    accidental: Arc<Mutex<Accidental>>,
+    controls: LiveControls,
     tap: Option<Box<dyn live_capture::CaptureTap>>,
     on_event: impl FnMut(PipelineEvent) + Send,
 ) -> Result<()> {
@@ -361,7 +367,7 @@ pub fn run_live_session(
     let beat_grid: Mutex<Option<BeatGrid>> = Mutex::new(None);
     let (beat_tx, beat_rx) = channel::<Vec<f32>>();
     std::thread::scope(|scope| {
-        let beat_stop = &*stop;
+        let beat_stop = &*controls.stop;
         let on_event_ref = &on_event;
         let beat_grid_ref = &beat_grid;
         scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref, beat_grid_ref));
@@ -370,10 +376,12 @@ pub fn run_live_session(
             config,
             hop_seconds,
             duration_s,
-            &stop,
-            &key_mode,
-            &accidental,
-            &beat_grid,
+            &Session {
+                stop: &controls.stop,
+                key_mode: &controls.key_mode,
+                accidental: &controls.accidental,
+                beat_grid: &beat_grid,
+            },
             tap,
             |chunk| {
                 let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
@@ -385,30 +393,40 @@ pub fn run_live_session(
     })
 }
 
+/// The state the note pipeline shares with the frontend (`stop`, `key_mode`, `accidental`) and
+/// the beat tracker thread (`beat_grid`).
+struct Session<'a> {
+    stop: &'a AtomicBool,
+    key_mode: &'a Mutex<KeyMode>,
+    accidental: &'a Mutex<Accidental>,
+    beat_grid: &'a Mutex<Option<BeatGrid>>,
+}
+
 fn run_note_pipeline(
     config: NoteModelConfig,
     hop_seconds: f32,
     duration_s: Option<f32>,
-    stop: &AtomicBool,
-    key_mode: &Mutex<KeyMode>,
-    accidental: &Mutex<Accidental>,
-    beat_grid: &Mutex<Option<BeatGrid>>,
+    session: &Session<'_>,
     tap: Option<Box<dyn live_capture::CaptureTap>>,
     mut on_chunk: impl FnMut(&[f32]),
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
+    let Session {
+        stop,
+        key_mode,
+        accidental,
+        beat_grid,
+    } = *session;
     let model = HarmonicaModel::load(config.choice, config.allow_directml)?;
     let note_model = NoteModelInfo::of(&model, config.future_frames);
     let mut transcriber = NoteTranscriber::new(model, config.future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut chords = ChordEngine::standard();
     // What the user can change while the session runs, as it is right now.
-    let settings_now = || {
-        (
-            *key_mode.lock().unwrap(),
-            *accidental.lock().unwrap(),
-            *beat_grid.lock().unwrap(),
-        )
+    let settings_now = || LiveSettings {
+        key_mode: *key_mode.lock().unwrap(),
+        accidental: *accidental.lock().unwrap(),
+        beat_grid: *beat_grid.lock().unwrap(),
     };
     let mut elapsed = 0.0f32;
 
@@ -452,14 +470,11 @@ fn run_note_pipeline(
                     part: n.part,
                 });
             }
-            let (current_key_mode, current_accidental, current_beat_grid) = settings_now();
             chords.advance(
                 &note_events,
                 covered,
                 &mut key_estimator,
-                &current_key_mode,
-                current_accidental,
-                current_beat_grid,
+                settings_now(),
                 &mut on_event,
             );
         }
@@ -481,19 +496,17 @@ fn run_note_pipeline(
     let final_notes = transcriber.finish()?;
     let final_note_events = transcriber.note_events();
     emit_confirmed_notes(final_notes, &mut key_estimator, &mut on_event);
-    let (current_key_mode, current_accidental, current_beat_grid) = settings_now();
+    let final_settings = settings_now();
     chords.advance(
         &final_note_events,
         transcriber.covered_seconds(),
         &mut key_estimator,
-        &current_key_mode,
-        current_accidental,
-        current_beat_grid,
+        final_settings,
         &mut on_event,
     );
     chords.finish(
         transcriber.covered_seconds(),
-        current_accidental,
+        final_settings.accidental,
         &mut on_event,
     );
 
