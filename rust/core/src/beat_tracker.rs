@@ -267,7 +267,7 @@ impl BeatTracker {
     /// last-5-diffs median `predicted_lines` uses, just returned as a reusable anchor+period
     /// instead of a couple of lookahead points.
     pub fn beat_grid(&self, now: f64) -> Option<BeatGrid> {
-        let pb_known: Vec<f64> = self.prov_b.iter().cloned().filter(|&x| x + PROV_DELAY <= now).collect();
+        let pb_known = settled(&self.prov_b, now);
         if pb_known.len() < 5 {
             return None;
         }
@@ -396,15 +396,7 @@ impl BeatTracker {
                 break;
             }
             let x = self.pend_d[0];
-            let mut best_k = 0usize;
-            let mut best_dist = f64::INFINITY;
-            for (k, &y) in self.prov_b.iter().enumerate() {
-                let dist = (y * FPS - x).abs();
-                if dist < best_dist {
-                    best_dist = dist;
-                    best_k = k;
-                }
-            }
+            let (best_k, best_dist) = nearest_beat(&self.prov_b, x).expect("prov_b is not empty");
             if !final_ && best_dist > end as f64 - x {
                 break;
             }
@@ -758,25 +750,17 @@ fn novelty_score(lmean: &[f64], lvar: &[f64], rmean: &[f64], rvar: &[f64]) -> f6
 /// stream_predict.predicted_lines, specialised to mode="prov" (the only mode online.py
 /// ever calls it with -- `cb`/COMMIT_DELAY are unused in that mode, matching the Python).
 fn predicted_lines(pb: &[f64], pd: &[f64], t: f64) -> (Vec<PredictedLine>, Option<f64>) {
-    let pb_known: Vec<f64> = pb.iter().cloned().filter(|&x| x + PROV_DELAY <= t).collect();
-    if pb_known.is_empty() {
-        return (Vec::new(), None);
-    }
+    let pb_known = settled(pb, t);
     if pb_known.len() < 5 {
         return (Vec::new(), None);
     }
     let last5 = &pb_known[pb_known.len() - 5..];
     let diffs: Vec<f64> = last5.windows(2).map(|w| w[1] - w[0]).collect();
     let big_t = median(diffs);
-    let pd_known: Vec<f64> = pd.iter().cloned().filter(|&x| x + PROV_DELAY <= t).collect();
-    let bar_len = bar_len(&pb_known, &pd_known);
+    let pd_known = settled(pd, t);
+    let bar_len = bar_len(pb_known, pd_known);
     let last = *pb_known.last().unwrap();
-    let since: Option<i64> = if !pd_known.is_empty() {
-        let last_pd = *pd_known.last().unwrap();
-        Some(pb_known.iter().filter(|&&x| x > last_pd + 1e-4).count() as i64)
-    } else {
-        None
-    };
+    let since: Option<i64> = pd_known.last().map(|&last_pd| (pb_known.len() - pb_known.partition_point(|&x| x <= last_pd + 1e-4)) as i64);
     let mut out = Vec::new();
     for k in 1..=MAX_AHEAD {
         let x = last + k as f64 * big_t;
@@ -787,6 +771,24 @@ fn predicted_lines(pb: &[f64], pd: &[f64], t: f64) -> (Vec<PredictedLine>, Optio
         out.push(PredictedLine { time: x, is_bar });
     }
     (out, Some(last))
+}
+
+/// The beats (sorted, as `prov_b`/`prov_d` are) that have settled as of `t`: a prefix, found
+/// without copying.
+fn settled(beats: &[f64], t: f64) -> &[f64] {
+    &beats[..beats.partition_point(|&x| x + PROV_DELAY <= t)]
+}
+
+/// The index of the beat (sorted, in seconds) nearest to the peak at frame `x`, with its distance
+/// in frames; ties go to the earlier beat. `None` without beats.
+fn nearest_beat(beats: &[f64], x: f64) -> Option<(usize, f64)> {
+    let after = beats.partition_point(|&y| y * FPS < x);
+    let dist = |k: usize| (beats[k] * FPS - x).abs();
+    match (after.checked_sub(1), (after < beats.len()).then_some(after)) {
+        (Some(b), Some(a)) => Some(if dist(b) <= dist(a) { (b, dist(b)) } else { (a, dist(a)) }),
+        (Some(k), None) | (None, Some(k)) => Some((k, dist(k))),
+        (None, None) => None,
+    }
 }
 
 fn lower_bound(a: &[f64], v: f64) -> usize {
@@ -836,6 +838,102 @@ mod tests {
     use crate::beat_model::golden_dir;
     use ndarray::{Array1, Array2, Ix1, Ix2};
     use ndarray_npy::NpzReader;
+
+    /// Sorted beat times around 120 BPM with some jitter, plus downbeats on every 3rd or 4th beat.
+    fn beats_and_downbeats(n: usize, seed: u64) -> (Vec<f64>, Vec<f64>) {
+        let mut state = seed;
+        let mut next = move || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as f64 / (1u64 << 31) as f64
+        };
+        let mut t = 0.3;
+        let (mut beats, mut downs) = (Vec::new(), Vec::new());
+        let mut bar = 4;
+        for i in 0..n {
+            t += 0.5 + (next() - 0.5) * 0.04;
+            beats.push(t);
+            if i % bar == 0 {
+                downs.push(t);
+                bar = 3 + (next() * 2.0) as usize;
+            }
+        }
+        (beats, downs)
+    }
+
+    /// `predicted_lines` as it was before it sliced instead of copying the settled beats.
+    fn predicted_lines_reference(pb: &[f64], pd: &[f64], t: f64) -> (Vec<PredictedLine>, Option<f64>) {
+        let pb_known: Vec<f64> = pb.iter().cloned().filter(|&x| x + PROV_DELAY <= t).collect();
+        if pb_known.len() < 5 {
+            return (Vec::new(), None);
+        }
+        let last5 = &pb_known[pb_known.len() - 5..];
+        let big_t = median(last5.windows(2).map(|w| w[1] - w[0]).collect());
+        let pd_known: Vec<f64> = pd.iter().cloned().filter(|&x| x + PROV_DELAY <= t).collect();
+        let bar_len = bar_len(&pb_known, &pd_known);
+        let last = *pb_known.last().unwrap();
+        let since: Option<i64> = pd_known.last().map(|&last_pd| pb_known.iter().filter(|&&x| x > last_pd + 1e-4).count() as i64);
+        let mut out = Vec::new();
+        for k in 1..=MAX_AHEAD {
+            let x = last + k as f64 * big_t;
+            if x > t {
+                break;
+            }
+            out.push(PredictedLine { time: x, is_bar: since.map(|s| (s + k) % bar_len == 0).unwrap_or(false) });
+        }
+        (out, Some(last))
+    }
+
+    #[test]
+    fn predicted_lines_and_grid_match_the_copying_version_at_every_time() {
+        for seed in 1..4 {
+            let (pb, pd) = beats_and_downbeats(60, seed);
+            let mut t = 0.0;
+            while t < pb.last().unwrap() + 4.0 {
+                let (got, got_last) = predicted_lines(&pb, &pd, t);
+                let (want, want_last) = predicted_lines_reference(&pb, &pd, t);
+                assert_eq!(got_last, want_last, "seed {seed}, t {t}");
+                assert_eq!(got.len(), want.len(), "seed {seed}, t {t}");
+                for (g, w) in got.iter().zip(&want) {
+                    assert_eq!((g.time, g.is_bar), (w.time, w.is_bar), "seed {seed}, t {t}");
+                }
+                t += 0.037;
+            }
+        }
+    }
+
+    #[test]
+    fn settled_is_the_filtered_prefix() {
+        let (pb, _) = beats_and_downbeats(40, 7);
+        for i in 0..400 {
+            let t = i as f64 * 0.06;
+            let want: Vec<f64> = pb.iter().cloned().filter(|&x| x + PROV_DELAY <= t).collect();
+            assert_eq!(settled(&pb, t), want.as_slice(), "t {t}");
+        }
+    }
+
+    #[test]
+    fn nearest_beat_agrees_with_a_scan_and_prefers_the_earlier_on_ties() {
+        let (pb, _) = beats_and_downbeats(40, 3);
+        let scan = |x: f64| {
+            let (mut best_k, mut best_dist) = (0usize, f64::INFINITY);
+            for (k, &y) in pb.iter().enumerate() {
+                let dist = (y * FPS - x).abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_k = k;
+                }
+            }
+            (best_k, best_dist)
+        };
+        for i in -50..2200 {
+            let x = i as f64 * 0.37;
+            assert_eq!(nearest_beat(&pb, x), Some(scan(x)), "x {x}");
+        }
+        // exactly halfway between two beats
+        let mid = (pb[5] * FPS + pb[6] * FPS) / 2.0;
+        assert_eq!(nearest_beat(&pb, mid).map(|(k, _)| k), Some(scan(mid).0));
+        assert_eq!(nearest_beat(&[], 3.0), None);
+    }
 
     #[test]
     fn matches_python_golden_stream() {

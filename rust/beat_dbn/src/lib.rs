@@ -203,7 +203,7 @@ fn build_transitions(ss: &StateSpace, lambda: f64) -> Transitions {
 struct Scratch {
     prev: Vec<f64>,
     cur: Vec<f64>,
-    backtrack: Vec<u32>,
+    backtrack: Vec<u16>,
 }
 
 /// One fully-built HMM (state space + transition + observation model) for a
@@ -216,7 +216,7 @@ struct Hmm {
     fpred_pointers: Vec<u32>,
     fpred_orig: Vec<u32>,
     fpred_logprob: Vec<f64>,
-    scratch: std::cell::RefCell<Scratch>,
+    scratch: std::sync::Mutex<Scratch>,
 }
 
 impl Hmm {
@@ -253,7 +253,7 @@ impl Hmm {
             fpred_pointers: tm.fpred_pointers,
             fpred_orig: tm.fpred_orig,
             fpred_logprob: tm.fpred_logprob,
-            scratch: std::cell::RefCell::new(Scratch {
+            scratch: std::sync::Mutex::new(Scratch {
                 prev: vec![0.0; num_states],
                 cur: vec![0.0; num_states],
                 backtrack: Vec::new(),
@@ -270,7 +270,8 @@ impl Hmm {
             return None;
         }
         let num_states = self.num_states;
-        let mut scratch = self.scratch.borrow_mut();
+        assert!(num_states <= usize::from(u16::MAX) + 1, "backtrack entries are u16");
+        let mut scratch = self.scratch.lock().expect("Viterbi scratch lock");
         let Scratch { prev, cur, backtrack } = &mut *scratch;
 
         let neg_ln_n = -(num_states as f64).ln();
@@ -312,14 +313,14 @@ impl Hmm {
                         }
                     }
                     cur[st] = best + dens[self.om_pointer[st] as usize];
-                    bt_row[st] = best_prev;
+                    bt_row[st] = best_prev as u16;
                     fi += 1;
                 } else {
                     // st == 0 is always a first state (the first bucket of beat
                     // 0 starts at state 0), so st - 1 never underflows here.
                     let orig = (st - 1) as u32;
                     cur[st] = prev[orig as usize] + dens[self.om_pointer[st] as usize];
-                    bt_row[st] = orig;
+                    bt_row[st] = orig as u16;
                 }
             }
             std::mem::swap(prev, cur);
@@ -341,7 +342,7 @@ impl Hmm {
         let mut state = final_state as u32;
         for t in (0..num_frames).rev() {
             path[t] = state;
-            state = backtrack[t * num_states + state as usize];
+            state = u32::from(backtrack[t * num_states + state as usize]);
         }
         Some((path, best))
     }
@@ -358,6 +359,27 @@ pub struct DbnDecoder {
 impl DbnDecoder {
     pub fn new(fps: f64) -> Self {
         DbnDecoder { fps, hmm3: Hmm::new(3, fps), hmm4: Hmm::new(4, fps) }
+    }
+
+    /// 3-6. Run Viterbi for beats_per_bar in {3, 4}; 7. pick the larger log_prob, ties keeping
+    /// bpb=3.
+    fn best_path(&self, cropped: &[(f64, f64)]) -> Option<(&Hmm, Vec<u32>)> {
+        // Each model has its own scratch space, so the two runs go side by side.
+        let (run3, run4) = std::thread::scope(|scope| {
+            let run4 = scope.spawn(|| self.hmm4.viterbi(cropped));
+            (self.hmm3.viterbi(cropped), run4.join().expect("the bpb=4 Viterbi run panicked"))
+        });
+        let mut best_log_prob = f64::NEG_INFINITY;
+        let mut best: Option<(&Hmm, Vec<u32>)> = None;
+        for (hmm, run) in [(&self.hmm3, run3), (&self.hmm4, run4)] {
+            if let Some((path, log_prob)) = run {
+                if log_prob > best_log_prob {
+                    best_log_prob = log_prob;
+                    best = Some((hmm, path));
+                }
+            }
+        }
+        best
     }
 
     /// `beat` = P(beat incl. downbeat), `down` = P(downbeat), one value per frame.
@@ -401,19 +423,7 @@ impl DbnDecoder {
         };
         let cropped = &observations[first..last];
 
-        // 3-6. Run Viterbi for beats_per_bar in {3, 4}; 7. pick the larger
-        // log_prob, ties keeping bpb=3 (tried first).
-        let mut best_log_prob = f64::NEG_INFINITY;
-        let mut best: Option<(&Hmm, Vec<u32>)> = None;
-        for hmm in [&self.hmm3, &self.hmm4] {
-            if let Some((path, log_prob)) = hmm.viterbi(cropped) {
-                if log_prob > best_log_prob {
-                    best_log_prob = log_prob;
-                    best = Some((hmm, path));
-                }
-            }
-        }
-        let Some((hmm, path)) = best else {
+        let Some((hmm, path)) = self.best_path(cropped) else {
             return (Vec::new(), Vec::new());
         };
 
@@ -511,6 +521,41 @@ mod tests {
             }
         }
         println!("all 8 golden windows matched exactly (<=1e-9)");
+    }
+
+    /// Activations of a steady 120 BPM beat (a peak every 25 frames) in `bar` beats per bar.
+    fn synthetic_activations(frames: usize, bar: usize) -> (Vec<f32>, Vec<f32>) {
+        let (mut beat, mut down) = (vec![0.02f32; frames], vec![0.01f32; frames]);
+        for (k, f) in (5..frames).step_by(25).enumerate() {
+            beat[f] = 0.9;
+            if k % bar == 0 {
+                down[f] = 0.8;
+            }
+        }
+        (beat, down)
+    }
+
+    /// Both bar lengths through the whole decoder, against the pair of Viterbi runs done one
+    /// after the other: the same model must win with the same path, repeatedly (the scratch
+    /// space is reused between calls).
+    #[test]
+    fn best_path_is_the_better_of_the_two_sequential_runs() {
+        let decoder = DbnDecoder::new(50.0);
+        for bar in [3, 4] {
+            let (beat, down) = synthetic_activations(500, bar);
+            let obs: Vec<(f64, f64)> = beat.iter().zip(&down).map(|(&b, &d)| (((b - d).max(0.001)) as f64, d as f64)).collect();
+            let first = decoder.hmm3.viterbi(&obs).expect("a path for 3");
+            let second = decoder.hmm4.viterbi(&obs).expect("a path for 4");
+            let (want_hmm, want_path) = if second.1 > first.1 { (&decoder.hmm4, second.0) } else { (&decoder.hmm3, first.0) };
+            for _ in 0..3 {
+                let (hmm, path) = decoder.best_path(&obs).expect("a path");
+                assert!(std::ptr::eq(hmm, want_hmm), "bar {bar}: the other model won");
+                assert_eq!(path, want_path, "bar {bar}");
+            }
+            let (beats, downs) = decoder.decode(&beat, &down);
+            assert!(beats.len() >= 15, "bar {bar}: {} beats", beats.len());
+            assert!(!downs.is_empty(), "bar {bar}");
+        }
     }
 
     #[test]

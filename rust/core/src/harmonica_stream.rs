@@ -19,6 +19,33 @@ use crate::harmonica_model::{HarmonicaModel, Part, PartProbs, BLOCK_FRAMES, CHUN
 /// at around the notes being judged, which only needs the last few seconds.
 pub const RETAINED_SECONDS: f32 = 3.3;
 
+/// Writes the stream's samples `[w_start, w_start + out.len())` into `out`: 0.0 before the
+/// stream started and past what has been received (the "future audio is never used" rule), else
+/// the real samples. `buffer` holds the samples from absolute index `buffer_start_abs` on;
+/// `total_received` is how many the stream has had in all.
+fn fill_history(out: &mut [f32], buffer: &VecDeque<f32>, buffer_start_abs: usize, total_received: usize, w_start: i64) {
+    out.fill(0.0);
+    let w_end = w_start + out.len() as i64;
+    // The absolute range that exists both in the stream and still in the buffer.
+    let lo = w_start.max(buffer_start_abs as i64);
+    let hi = w_end.min(total_received as i64).min((buffer_start_abs + buffer.len()) as i64);
+    if hi <= lo {
+        return;
+    }
+    let (from, to) = (lo as usize - buffer_start_abs, hi as usize - buffer_start_abs);
+    let out = &mut out[(lo - w_start) as usize..(hi - w_start) as usize];
+    let n = out.len();
+    let (front, back) = buffer.as_slices();
+    let in_front = front.len().min(to).saturating_sub(from);
+    if in_front > 0 {
+        out[..in_front].copy_from_slice(&front[from..from + in_front]);
+    }
+    if in_front < n {
+        let back_from = from + in_front - front.len();
+        out[in_front..].copy_from_slice(&back[back_from..back_from + n - in_front]);
+    }
+}
+
 /// One streaming block's output: per output part, onset/sustain/offset
 /// probabilities for frames `[first_frame, first_frame + rows)`, normally
 /// BLOCK_FRAMES (8) rows, fewer only for the final block(s) emitted by
@@ -45,6 +72,9 @@ pub struct BlockStreamer {
     total_received: usize,
     next_block: usize,
     finished: bool,
+    /// The model's input window, kept between blocks: `fill_history` rewrites its first HISTORY
+    /// samples, the rest stays 0.
+    window: Vec<f32>,
 }
 
 impl BlockStreamer {
@@ -58,36 +88,12 @@ impl BlockStreamer {
             total_received: 0,
             next_block: 0,
             finished: false,
+            window: vec![0.0; WINDOW_SAMPLES],
         }
     }
 
     pub fn blocks_done(&self) -> usize {
         self.next_block
-    }
-
-    /// Sample `abs` (an absolute index into the whole stream, possibly
-    /// negative or not-yet-received): 0.0 before the stream started or past
-    /// what's been received (the "future audio is never used" rule), else
-    /// the real sample.
-    fn read_sample(&self, abs: i64) -> f32 {
-        if abs < 0 {
-            return 0.0;
-        }
-        let abs = abs as usize;
-        if abs >= self.total_received {
-            return 0.0;
-        }
-        debug_assert!(
-            abs >= self.buffer_start_abs,
-            "harmonica history underflow: needed sample {abs} but buffer starts at {}",
-            self.buffer_start_abs
-        );
-        let idx = abs.wrapping_sub(self.buffer_start_abs);
-        if idx < self.buffer.len() {
-            self.buffer[idx]
-        } else {
-            0.0
-        }
     }
 
     fn block_last_frame(&self, b: usize) -> usize {
@@ -110,14 +116,17 @@ impl BlockStreamer {
         let last = self.block_last_frame(b);
         let w_start = Self::window_start_abs(last);
 
-        let mut window = vec![0f32; WINDOW_SAMPLES];
-        for (i, sample) in window.iter_mut().enumerate().take(HISTORY) {
-            *sample = self.read_sample(w_start + i as i64);
-        }
-        // The trailing WINDOW_SAMPLES - HISTORY samples stay 0: future audio
-        // is never used, whether or not it actually exists yet.
+        debug_assert!(
+            w_start.max(0) >= self.buffer_start_abs as i64,
+            "harmonica history underflow: needed sample {w_start} but buffer starts at {}",
+            self.buffer_start_abs
+        );
+        // The trailing WINDOW_SAMPLES - HISTORY samples stay 0 (the buffer is zeroed once, and
+        // only its first HISTORY samples are ever written): future audio is never used, whether
+        // or not it actually exists yet.
+        fill_history(&mut self.window[..HISTORY], &self.buffer, self.buffer_start_abs, self.total_received, w_start);
 
-        let mut mag = self.model.cqt(&window)?;
+        let mut mag = self.model.cqt(&self.window)?;
         let w0 = last as i64 - (CHUNK as i64 - 1);
         for i in 0..CHUNK {
             let frame = w0 + i as i64;
@@ -364,5 +373,64 @@ fn push_block(decoders: &mut [(Part, StreamingDecoder)], block: &BlockProbs, dec
     for ((part, decoder), probs) in decoders.iter_mut().zip(&block.parts) {
         debug_assert_eq!(*part, probs.part);
         decoded.extend(decoder.push(probs.onset.view(), probs.sustain.view()).into_iter().map(|n| (*part, n)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The per-sample read `process_block` used to build its window from.
+    fn read_sample(buffer: &VecDeque<f32>, buffer_start_abs: usize, total_received: usize, abs: i64) -> f32 {
+        if abs < 0 || abs as usize >= total_received {
+            return 0.0;
+        }
+        let idx = (abs as usize).wrapping_sub(buffer_start_abs);
+        if idx < buffer.len() {
+            buffer[idx]
+        } else {
+            0.0
+        }
+    }
+
+    /// A buffer holding samples `[start, start + len)` whose value is the absolute index (+1, so
+    /// that a copied sample is never mistaken for silence), laid out in two slices when `wrapped`.
+    fn buffer(start: usize, len: usize, wrapped: bool) -> VecDeque<f32> {
+        let mut b = VecDeque::with_capacity(len + 8);
+        if wrapped {
+            // pushing at the front first moves the head, so the contents wrap around the end
+            for abs in (start..start + len / 2).rev() {
+                b.push_front((abs + 1) as f32);
+            }
+            for abs in start + len / 2..start + len {
+                b.push_back((abs + 1) as f32);
+            }
+            assert!(len < 2 || !b.as_slices().1.is_empty(), "the test buffer should be split in two slices");
+        } else {
+            b.extend((start..start + len).map(|abs| (abs + 1) as f32));
+        }
+        b
+    }
+
+    #[test]
+    fn fill_history_equals_reading_sample_by_sample() {
+        for wrapped in [false, true] {
+            // (buffer start, buffer len, total received): fully buffered, a trimmed front,
+            // and a stream that has received less than the buffer would hold windows for
+            for (start, len) in [(0usize, 300usize), (120, 180), (0, 7), (50, 1)] {
+                let buf = buffer(start, len, wrapped);
+                let total_received = start + len;
+                for w_start in -40i64..(total_received as i64 + 40) {
+                    // windows start no earlier than the buffer, as the streamer guarantees
+                    if w_start >= 0 && (w_start as usize) < start {
+                        continue;
+                    }
+                    let mut out = vec![-1.0f32; 64];
+                    fill_history(&mut out, &buf, start, total_received, w_start);
+                    let want: Vec<f32> = (0..64).map(|i| read_sample(&buf, start, total_received, w_start + i)).collect();
+                    assert_eq!(out, want, "wrapped {wrapped}, buffer {start}+{len}, window at {w_start}");
+                }
+            }
+        }
     }
 }

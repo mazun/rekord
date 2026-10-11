@@ -238,8 +238,11 @@ pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScor
         .then(|| (0..12usize).max_by(|&a, &b| bass[a].partial_cmp(&bass[b]).unwrap()).unwrap() as i32);
 
     let mut scores = [0.0f32; 12 * TEMPLATE_COUNT];
-    for root in 0..12usize {
-        for (index, tpl) in CHORD_TEMPLATES.iter().enumerate() {
+    for (index, tpl) in CHORD_TEMPLATES.iter().enumerate() {
+        let size_penalty = SIZE_PENALTY * tpl.intervals.len() as f32;
+        let prior = quality_prior(tpl.quality);
+        let is_aug = tpl.quality == "aug";
+        for root in 0..12usize {
             let mut inside = 0.0;
             let mut missing = 0.0;
             for &i in tpl.intervals {
@@ -247,7 +250,7 @@ pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScor
                 inside += c;
                 missing += (MISSING_FLOOR - c).max(0.0);
             }
-            if tpl.quality == "aug" {
+            if is_aug {
                 // The Blackadder chord's bass: the tone a whole tone above the root is part of the
                 // chord when the bass plays it, not a stray note outside the triad.
                 let above = (root + 2) % 12;
@@ -255,10 +258,10 @@ pub fn score_templates(all: &[f32; 12], bass: &[f32; 12]) -> Option<TemplateScor
             }
             scores[root * TEMPLATE_COUNT + index] = inside - OUTSIDE_WEIGHT * (1.0 - inside)
                 - MISSING_PENALTY * missing
-                - SIZE_PENALTY * tpl.intervals.len() as f32
-                - quality_prior(tpl.quality)
+                - size_penalty
+                - prior
                 + BASS_ROOT_WEIGHT * bass_share[root]
-                + if tpl.quality == "aug" { AUG_WHOLE_TONE_BASS_WEIGHT * bass_share[(root + 2) % 12] } else { 0.0 };
+                + if is_aug { AUG_WHOLE_TONE_BASS_WEIGHT * bass_share[(root + 2) % 12] } else { 0.0 };
         }
     }
     Some(TemplateScores { share, bass_share, bass_pc, scores })
@@ -305,6 +308,84 @@ pub fn extra_tensions(active_pitch_classes: &[i32], chord: &ChordMatch) -> Vec<&
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scores as `score_templates` computed them before the per-template constants were
+    /// hoisted out of the root loop.
+    fn scores_reference(all: &[f32; 12], bass: &[f32; 12]) -> Option<[f32; 12 * TEMPLATE_COUNT]> {
+        let total: f32 = all.iter().sum();
+        if total <= 0.0 {
+            return None;
+        }
+        let mut share = [0.0f32; 12];
+        for (s, &x) in share.iter_mut().zip(all) {
+            *s = x / total;
+        }
+        if share.iter().filter(|&&c| c >= PRESENT_SHARE).count() < 2 {
+            return None;
+        }
+        let bass_total: f32 = bass.iter().sum();
+        let mut bass_share = [0.0f32; 12];
+        if bass_total > 0.0 {
+            for (s, &x) in bass_share.iter_mut().zip(bass) {
+                *s = x / bass_total;
+            }
+        }
+        let mut scores = [0.0f32; 12 * TEMPLATE_COUNT];
+        for root in 0..12usize {
+            for (index, tpl) in CHORD_TEMPLATES.iter().enumerate() {
+                let mut inside = 0.0;
+                let mut missing = 0.0;
+                for &i in tpl.intervals {
+                    let c = share[(root + i as usize) % 12];
+                    inside += c;
+                    missing += (MISSING_FLOOR - c).max(0.0);
+                }
+                if tpl.quality == "aug" {
+                    let above = (root + 2) % 12;
+                    inside += share[above] * bass_share[above];
+                }
+                scores[root * TEMPLATE_COUNT + index] = inside - OUTSIDE_WEIGHT * (1.0 - inside)
+                    - MISSING_PENALTY * missing
+                    - SIZE_PENALTY * tpl.intervals.len() as f32
+                    - quality_prior(tpl.quality)
+                    + BASS_ROOT_WEIGHT * bass_share[root]
+                    + if tpl.quality == "aug" { AUG_WHOLE_TONE_BASS_WEIGHT * bass_share[(root + 2) % 12] } else { 0.0 };
+            }
+        }
+        Some(scores)
+    }
+
+    #[test]
+    fn template_scores_are_bit_identical_to_the_unhoisted_formula() {
+        let mut state = 12345u64;
+        let mut next = move || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let mut compared = 0;
+        for _ in 0..300 {
+            let mut all = [0.0f32; 12];
+            let mut bass = [0.0f32; 12];
+            for pc in 0..12 {
+                if next() < 0.4 {
+                    all[pc] = next() * 2.0;
+                }
+                if next() < 0.15 {
+                    bass[pc] = next();
+                }
+            }
+            let got = score_templates(&all, &bass);
+            let want = scores_reference(&all, &bass);
+            assert_eq!(got.is_some(), want.is_some());
+            if let (Some(g), Some(w)) = (got, want) {
+                compared += 1;
+                for (i, (a, b)) in g.scores.iter().zip(&w).enumerate() {
+                    assert_eq!(a.to_bits(), b.to_bits(), "score {i} of {all:?} / {bass:?}");
+                }
+            }
+        }
+        assert!(compared > 100, "too few windows had a score: {compared}");
+    }
 
     fn aug_score(roots_bass: i32) -> Vec<(i32, f32)> {
         // G♭ B♭ D with a C (the bass) sounding.
