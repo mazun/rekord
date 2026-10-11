@@ -2,8 +2,29 @@
   import { pipeline, setAccidental } from "../pipeline.svelte";
   import { settings, saveModelSize, saveFutureFrames, saveAccidental, type Accidental, type ModelSize } from "../settings.svelte";
   import { i18n, t, setLocale, type Locale } from "../i18n.svelte";
+  import Segmented from "./Segmented.svelte";
 
   let { hidden, onClose }: { hidden: boolean; onClose: () => void } = $props();
+
+  // Description of the currently selected option, shown under each select.
+  const modelDesc = $derived(
+    {
+      auto: t("settings.noteModelAutoDesc"),
+      large: t("settings.noteModelLargeDesc"),
+      medium: t("settings.noteModelMediumDesc"),
+      small: t("settings.noteModelSmallDesc"),
+    }[settings.modelSize],
+  );
+  const lookAheadDesc = $derived(
+    settings.futureFrames === 8 ? t("settings.lookAhead8Desc") : t("settings.lookAhead16Desc"),
+  );
+  const accidentalDesc = $derived(
+    {
+      auto: t("settings.accidentalAutoDesc"),
+      sharp: t("settings.accidentalSharpDesc"),
+      flat: t("settings.accidentalFlatDesc"),
+    }[settings.accidental],
+  );
 </script>
 
 <div id="settings-view" class:hidden>
@@ -19,21 +40,24 @@
     <h2>{t("settings.title")}</h2>
   </div>
   <div class="settings-row">
-    <label for="model-size-select">{t("settings.noteModel")}</label>
-    <select
-      id="model-size-select"
+    <span class="settings-label" id="model-size-label">{t("settings.noteModel")}</span>
+    <Segmented
+      name="model-size"
+      labelledby="model-size-label"
+      options={[
+        { value: "auto", label: t("settings.noteModelAuto") },
+        { value: "large", label: t("settings.noteModelLarge") },
+        { value: "medium", label: t("settings.noteModelMedium") },
+        { value: "small", label: t("settings.noteModelSmall") },
+      ] as { value: ModelSize; label: string }[]}
       value={settings.modelSize}
-      onchange={(e) => {
-        settings.modelSize = e.currentTarget.value as ModelSize;
+      disabled={pipeline.status !== "idle"}
+      onchange={(v) => {
+        settings.modelSize = v;
         saveModelSize();
       }}
-      disabled={pipeline.status !== "idle"}
-    >
-      <option value="auto">{t("settings.noteModelAuto")}</option>
-      <option value="large">{t("settings.noteModelLarge")}</option>
-      <option value="medium">{t("settings.noteModelMedium")}</option>
-      <option value="small">{t("settings.noteModelSmall")}</option>
-    </select>
+    />
+    <p class="settings-note">{modelDesc}</p>
     {#if pipeline.noteModel}
       <p class="settings-note">
         {t("settings.noteModelLastRun")}: Okarina {pipeline.noteModel.size[0].toUpperCase()} ({pipeline.noteModel.device === "cpu" ? "CPU" : "DirectML"})
@@ -47,35 +71,41 @@
     {/if}
   </div>
   <div class="settings-row">
-    <label for="future-frames-select">{t("settings.lookAhead")}</label>
-    <select
-      id="future-frames-select"
+    <span class="settings-label" id="future-frames-label">{t("settings.lookAhead")}</span>
+    <Segmented
+      name="future-frames"
+      labelledby="future-frames-label"
+      options={[
+        { value: "8", label: t("settings.lookAhead8") },
+        { value: "16", label: t("settings.lookAhead16") },
+      ]}
       value={String(settings.futureFrames)}
-      onchange={(e) => {
-        settings.futureFrames = Number(e.currentTarget.value);
+      disabled={pipeline.status !== "idle"}
+      onchange={(v) => {
+        settings.futureFrames = Number(v);
         saveFutureFrames();
       }}
-      disabled={pipeline.status !== "idle"}
-    >
-      <option value="8">{t("settings.lookAhead8")}</option>
-      <option value="16">{t("settings.lookAhead16")}</option>
-    </select>
+    />
+    <p class="settings-note">{lookAheadDesc}</p>
   </div>
   <div class="settings-row">
-    <label for="accidental-select">{t("settings.accidental")}</label>
-    <select
-      id="accidental-select"
+    <span class="settings-label" id="accidental-label">{t("settings.accidental")}</span>
+    <Segmented
+      name="accidental"
+      labelledby="accidental-label"
+      options={[
+        { value: "auto", label: t("settings.accidentalAuto") },
+        { value: "sharp", label: t("settings.accidentalSharp") },
+        { value: "flat", label: t("settings.accidentalFlat") },
+      ] as { value: Accidental; label: string }[]}
       value={settings.accidental}
-      onchange={(e) => {
-        settings.accidental = e.currentTarget.value as Accidental;
+      onchange={(v) => {
+        settings.accidental = v;
         saveAccidental();
         setAccidental();
       }}
-    >
-      <option value="auto">{t("settings.accidentalAuto")}</option>
-      <option value="sharp">{t("settings.accidentalSharp")}</option>
-      <option value="flat">{t("settings.accidentalFlat")}</option>
-    </select>
+    />
+    <p class="settings-note">{accidentalDesc}</p>
   </div>
   <div class="settings-row">
     <label for="language-select">{t("settings.language")}</label>
@@ -156,7 +186,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    max-width: 24rem;
+    max-width: 32rem;
     padding: 1.5rem 1.2rem;
     color: var(--text);
     font-size: 0.95rem;
