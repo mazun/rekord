@@ -154,7 +154,7 @@
     top: 2px;
     width: 1.6rem;
     height: 1.6rem;
-    padding: 0 !important;
+    padding: 0;
     border: none;
     background: none;
   }

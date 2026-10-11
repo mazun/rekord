@@ -18,16 +18,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
-      "complexity": {
-        "noImportantStyles": "off"
-      },
-      "style": {
-        "noDescendingSpecificity": "off"
-      },
-      "a11y": {
-        "useSemanticElements": "off"
-      }
+      "preset": "recommended"
     }
   },
   "overrides": [

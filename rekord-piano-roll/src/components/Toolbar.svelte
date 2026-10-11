@@ -30,7 +30,6 @@
        center sits half of that below the row's center. */
     top: calc(50% + 0.15rem);
     transform: translateY(-50%);
-    padding: 0.4rem 1.1rem;
     border-radius: 6px;
     color: var(--text);
     cursor: pointer;
@@ -42,7 +41,7 @@
     /* The piano-roll toggle's icon (26px wide, 4px right padding) is centered
        13 + 4 = 17px from the right edge; the gear is 1.2rem wide, so this
        padding puts its center on that same x. */
-    padding-right: calc(17px - 0.6rem) !important;
+    padding-right: calc(17px - 0.6rem);
     border: none;
     background: none;
     display: flex;

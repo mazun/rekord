@@ -23,14 +23,12 @@ function emit(event, payload) {
 const lines = (v) => v.map(([t, b]) => ({ t, bar: !!b }));
 
 async function startReplay() {
-  const text = await (
-    await fetch("/dev/" + (params.get("events") ?? "replay-events.jsonl"))
-  ).text();
+  const text = await (await fetch(`/dev/${params.get("events") ?? "replay-events.jsonl"}`)).text();
   const events = text
     .trim()
     .split("\n")
     .map((l) => JSON.parse(l));
-  const ref = params.get("ref") ? await (await fetch("/dev/" + params.get("ref"))).json() : null;
+  const ref = params.get("ref") ? await (await fetch(`/dev/${params.get("ref")}`)).json() : null;
   window.__replay = { t0: performance.now(), events, ref };
   emit("pipeline-event", {
     type: "Started",

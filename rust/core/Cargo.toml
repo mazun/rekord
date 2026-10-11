@@ -28,6 +28,3 @@ sha2 = "0.10"
 
 [dev-dependencies]
 ndarray-npy = { version = "0.10", default-features = false, features = ["npz"] }
-
-[lints]
-workspace = true

@@ -59,21 +59,24 @@
 {#snippet wavePicker(part: NotePart)}
   <div class="waves" role="radiogroup" aria-label={t(`wave.${settings.voices[part].wave}`)}>
     {#each WAVES as wave (wave)}
-      <button
+      <label
         class="wave-btn"
         class:selected={settings.voices[part].wave === wave}
-        type="button"
-        role="radio"
-        aria-checked={settings.voices[part].wave === wave}
         title={t(`wave.${wave}`)}
-        aria-label={t(`wave.${wave}`)}
-        onclick={() => {
-          settings.voices[part].wave = wave;
-          changed();
-        }}
       >
+        <input
+          type="radio"
+          name="wave-{part}"
+          value={wave}
+          aria-label={t(`wave.${wave}`)}
+          checked={settings.voices[part].wave === wave}
+          onchange={() => {
+            settings.voices[part].wave = wave;
+            changed();
+          }}
+        />
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d={WAVE_PATHS[wave]} /></svg>
-      </button>
+      </label>
     {/each}
   </div>
 {/snippet}
@@ -94,7 +97,7 @@
     </svg>
   </button>
   {#if open}
-    <div class="panel" role="group" aria-label={t("playbackVolume.title")}>
+    <fieldset class="panel" aria-label={t("playbackVolume.title")}>
       <div class="row" class:muted={settings.muteOriginal}>
         {@render muteButton(settings.muteOriginal, () => {
           settings.muteOriginal = !settings.muteOriginal;
@@ -156,7 +159,7 @@
           </div>
         {/each}
       </div>
-    </div>
+    </fieldset>
   {/if}
 </div>
 
@@ -215,6 +218,8 @@
     flex-direction: column;
     gap: 0.6rem;
     width: 16rem;
+    min-width: 0;
+    margin: 0;
     padding: 0.6rem 0.8rem;
     border: 1px solid #3a3f4d;
     border-radius: 8px;
@@ -231,17 +236,6 @@
     row-gap: 0.1rem;
     font-size: 0.8rem;
     color: var(--text-dim);
-  }
-
-  .row input[type="range"] {
-    grid-column: 2 / -1;
-  }
-
-  .row.muted .name,
-  .row.muted input,
-  .row.muted .waves,
-  .parts.muted {
-    opacity: 0.4;
   }
 
   .parts {
@@ -303,10 +297,25 @@
   }
 
   .wave-btn {
+    position: relative;
     display: flex;
     padding: 0.2rem;
     border-radius: 4px;
     opacity: 0.55;
+    cursor: pointer;
+  }
+
+  /* The native radio drives selection and arrow-key movement; the icon is its face. */
+  .wave-btn input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+  }
+
+  .wave-btn:has(input:focus-visible) {
+    outline: 2px solid #8fb0ff;
   }
 
   .wave-btn svg {
@@ -329,5 +338,17 @@
     width: 100%;
     margin: 0;
     accent-color: #5b8cff;
+  }
+
+  /* After the plain .name/.waves/input rules above, which they out-rank. */
+  .row input[type="range"] {
+    grid-column: 2 / -1;
+  }
+
+  .row.muted .name,
+  .row.muted input,
+  .row.muted .waves,
+  .parts.muted {
+    opacity: 0.4;
   }
 </style>

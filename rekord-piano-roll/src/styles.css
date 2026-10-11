@@ -56,6 +56,14 @@ body {
   max-height: none;
 }
 
+#main-view,
+#settings-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 /* flex:1 only makes sense while the window is actually sized to include
    room for the piano roll -- during a measuring pass this would instead
    force #main-view back up to the *current* (pre-shrink) window height,
@@ -65,21 +73,13 @@ body {
   flex: none;
 }
 
-#main-view,
-#settings-view {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
 #main-view.hidden,
 #settings-view.hidden {
   display: none;
 }
 
 .icon-btn {
-  padding: 0.3rem 0.55rem !important;
+  padding: 0.3rem 0.55rem;
   font-size: 1.1rem;
   line-height: 1;
 }

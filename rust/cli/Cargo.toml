@@ -11,6 +11,3 @@ path = "src/main.rs"
 [dependencies]
 rekord_core = { path = "../core" }
 anyhow = "1"
-
-[lints]
-workspace = true

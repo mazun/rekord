@@ -189,7 +189,7 @@
        the chord lane beside it, and they close when the pointer leaves. Minus = zoomed out (faster scroll, longer window), plus = zoomed in. -->
   <div
     class="zoom"
-    role="group"
+    role="presentation"
     onpointerenter={() => (zoomOpen = true)}
     onpointerleave={() => (zoomOpen = false)}
   >
@@ -207,7 +207,7 @@
       </svg>
     </button>
     {#if zoomOpen}
-      <div class="zoom-panel" role="group" aria-label={t("pianoRollView.zoom")}>
+      <fieldset class="zoom-panel" aria-label={t("pianoRollView.zoom")}>
         <button
           type="button"
           class="step"
@@ -238,7 +238,7 @@
             setZoom(Math.round((settings.rollZoom + ZOOM_STEP) * 100) / 100)}
           >+</button
         >
-      </div>
+      </fieldset>
     {/if}
   </div>
 </div>
@@ -346,7 +346,10 @@
     display: flex;
     align-items: center;
     gap: 0.35rem;
+    min-width: 0;
+    margin: 0;
     padding: 0 0.6rem;
+    border: 0;
     background: rgba(20, 22, 28, 0.92);
     color: var(--text-dim);
     font-size: 0.85rem;

@@ -59,8 +59,8 @@
   .pianoroll-toggle-btn {
     position: absolute;
     /* Offset by less than the tension grid's own 1rem inset from the row's
-       edges -- .icon-btn's padding (0.3rem bottom, 0.55rem right, both
-       !important) sits between this box and the svg inside it, so the
+       edges -- .icon-btn's padding (0.3rem bottom, 0.55rem right)
+       sits between this box and the svg inside it, so the
        visible icon needs that padding subtracted back out to land flush
        with the grid rather than the icon's own border box. */
     right: 0;
@@ -69,7 +69,7 @@
        icon on the piano roll's keyboard strip below (KEYBOARD_WIDTH, 34px,
        in pianoroll.ts) rather than on this button's own box, which sits
        further left than the keyboard's true center. */
-    padding-right: 4px !important;
+    padding-right: 4px;
     border: none;
     background: none;
     color: var(--text);

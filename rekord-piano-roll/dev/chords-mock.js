@@ -20,7 +20,7 @@ function emit(event, payload) {
 }
 
 async function startReplay() {
-  const text = await (await fetch("/dev/" + (params.get("events") ?? "chords.jsonl"))).text();
+  const text = await (await fetch(`/dev/${params.get("events") ?? "chords.jsonl"}`)).text();
   const until = Number(params.get("until") ?? Infinity);
   const entries = text
     .trim()
