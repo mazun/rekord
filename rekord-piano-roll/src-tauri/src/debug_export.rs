@@ -18,7 +18,6 @@ use std::fs;
 use std::path::Path;
 
 use rekord_core::audio_ring::SharedRing;
-use rekord_core::harmonica_model::Part;
 use rekord_core::pipeline::midi_to_name;
 use rekord_core::playback::SynthNote;
 use rekord_core::spelling::Accidental;
@@ -141,6 +140,7 @@ fn wav_bytes(rate: u32, pcm: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rekord_core::harmonica_model::Part;
 
     #[test]
     fn wav_header_describes_the_data() {
