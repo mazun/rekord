@@ -182,8 +182,8 @@
   <PlayButton />
   <div class="legend">
     <PlaybackVolume />
-    {#if pipeline.noteModel?.size === "mix"}
-      <!-- The 3-part model labels every note itself: one button per part, each
+    {#if pipeline.noteModel}
+      <!-- The models label every note with its part themselves: one button per part, each
            showing or hiding that part's notes. -->
       {#each PARTS as part (part)}
         <button

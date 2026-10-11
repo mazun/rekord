@@ -3,25 +3,28 @@
 // settings regardless -- see start_capture in lib.rs), so a missing or
 // garbled stored value just falls back to the shipped default.
 
-const MODEL_SIZE_STORAGE_KEY = "chord.modelSize";
+// A new key: the old "chord.modelSize" held the Harmonica sizes ("mix", "large", ...), whose names
+// now mean something else (Okarina L is not Harmonica large).
+const MODEL_SIZE_STORAGE_KEY = "chord.noteModel";
 const FUTURE_FRAMES_STORAGE_KEY = "chord.futureFrames";
 const PIANOROLL_VISIBLE_STORAGE_KEY = "chord.pianorollVisible";
 const ACCIDENTAL_STORAGE_KEY = "chord.accidental";
 
-// "mix" is the large network with three output parts (vocal/bass/other) trained for full
-// mixes; the others are single-part models.
-export type ModelSize = "small" | "medium" | "large" | "mix";
+// The Okarina note models S/M/L ("small"/"medium"/"large"; all label vocal/bass/other), or "auto":
+// the backend picks by hardware (large on a discrete GPU, medium on an integrated GPU or a fast CPU,
+// else small).
+export type ModelSize = "auto" | "small" | "medium" | "large";
 
 // How black-key pitch classes are spelled in chord and key names: "auto" picks the most natural
 // spelling per chord and key (rules in rust/core/src/spelling.rs).
 export type Accidental = "auto" | "sharp" | "flat";
 
-const DEFAULT_MODEL_SIZE: ModelSize = "mix";
+const DEFAULT_MODEL_SIZE: ModelSize = "auto";
 const DEFAULT_FUTURE_FRAMES = 8;
 
 function loadModelSize(): ModelSize {
   const stored = localStorage.getItem(MODEL_SIZE_STORAGE_KEY);
-  return stored === "small" || stored === "medium" || stored === "large" || stored === "mix" ? stored : DEFAULT_MODEL_SIZE;
+  return stored === "auto" || stored === "small" || stored === "medium" || stored === "large" ? stored : DEFAULT_MODEL_SIZE;
 }
 
 function loadAccidental(): Accidental {

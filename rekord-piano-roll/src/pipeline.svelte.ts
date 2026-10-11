@@ -3,17 +3,19 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ChordLayerEvent, LaneUpdate } from "./chordlane";
 import type { BeatLines, ConfirmedNote, StartedNote } from "./pianoroll";
 import { recording, type DisplayState, type RecordingInfo } from "./recording";
-import { settings, type Accidental, type ModelSize } from "./settings.svelte";
+import { settings, type Accidental } from "./settings.svelte";
 import type { ChordVocabulary } from "./tensions";
 import { stopPlayback } from "./transport.svelte";
 
-// The model actually running, after any DirectML->CPU fallback the backend
+// The model actually running, after "auto" and any DirectML->CPU fallback the backend
 // applies -- see NoteModelConfig/run_live_session in lib.rs. Distinct from
 // `settings.modelSize`, which is just the user's request.
 export interface NoteModel {
-  size: ModelSize;
+  size: "small" | "medium" | "large";
   device: "directml" | "cpu";
   future_frames: number;
+  // A fixed choice that may not keep up with real time on this hardware (large without a discrete GPU).
+  over_budget: boolean;
 }
 
 type PipelineEvent =

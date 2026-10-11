@@ -5,8 +5,9 @@
 `ReKord`). Musical-domain names (`chord_templates`, …) stay "chord". The repo
 folder is still `chord`.
 
-Real-time PC-audio (WASAPI loopback) note recognition (Harmonica ONNX model,
-trained in the separate `harmonica-repro` project) plus rule-based chord-template
+Real-time PC-audio (WASAPI loopback) note recognition (Okarina S/M/L ONNX
+models — an unofficial Harmonica derivative trained in the separate
+`harmonica-repro` project) plus rule-based chord-template
 matching (no ML chord model exists for the ~300 tension-chord vocabulary).
 
 ## Layout

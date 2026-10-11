@@ -157,7 +157,7 @@ fn main() {
             0.0,
             &PipelineEvent::Started {
                 total_latency_s: 0.88,
-                note_model: NoteModelInfo { size: ModelSize::Mix, device: Device::DirectML, future_frames: 8 },
+                note_model: NoteModelInfo { size: ModelSize::Large, device: Device::DirectML, future_frames: 8, over_budget: false },
                 chord_vocabulary: chord_templates::vocabulary(),
             },
             &mut log,

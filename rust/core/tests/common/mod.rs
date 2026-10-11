@@ -1,5 +1,4 @@
-//! Helpers shared by the golden-vector test files (`harmonica_golden.rs`,
-//! `harmonica_mix_golden.rs`). Each test file only uses a subset.
+//! Helpers for the golden-vector tests (`okarina_golden.rs`).
 #![allow(dead_code)]
 
 use std::collections::HashSet;

@@ -7,14 +7,16 @@ labels along with melody/bass classification.
 
 ## How it works
 
-1. **Note estimation** — Harmonica, an instrument-agnostic note-
-   transcription model, estimates polyphonic pitch. Reimplemented, trained
-   from scratch and exported to ONNX in the separate harmonica-repro
-   project (not the original paper's weights). Three model sizes (small/
-   medium/large, default large); runs on ONNX Runtime's DirectML execution
-   provider when available, falling back automatically to the small model
-   on CPU. A configurable look-ahead (8 or 16 frames, ~0.26s/0.51s) trades
-   confirm latency for accuracy.
+1. **Note estimation** — Okarina, a note-transcription model for music with
+   vocals and drums (an unofficial reimplementation and derivative of
+   Harmonica, arXiv:2609.04640), estimates polyphonic pitch and separates it
+   into vocal, bass and other parts. Trained from scratch and exported to
+   ONNX in the separate harmonica-repro project (not the original paper's
+   weights). Three sizes (S/M/L). By default the size is picked from the
+   hardware: L on a discrete GPU, M on an integrated GPU or a CPU with 8+
+   threads, S on a weaker CPU. It runs on ONNX Runtime's DirectML execution
+   provider when available, otherwise on the CPU. A configurable look-ahead
+   (8 or 16 frames, ~0.26s/0.51s) trades confirm latency for accuracy.
 2. **Chord recognition** — chord names are decided by rule-based matching of
    pitch-class sets against chord templates (roughly 300 tension chords).
 3. **Key estimation** — the key is estimated via Krumhansl-Schmuckler-style
@@ -60,12 +62,12 @@ cargo build --release
 | --- | --- |
 | `--live` | Captures the default speaker output via loopback and analyzes it |
 | `--duration <seconds>` | Stops after the given number of seconds (for `--live`) |
-| `--size <small\|medium\|large>` | Note-transcription model size (default: `large`) |
+| `--size <auto\|s\|m\|l>` | Okarina model size (default: `auto`, chosen from the hardware) |
 | `--future <8\|16>` | Look-ahead frames the model uses before deciding a note (default: `8`; higher trades latency for accuracy) |
-| `--cpu` | Disables DirectML, forcing the small model onto CPU |
+| `--cpu` | Disables DirectML and runs on the CPU (size M with 8+ threads, otherwise S) |
 | `--hop <seconds>` | Interval between chunks of captured (or, in file mode, simulated) audio handed off for processing (default: 0.064s) |
 
-`cargo build` downloads Harmonica's ONNX model files into
+`cargo build` downloads the Okarina ONNX model files into
 `rust/core/models/` from the Hugging Face model repo
 [mazun/rekord](https://huggingface.co/mazun/rekord), at a pinned revision
 and checked against pinned SHA-256s. That repo is private for now, so the
@@ -92,12 +94,12 @@ sample_audio/          Piano recordings used for validation
 
 ## Third party
 
-- The Harmonica note-transcription models are reimplemented and trained
-  from scratch (not the paper authors' weights) in the separate
-  harmonica-repro project, on data that includes CC BY-NC-SA 4.0 material
-  (MAESTRO, and the GAPS dataset's Zenodo release) and, for the 3-part
-  model, the CC BY-NC 4.0 GOAT dataset -- so, unlike the rest
-  of this repository, they're for non-commercial use only and aren't
+- The Okarina note-transcription models (S/M/L) are an unofficial
+  reimplementation and derivative of Harmonica, trained from scratch (not
+  the paper authors' weights) in the separate harmonica-repro project, on
+  data that includes CC BY-NC-SA 4.0 material (MAESTRO, and the GAPS
+  dataset's Zenodo release) and the CC BY-NC 4.0 GOAT dataset -- so, unlike
+  the rest of this repository, they're for non-commercial use only and aren't
   covered by the MIT license below. See the
   [model card](https://huggingface.co/mazun/rekord) for the full breakdown.
   They aren't in this repository; `cargo build` downloads them (see the CLI

@@ -1,11 +1,12 @@
 //! Puts the ONNX models into core/models/ at build time instead of committing
 //! them to the repo:
 //!
-//! - cqt156.onnx, small_uni_300k.onnx, medium_uni_300k_urmp.onnx,
-//!   large_uni_300k_urmp.onnx, mix_large_v2.onnx (the 3-part vocal/bass/other
-//!   model): Harmonica (instrument-agnostic note
-//!   transcription), reimplemented, trained and exported to ONNX in the
-//!   separate harmonica-repro project. Downloaded from the Hugging Face
+//! - cqt156.onnx, okarina_s.onnx, okarina_m.onnx, okarina_l.onnx (the S/M/L
+//!   note models with three vocal/bass/other parts): Okarina, an unofficial
+//!   derivative of Harmonica (instrument-agnostic note transcription),
+//!   trained and exported to ONNX in the separate harmonica-repro project
+//!   (its internal file names are mix_{small,medium,large}_v2.onnx).
+//!   Downloaded from the Hugging Face
 //!   model repo mazun/rekord at a pinned revision and checked against
 //!   pinned SHA-256s (`fetch_harmonica_models`). That repo is private for
 //!   now, so a read-access token is needed (HF_TOKEN, or huggingface's own
@@ -30,15 +31,14 @@ const HF_REPO: &str = "mazun/rekord";
 /// A commit hash, not a branch, so an old checkout keeps building the weights
 /// it was tested against. New weights: upload them first, then update this
 /// and the hashes below.
-const HF_REVISION: &str = "85d1b355ad619aad377f851b17f607010d74874b";
+const HF_REVISION: &str = "2f6d67b2864da9499a6c0d589890c846df6bb87d";
 
 /// (file name, lowercase hex SHA-256).
-const HARMONICA_MODELS: [(&str, &str); 5] = [
+const HARMONICA_MODELS: [(&str, &str); 4] = [
     ("cqt156.onnx", "ff88505975e9d6c3e3c413aff5748abe711dfe3e9aee1bdf57bb637e28cf1c6f"),
-    ("small_uni_300k.onnx", "780ace3e0e619665b7975f387f7b06016b104b7133eb5734af1704e6377146dc"),
-    ("medium_uni_300k_urmp.onnx", "d408a313c0fdfd6ece7189b7a32b726899efcd0051baf599671b57736bbe1eeb"),
-    ("large_uni_300k_urmp.onnx", "c455139320d69062269f8e0ab723938065e2d56d3539cad6f8f362f35dcca888"),
-    ("mix_large_v2.onnx", "59ff7984cb03c852b768a5c5c6b0e1d41c240bfc163b15feb35db0a8533cea90"),
+    ("okarina_s.onnx", "4081b05ad1f342f4aa9736531611afe732b1b654255d34191eaf6c380c778c39"),
+    ("okarina_m.onnx", "913498037c06b4477053f93ed38bf9925adc165f979dd3eb1d2e1cf3ab25d9ef"),
+    ("okarina_l.onnx", "59ff7984cb03c852b768a5c5c6b0e1d41c240bfc163b15feb35db0a8533cea90"),
 ];
 
 // ureq's read_to_vec() defaults to a 10MB cap; cqt156.onnx alone is ~17MB.

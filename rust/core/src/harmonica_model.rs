@@ -1,13 +1,13 @@
-//! Harmonica (instrument-agnostic note transcription) ONNX models: a CQT
-//! front-end (`cqt156.onnx`) plus one onset/sustain/offset transcription
-//! network: small/medium/large (one part, all notes together) or `Mix`, a
-//! large network with three output parts (vocal, bass, other) trained for
-//! full mixes (see harmonica-repro's `docs/mix-b4-report.md`). Ported from
-//! harmonica-repro's `harmonica/infer.py` + `harmonica/ort_backend.py` --
-//! see that repo's `docs/phase5-report.md` for the executable spec this
-//! follows. Streaming (window construction, block scheduling) lives in
-//! `harmonica_stream.rs`; this module is just model loading + single-window
-//! inference, mirroring `beat_model.rs`'s split.
+//! Okarina (note transcription for music with vocals and drums; an unofficial
+//! reimplementation/derivative of Harmonica) ONNX models: a CQT front-end
+//! (`cqt156.onnx`) plus one onset/sustain/offset transcription network in
+//! three sizes (S/M/L), each with three output parts (vocal, bass, other; see
+//! harmonica-repro's `docs/okarina-sm-report.md` and `docs/mix-s2-report.md`).
+//! Ported from harmonica-repro's `harmonica/infer.py` +
+//! `harmonica/ort_backend.py` -- see that repo's `docs/phase5-report.md` for
+//! the executable spec this follows. Streaming (window construction, block
+//! scheduling) lives in `harmonica_stream.rs`; this module is just model
+//! loading + single-window inference, mirroring `beat_model.rs`'s split.
 
 use std::collections::HashMap;
 
@@ -16,6 +16,8 @@ use ndarray::{Array2, ArrayView2};
 use ort::ep::{cpu::CPU, directml::DirectML};
 use ort::session::{builder::GraphOptimizationLevel, Session, SessionOutputs};
 use ort::value::Tensor;
+
+use crate::gpu_class::{self, GpuClass};
 
 /// 16 kHz mono input -- fixed by how Harmonica was trained and baked into
 /// the exported ONNX models' shapes below.
@@ -45,9 +47,9 @@ pub const HISTORY: usize = (CHUNK - 1) * HOP + MARGIN + 1;
 
 const CQT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/models/cqt156.onnx");
 
-/// A note-transcription output part. The single-part models emit every note
-/// as `All`; the `Mix` model separates `Vocal`, `Bass` and `Other` (everything
-/// else, drums excluded -- they aren't pitched notes).
+/// A note-transcription output part. The model separates `Vocal`, `Bass` and
+/// `Other` (everything else, drums excluded -- they aren't pitched notes).
+/// `All` marks notes that aren't split by part (hand-built note lists, tests).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Part {
@@ -69,62 +71,57 @@ impl Part {
     }
 }
 
-/// The part order of the `Mix` model's output axis (its `parts` metadata);
-/// checked at load time rather than trusted.
-const MIX_PARTS: [Part; 3] = [Part::Vocal, Part::Bass, Part::Other];
+/// The part order of the model's output axis (its `parts` metadata); checked
+/// at load time rather than trusted.
+const PARTS: [Part; 3] = [Part::Vocal, Part::Bass, Part::Other];
 
-/// Which trained transcription network to use. Bigger is more accurate but
-/// slower (see docs/phase5-report.md's speed table in harmonica-repro);
-/// `HarmonicaModel::load` always falls back to `Small` on CPU regardless of
-/// the requested size (see its doc comment). `Mix` is as fast as `Large` but
-/// outputs three parts and is trained for full mixes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Which Okarina network to use. Bigger is more accurate but slower; the
+/// 0.256 s block budget (see harmonica-repro's `docs/okarina-sm-report.md`)
+/// is met by L only on a DirectML dGPU, by M on a CPU with 8 threads or an
+/// iGPU, and by S on a CPU with 4 threads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelSize {
     Small,
     Medium,
     Large,
-    Mix,
 }
 
 impl ModelSize {
-    /// The exported ONNX file's bare name (also the value of that file's own
-    /// `size` custom-metadata field for the single-part models, checked in
-    /// `load_on`).
+    /// The ONNX file's bare name. Sizes are told apart by this name, not by
+    /// the file's internal `size` metadata (which keeps the training-side
+    /// names).
     pub fn file_name(self) -> &'static str {
         match self {
-            ModelSize::Small => "small_uni_300k.onnx",
-            ModelSize::Medium => "medium_uni_300k_urmp.onnx",
-            ModelSize::Large => "large_uni_300k_urmp.onnx",
-            ModelSize::Mix => "mix_large_v2.onnx",
+            ModelSize::Small => "okarina_s.onnx",
+            ModelSize::Medium => "okarina_m.onnx",
+            ModelSize::Large => "okarina_l.onnx",
         }
     }
 
     fn onnx_path(self) -> &'static str {
         match self {
-            ModelSize::Small => concat!(env!("CARGO_MANIFEST_DIR"), "/models/small_uni_300k.onnx"),
-            ModelSize::Medium => concat!(env!("CARGO_MANIFEST_DIR"), "/models/medium_uni_300k_urmp.onnx"),
-            ModelSize::Large => concat!(env!("CARGO_MANIFEST_DIR"), "/models/large_uni_300k_urmp.onnx"),
-            ModelSize::Mix => concat!(env!("CARGO_MANIFEST_DIR"), "/models/mix_large_v2.onnx"),
+            ModelSize::Small => concat!(env!("CARGO_MANIFEST_DIR"), "/models/okarina_s.onnx"),
+            ModelSize::Medium => concat!(env!("CARGO_MANIFEST_DIR"), "/models/okarina_m.onnx"),
+            ModelSize::Large => concat!(env!("CARGO_MANIFEST_DIR"), "/models/okarina_l.onnx"),
         }
     }
 
-    /// Whether this model has several output parts (`Mix`) rather than one.
-    pub fn is_multipart(self) -> bool {
-        self == ModelSize::Mix
+    /// The network's `size` metadata value (the training-side name).
+    fn metadata_size(self) -> &'static str {
+        match self {
+            ModelSize::Small => "small",
+            ModelSize::Medium => "medium",
+            ModelSize::Large => "large",
+        }
     }
 
-    /// (th_on, th_sus) of a single-part model, chosen on the f=8 dev set in
-    /// harmonica-repro; used unchanged for any future_frames >= 8 (see
-    /// phase5-report.md's threshold section -- re-picking per f changes
-    /// dev-set OnPOff by <= 0.4 points). `None` for `Mix`, whose per-part
-    /// thresholds live in its ONNX metadata (`HarmonicaModel::part_thresholds`).
-    pub fn thresholds(self) -> Option<(f32, f32)> {
+    /// "Okarina S" etc., for display.
+    pub fn label(self) -> &'static str {
         match self {
-            ModelSize::Small => Some((0.25, 0.45)),
-            ModelSize::Medium => Some((0.20, 0.45)),
-            ModelSize::Large => Some((0.20, 0.45)),
-            ModelSize::Mix => None,
+            ModelSize::Small => "Okarina S",
+            ModelSize::Medium => "Okarina M",
+            ModelSize::Large => "Okarina L",
         }
     }
 }
@@ -134,23 +131,37 @@ impl std::str::FromStr for ModelSize {
 
     fn from_str(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
-            "small" => Ok(ModelSize::Small),
-            "medium" => Ok(ModelSize::Medium),
-            "large" => Ok(ModelSize::Large),
-            "mix" => Ok(ModelSize::Mix),
-            other => Err(anyhow!("unknown harmonica model size {other:?} (expected small/medium/large/mix)")),
+            "s" | "small" => Ok(ModelSize::Small),
+            "m" | "medium" => Ok(ModelSize::Medium),
+            "l" | "large" => Ok(ModelSize::Large),
+            other => Err(anyhow!("unknown Okarina size {other:?} (expected s/m/l)")),
         }
     }
 }
 
 impl std::fmt::Display for ModelSize {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            ModelSize::Small => "small",
-            ModelSize::Medium => "medium",
-            ModelSize::Large => "large",
-            ModelSize::Mix => "mix",
-        })
+        f.write_str(self.metadata_size())
+    }
+}
+
+/// What the user asked for: a fixed size, or `Auto`, which picks by hardware
+/// (see `HarmonicaModel::load`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelChoice {
+    Auto,
+    Fixed(ModelSize),
+}
+
+impl std::str::FromStr for ModelChoice {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        if s.eq_ignore_ascii_case("auto") {
+            Ok(ModelChoice::Auto)
+        } else {
+            s.parse().map(ModelChoice::Fixed).map_err(|_| anyhow!("unknown model {s:?} (expected auto/s/m/l)"))
+        }
     }
 }
 
@@ -182,11 +193,11 @@ pub struct HarmonicaModel {
     net: Session,
     size: ModelSize,
     device: Device,
-    /// Output parts in the network's axis order (just `[All]` for a
-    /// single-part model).
-    parts: Vec<Part>,
-    /// (th_on, th_sus) per part for 8 and 16 frames of look-ahead, parallel
-    /// to `parts`. Single-part models use the same pair for both.
+    /// The GPU DirectML would use, when this session was loaded through
+    /// `load` (`GpuClass::None` for `load_on`, which doesn't look).
+    gpu: GpuClass,
+    /// (th_on, th_sus) per part (`PARTS` order) for 8 and 16 frames of
+    /// look-ahead, from the ONNX metadata.
     thresholds_f8: Vec<(f32, f32)>,
     thresholds_f16: Vec<(f32, f32)>,
 }
@@ -218,8 +229,24 @@ fn check_metadata(session: &Session, expected: &[(&str, String)], label: &str) -
     Ok(())
 }
 
+fn cpu_threads() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+}
+
 fn cpu_intra_threads() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(4, 8)
+    cpu_threads().clamp(4, 8)
+}
+
+/// The size to run on the CPU: M needs 8 threads to keep up (about 90 ms per
+/// block against the 256 ms budget), S fits in 4 (about 40 ms). Times on
+/// weaker CPUs are unmeasured; this is the rule from the training side's
+/// report, not a benchmark of this machine.
+fn cpu_size() -> ModelSize {
+    if cpu_threads() >= 8 {
+        ModelSize::Medium
+    } else {
+        ModelSize::Small
+    }
 }
 
 fn build_session(path: &str, device: Device) -> Result<Session> {
@@ -249,8 +276,8 @@ fn build_session(path: &str, device: Device) -> Result<Session> {
 }
 
 /// Reads output `name` as one `[T, features]` array per part. Shape is
-/// `[batch, time, features]` for a single-part model and `[batch, parts,
-/// time, features]` for a multi-part one; batch is always 1 (see struct doc).
+/// `[batch, time, features]` for the CQT (one part) and `[batch, parts, time,
+/// features]` for the network; batch is always 1 (see struct doc).
 fn extract_parts(outputs: &SessionOutputs<'_>, name: &str, n_parts: usize) -> Result<Vec<Array2<f32>>> {
     let (shape, data) = outputs[name].try_extract_tensor::<f32>().map_err(|e| anyhow!("{e}"))?;
     let expected_rank = if n_parts == 1 { 3 } else { 4 };
@@ -265,7 +292,7 @@ fn extract_parts(outputs: &SessionOutputs<'_>, name: &str, n_parts: usize) -> Re
 
 impl HarmonicaModel {
     /// Loads exactly `size` on exactly `device`, no fallback -- callers that
-    /// want the "DirectML, else small on CPU" policy should use `load`.
+    /// want the hardware-dependent policy should use `load`.
     pub fn load_on(size: ModelSize, device: Device) -> Result<Self> {
         let cqt = build_session(CQT_PATH, device)?;
         check_metadata(
@@ -285,9 +312,7 @@ impl HarmonicaModel {
         check_metadata(
             &net,
             &[
-                // `Mix` is the large architecture with a wider last layer; its
-                // part layout is checked below.
-                ("size", if size.is_multipart() { "large".to_string() } else { size.to_string() }),
+                ("size", size.metadata_size().to_string()),
                 ("sample_rate", SAMPLE_RATE.to_string()),
                 ("hop", HOP.to_string()),
                 ("chunk", CHUNK.to_string()),
@@ -301,29 +326,19 @@ impl HarmonicaModel {
         let meta = net.metadata().map_err(|e| anyhow!("{e}"))?;
         // ONNX Runtime answers an absent key with an empty string, not None.
         let custom = |key: &str| meta.custom(key).filter(|v| !v.is_empty());
-        let (parts, thresholds_f8, thresholds_f16) = if size.is_multipart() {
-            let want = MIX_PARTS.iter().map(|p| p.name()).collect::<Vec<_>>().join(",");
-            let got = custom("parts").ok_or_else(|| anyhow!("{}: ONNX metadata is missing \"parts\" (wrong/old model file?)", size.file_name()))?;
-            if got != want {
-                bail!("{}: ONNX metadata \"parts\" = {got:?}, expected {want:?}", size.file_name());
-            }
-            let parts = MIX_PARTS.to_vec();
-            let read = |key: &str| -> Result<Vec<(f32, f32)>> {
-                let json = custom(key).ok_or_else(|| anyhow!("{}: ONNX metadata is missing {key:?}", size.file_name()))?;
-                parse_thresholds(&json, &parts).with_context(|| format!("{}: metadata {key:?}", size.file_name()))
-            };
-            let (f8, f16) = (read("thresholds_f8")?, read("thresholds_f16")?);
-            (parts, f8, f16)
-        } else {
-            if custom("parts").is_some() {
-                bail!("{}: has a \"parts\" metadata entry but is loaded as a single-part model", size.file_name());
-            }
-            let th = size.thresholds().expect("single-part sizes have fixed thresholds");
-            (vec![Part::All], vec![th], vec![th])
+        let want = PARTS.iter().map(|p| p.name()).collect::<Vec<_>>().join(",");
+        let got = custom("parts").ok_or_else(|| anyhow!("{}: ONNX metadata is missing \"parts\" (wrong/old model file?)", size.file_name()))?;
+        if got != want {
+            bail!("{}: ONNX metadata \"parts\" = {got:?}, expected {want:?}", size.file_name());
+        }
+        let read = |key: &str| -> Result<Vec<(f32, f32)>> {
+            let json = custom(key).ok_or_else(|| anyhow!("{}: ONNX metadata is missing {key:?}", size.file_name()))?;
+            parse_thresholds(&json, &PARTS).with_context(|| format!("{}: metadata {key:?}", size.file_name()))
         };
+        let (thresholds_f8, thresholds_f16) = (read("thresholds_f8")?, read("thresholds_f16")?);
         drop(meta);
 
-        let mut model = Self { cqt, net, size, device, parts, thresholds_f8, thresholds_f16 };
+        let mut model = Self { cqt, net, size, device, gpu: GpuClass::None, thresholds_f8, thresholds_f16 };
 
         // The first run of a session costs ~0.7-0.9s (graph optimization,
         // DirectML shader compilation, ...); do it now so it doesn't stall
@@ -337,23 +352,44 @@ impl HarmonicaModel {
         Ok(model)
     }
 
-    /// Loads `size` on DirectML when `allow_directml`, falling back to
-    /// `Small` on CPU (never the originally-requested size) if DirectML
-    /// isn't available or fails; goes straight to `Small` on CPU if
-    /// `allow_directml` is false. Decided by the user: when DirectML can't
-    /// be used, always run the cheapest model on CPU rather than trying to
-    /// run the requested size there -- medium/large on CPU are too slow to
-    /// keep up with the 256ms block budget (see phase5-report.md's speed
-    /// table), so falling back to the same size would silently break
-    /// real-time use instead of just degrading accuracy.
-    pub fn load(size: ModelSize, allow_directml: bool) -> Result<Self> {
-        if allow_directml {
+    /// Loads the model for `choice`:
+    ///
+    /// - `Auto` on DirectML picks L for a discrete GPU and M for an
+    ///   integrated one (the only sizes that fit the block budget there); with
+    ///   no hardware adapter it goes straight to the CPU.
+    /// - A fixed choice is loaded as asked on DirectML.
+    /// - On the CPU (`allow_directml` false, no adapter, or DirectML failing
+    ///   to load) the size follows `cpu_size`, and a fixed choice smaller than
+    ///   that is kept. Decided by the user for the old models: when DirectML
+    ///   can't be used, never run the requested size on the CPU if it would
+    ///   miss the 256 ms block budget -- that would silently break real-time
+    ///   use instead of just degrading accuracy.
+    pub fn load(choice: ModelChoice, allow_directml: bool) -> Result<Self> {
+        let gpu = if allow_directml { gpu_class::probe() } else { GpuClass::None };
+        if allow_directml && !(choice == ModelChoice::Auto && gpu == GpuClass::None) {
+            let size = match choice {
+                ModelChoice::Fixed(size) => size,
+                ModelChoice::Auto if matches!(gpu, GpuClass::Discrete(_)) => ModelSize::Large,
+                ModelChoice::Auto => ModelSize::Medium,
+            };
             match Self::load_on(size, Device::DirectML) {
-                Ok(model) => return Ok(model),
-                Err(e) => eprintln!("HarmonicaModel: DirectML load failed ({e}); falling back to small on CPU"),
+                Ok(mut model) => {
+                    eprintln!("HarmonicaModel: {} on DirectML ({})", size.label(), match &gpu {
+                        GpuClass::Discrete(name) => format!("discrete GPU {name}"),
+                        GpuClass::Integrated(name) => format!("integrated GPU {name}"),
+                        GpuClass::None => "no hardware adapter found".to_string(),
+                    });
+                    model.gpu = gpu;
+                    return Ok(model);
+                }
+                Err(e) => eprintln!("HarmonicaModel: DirectML load failed ({e}); falling back to the CPU"),
             }
         }
-        Self::load_on(ModelSize::Small, Device::Cpu)
+        let size = match choice {
+            ModelChoice::Fixed(size) => size.min(cpu_size()),
+            ModelChoice::Auto => cpu_size(),
+        };
+        Self::load_on(size, Device::Cpu)
     }
 
     pub fn size(&self) -> ModelSize {
@@ -364,15 +400,30 @@ impl HarmonicaModel {
         self.device
     }
 
+    /// The name of the GPU DirectML runs on, when known (`load` on DirectML).
+    pub fn gpu_name(&self) -> Option<&str> {
+        match &self.gpu {
+            GpuClass::Discrete(name) | GpuClass::Integrated(name) => Some(name),
+            GpuClass::None => None,
+        }
+    }
+
+    /// Whether a block can be expected to take longer than the 0.256 s it
+    /// covers: L outside a discrete GPU (273 ms on an iGPU, 278 ms on 8 CPU
+    /// threads). Only a fixed choice can end up here; `Auto` never picks it.
+    pub fn may_exceed_budget(&self) -> bool {
+        self.size == ModelSize::Large && !matches!(self.gpu, GpuClass::Discrete(_))
+    }
+
     /// Output parts in the order `net` returns them.
     pub fn parts(&self) -> &[Part] {
-        &self.parts
+        &PARTS
     }
 
     /// (th_on, th_sus) per part, parallel to `parts()`, for a session with
-    /// `future_frames` of look-ahead. The Mix model's metadata carries one
-    /// set per look-ahead, and they differ (v2: the vocal th_sus is .35 at
-    /// f8, .30 at f16): 16 or more uses the f16 set.
+    /// `future_frames` of look-ahead. The metadata carries one set per
+    /// look-ahead, and they can differ (L: the vocal th_sus is .35 at f8, .30
+    /// at f16; S: .30 and .35): 16 or more uses the f16 set.
     pub fn part_thresholds(&self, future_frames: usize) -> &[(f32, f32)] {
         if future_frames >= 16 {
             &self.thresholds_f16
@@ -401,12 +452,11 @@ impl HarmonicaModel {
         let data: Vec<f32> = cqt_mag.outer_iter().flat_map(|row| row.into_iter().copied()).collect();
         let input = Tensor::from_array(([1, t, f], data)).map_err(|e| anyhow!("{e}"))?;
         let outputs = self.net.run(ort::inputs!["cqt_mag" => input]).map_err(|e| anyhow!("{e}"))?;
-        let n = self.parts.len();
+        let n = PARTS.len();
         let onset = extract_parts(&outputs, "onset", n)?;
         let sustain = extract_parts(&outputs, "sustain", n)?;
         let offset = extract_parts(&outputs, "offset", n)?;
-        Ok(self
-            .parts
+        Ok(PARTS
             .iter()
             .zip(onset.into_iter().zip(sustain).zip(offset))
             .map(|(&part, ((onset, sustain), offset))| PartProbs { part, onset, sustain, offset })
@@ -424,23 +474,32 @@ mod tests {
     fn harmonica_thresholds_follow_the_given_part_order() {
         let th = parse_thresholds(JSON, &[Part::Other, Part::Vocal]).unwrap();
         assert_eq!(th, vec![(0.1, 0.2), (0.25, 0.3)]);
-        let th = parse_thresholds(JSON, &MIX_PARTS).unwrap();
+        let th = parse_thresholds(JSON, &PARTS).unwrap();
         assert_eq!(th, vec![(0.25, 0.3), (0.25, 0.9), (0.1, 0.2)]);
     }
 
     #[test]
     fn harmonica_thresholds_reject_missing_part_and_bad_json() {
-        assert!(parse_thresholds(r#"{"vocal": [0.25, 0.3]}"#, &MIX_PARTS).is_err());
+        assert!(parse_thresholds(r#"{"vocal": [0.25, 0.3]}"#, &PARTS).is_err());
         assert!(parse_thresholds(r#"{"vocal": [0.25]}"#, &[Part::Vocal]).is_err());
-        assert!(parse_thresholds("not json", &MIX_PARTS).is_err());
+        assert!(parse_thresholds("not json", &PARTS).is_err());
     }
 
     #[test]
     fn harmonica_model_size_names_round_trip() {
-        for size in [ModelSize::Small, ModelSize::Medium, ModelSize::Large, ModelSize::Mix] {
+        for size in [ModelSize::Small, ModelSize::Medium, ModelSize::Large] {
             assert_eq!(size.to_string().parse::<ModelSize>().unwrap(), size);
         }
-        assert!(ModelSize::Mix.thresholds().is_none() && ModelSize::Mix.is_multipart());
-        assert!(ModelSize::Large.thresholds().is_some() && !ModelSize::Large.is_multipart());
+        assert_eq!("S".parse::<ModelSize>().unwrap(), ModelSize::Small);
+        assert!("mix".parse::<ModelSize>().is_err());
+        assert!(ModelSize::Small < ModelSize::Medium && ModelSize::Medium < ModelSize::Large);
+    }
+
+    #[test]
+    fn harmonica_model_choice_parses_auto_and_sizes() {
+        assert_eq!("auto".parse::<ModelChoice>().unwrap(), ModelChoice::Auto);
+        assert_eq!("AUTO".parse::<ModelChoice>().unwrap(), ModelChoice::Auto);
+        assert_eq!("m".parse::<ModelChoice>().unwrap(), ModelChoice::Fixed(ModelSize::Medium));
+        assert!("mix".parse::<ModelChoice>().is_err());
     }
 }

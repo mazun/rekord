@@ -32,8 +32,10 @@ design and measurements: [docs/chord-layers.md](../docs/chord-layers.md).
 
 ## Map
 
-- Notes: `harmonica_{model,stream,decode}.rs`; Mix model has 3 parts
-  (vocal/bass/other), vocal notes feed only tensions. Latency is structural.
+- Notes: `harmonica_{model,stream,decode}.rs` (file names predate Okarina);
+  Okarina S/M/L, all with 3 parts (vocal/bass/other), vocal notes feed only
+  tensions. Size is `auto` by default (`gpu_class.rs` tells dGPU from iGPU).
+  Latency is structural.
 - Chords: `chord_templates.rs`, `chord_layers/` (instant / settled / confirmed
   layers, append-only), `window_chroma` in `pipeline.rs`.
 - Key: `key_estimator.rs`. Spelling: `spelling.rs` (frontend mirrors
@@ -46,7 +48,7 @@ design and measurements: [docs/chord-layers.md](../docs/chord-layers.md).
 ## Common commands
 
 ```bash
-cargo test -p rekord_core --release harmonica_   # note golden tests
+cargo test -p rekord_core --release okarina_ -- --test-threads=1   # note golden tests (S/M/L)
 cargo test -p rekord_core --release beat_        # beat golden tests
 cargo test -p rekord_beat_dbn --release
 cargo test -p rekord_core --release --lib

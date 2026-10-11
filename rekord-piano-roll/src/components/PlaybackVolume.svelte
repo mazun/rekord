@@ -9,8 +9,9 @@
   // button. It lives next to the play button rather than on the settings page: opening settings stops
   // playback, and the point is to adjust the balance while listening.
   const PARTS = ["vocal", "bass", "other"] as const;
-  // A single-part model labels every note "all", which has just a wave of its own.
-  const threePart = $derived(pipeline.noteModel?.size === "mix");
+  // Before the first session no model has run yet and notes carry the part "all", which has just a
+  // wave of its own.
+  const threePart = $derived(pipeline.noteModel !== null);
 
   let open = $state(false);
   let root: HTMLElement;

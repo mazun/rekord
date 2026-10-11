@@ -29,13 +29,21 @@
       }}
       disabled={pipeline.status !== "idle"}
     >
-      <option value="mix">{t("settings.noteModelMix")}</option>
+      <option value="auto">{t("settings.noteModelAuto")}</option>
       <option value="large">{t("settings.noteModelLarge")}</option>
       <option value="medium">{t("settings.noteModelMedium")}</option>
       <option value="small">{t("settings.noteModelSmall")}</option>
     </select>
-    {#if pipeline.noteModel?.device === "cpu"}
-      <p class="settings-note">{t("settings.cpuFallbackNote")}</p>
+    {#if pipeline.noteModel}
+      <p class="settings-note">
+        {t("settings.noteModelLastRun")}: Okarina {pipeline.noteModel.size[0].toUpperCase()} ({pipeline.noteModel.device === "cpu" ? "CPU" : "DirectML"})
+      </p>
+      {#if pipeline.noteModel.device === "cpu"}
+        <p class="settings-note">{t("settings.cpuFallbackNote")}</p>
+      {/if}
+      {#if pipeline.noteModel.over_budget}
+        <p class="settings-note">{t("settings.overBudgetNote")}</p>
+      {/if}
     {/if}
   </div>
   <div class="settings-row">

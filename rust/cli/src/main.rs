@@ -3,7 +3,7 @@ use anyhow::{bail, Context, Result};
 use rekord_core::audio_io;
 use rekord_core::chord_layers::{ChordEngine, ChordLayerId};
 use rekord_core::chord_templates::{extra_tensions, ChordMatch};
-use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelSize, Part};
+use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, Part};
 use rekord_core::harmonica_stream::NoteTranscriber;
 use rekord_core::key_estimator::KeyEstimator;
 use rekord_core::melody_bass::LineTracker;
@@ -20,12 +20,21 @@ fn device_name(device: Device) -> &'static str {
     }
 }
 
+fn over_budget_note(note_model: NoteModelInfo) -> &'static str {
+    if note_model.over_budget {
+        " -- WARNING: this size may not keep up with real time on this hardware"
+    } else {
+        ""
+    }
+}
+
 fn print_model_info(note_model: NoteModelInfo) {
     println!(
-        "Using {} on {} (look-ahead {} frames)\n",
-        note_model.size,
+        "Using {} on {} (look-ahead {} frames){}\n",
+        note_model.size.label(),
         device_name(note_model.device),
-        note_model.future_frames
+        note_model.future_frames,
+        over_budget_note(note_model),
     );
 }
 
@@ -93,10 +102,11 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
     match event {
         PipelineEvent::Started { total_latency_s, note_model, .. } => {
             println!(
-                "(model: {} on {}, look-ahead {} frames; confirm latency: {total_latency_s:.2}s)\n",
-                note_model.size,
+                "(model: {} on {}, look-ahead {} frames; confirm latency: {total_latency_s:.2}s){}\n",
+                note_model.size.label(),
                 device_name(note_model.device),
-                note_model.future_frames
+                note_model.future_frames,
+                over_budget_note(note_model),
             );
         }
         PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity, part, melody, bass } => {
@@ -128,7 +138,7 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
 
 fn run_file(
     audio_path: &str,
-    size: ModelSize,
+    choice: ModelChoice,
     future_frames: usize,
     allow_directml: bool,
     hop_seconds: f32,
@@ -140,8 +150,13 @@ fn run_file(
     let duration = audio.len() as f32 / harmonica_model::SAMPLE_RATE as f32;
     println!("Duration: {duration:.1}s, simulating stream with {hop_seconds:.2}s hops\n");
 
-    let model = HarmonicaModel::load(size, allow_directml).context("loading Harmonica model")?;
-    print_model_info(NoteModelInfo { size: model.size(), device: model.device(), future_frames });
+    let model = HarmonicaModel::load(choice, allow_directml).context("loading Okarina model")?;
+    print_model_info(NoteModelInfo {
+        size: model.size(),
+        device: model.device(),
+        future_frames,
+        over_budget: model.may_exceed_budget(),
+    });
     let mut transcriber = NoteTranscriber::new(model, future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut lines = LineTracker::new();
@@ -230,7 +245,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut audio_file: Option<String> = None;
     let mut hop = CAPTURE_HOP_S;
-    let mut size = ModelSize::Mix;
+    let mut choice = ModelChoice::Auto;
     let mut future_frames = DEFAULT_FUTURE_FRAMES;
     let mut allow_directml = true;
     let mut accidental = Accidental::Auto;
@@ -250,8 +265,8 @@ fn main() -> Result<()> {
             }
             "--size" => {
                 i += 1;
-                let value = args.get(i).context("--size expects small, medium, large or mix")?;
-                size = value.parse()?;
+                let value = args.get(i).context("--size expects auto, s, m or l")?;
+                choice = value.parse()?;
             }
             "--future" => {
                 i += 1;
@@ -295,12 +310,12 @@ fn main() -> Result<()> {
     }
 
     if live {
-        let config = NoteModelConfig { size, future_frames, allow_directml };
+        let config = NoteModelConfig { choice, future_frames, allow_directml };
         run_live(config, hop, duration, accidental, chord_layers)
     } else {
         let audio_file = audio_file.context(
-            "usage: rekord_engine <audio_file> [--size small|medium|large|mix] [--future 8|16] [--accidental auto|sharp|flat] [--chord-layer instant|settled|confirmed|all] [--cpu] [--hop 0.064]",
+            "usage: rekord_engine <audio_file> [--size auto|s|m|l] [--future 8|16] [--accidental auto|sharp|flat] [--chord-layer instant|settled|confirmed|all] [--cpu] [--hop 0.064]",
         )?;
-        run_file(&audio_file, size, future_frames, allow_directml, hop, accidental, chord_layers)
+        run_file(&audio_file, choice, future_frames, allow_directml, hop, accidental, chord_layers)
     }
 }

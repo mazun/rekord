@@ -15,7 +15,7 @@ use crate::beat_tracker::{BeatGrid, BeatTracker};
 use crate::chord_layers::{ActiveChange, ChordEngine, ChordLayerId, LayerChord};
 use crate::chord_templates::{self, ChordVocabulary};
 use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
-use crate::harmonica_model::{self, Device, HarmonicaModel, ModelSize, Part};
+use crate::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, ModelSize, Part};
 use crate::harmonica_stream::NoteTranscriber;
 use crate::key_estimator::{KeyEstimate, KeyEstimator};
 use crate::spelling::{note_name, Accidental};
@@ -35,25 +35,25 @@ const STOP_POLL: Duration = Duration::from_millis(100);
 
 /// Which note-transcription model to run and how. `future_frames` trades
 /// confirm latency for accuracy (see `FUTURE_FRAME_CHOICES`); `allow_directml`
-/// lets a caller (e.g. a CLI `--cpu` flag) force the small-on-CPU fallback
-/// path deliberately, for testing it without having to disable DirectML at
-/// the OS/driver level.
+/// lets a caller (e.g. a CLI `--cpu` flag) force the CPU path deliberately,
+/// for testing it without having to disable DirectML at the OS/driver level.
 pub struct NoteModelConfig {
-    pub size: ModelSize,
+    pub choice: ModelChoice,
     pub future_frames: usize,
     pub allow_directml: bool,
 }
 
-/// Which model/device a session actually ended up running, after any
-/// DirectML->CPU fallback (`HarmonicaModel::load` always falls back to
-/// `Small` on CPU, never the originally requested size) -- reported in the
+/// Which model/device a session actually ended up running, after `Auto` and
+/// any DirectML->CPU fallback (see `HarmonicaModel::load`) -- reported in the
 /// `Started` event so a frontend can show what's really running rather than
-/// just echoing back the user's request.
+/// just echoing back the user's request. `over_budget` is
+/// `HarmonicaModel::may_exceed_budget`.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct NoteModelInfo {
     pub size: ModelSize,
     pub device: Device,
     pub future_frames: usize,
+    pub over_budget: bool,
 }
 
 /// Fixed capture chunk length. A block is processed as soon as the chunk
@@ -353,8 +353,13 @@ fn run_note_pipeline(
     mut on_chunk: impl FnMut(&[f32]),
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
-    let model = HarmonicaModel::load(config.size, config.allow_directml)?;
-    let note_model = NoteModelInfo { size: model.size(), device: model.device(), future_frames: config.future_frames };
+    let model = HarmonicaModel::load(config.choice, config.allow_directml)?;
+    let note_model = NoteModelInfo {
+        size: model.size(),
+        device: model.device(),
+        future_frames: config.future_frames,
+        over_budget: model.may_exceed_budget(),
+    };
     let mut transcriber = NoteTranscriber::new(model, config.future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut lines = LineTracker::new();

@@ -4,6 +4,7 @@ pub mod beat_model;
 pub mod beat_tracker;
 pub mod chord_layers;
 pub mod chord_templates;
+pub mod gpu_class;
 pub mod harmonica_decode;
 pub mod harmonica_model;
 pub mod harmonica_stream;

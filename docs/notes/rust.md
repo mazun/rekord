@@ -8,10 +8,12 @@ change behavior there first, regenerate its golden vectors, then port. Don't
 tune the Rust side alone.** Both ports match the reference on the golden
 vectors; the tests skip when the golden data is absent.
 
-## Note transcription (Harmonica; `harmonica_{model,stream,decode}.rs`)
+## Note transcription (Okarina S/M/L; `harmonica_{model,stream,decode}.rs`)
 
-Spec, accuracy, speed, parameter choices: `docs/phase5-report.md` in
-harmonica-repro (reference `harmonica/infer.py::predict_song_stream`,
+Okarina is an unofficial Harmonica derivative (the module names predate it).
+Spec, accuracy, speed, parameter choices: `docs/phase5-report.md`,
+`docs/mix-s2-report.md` (L) and `docs/okarina-sm-report.md` (S/M, sizes,
+hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_stream`,
 `harmonica/decode.py`).
 
 - Streaming: 16 kHz mono, 32 ms frames; every 8 frames (0.256 s) one 5 s window
@@ -19,22 +21,40 @@ harmonica-repro (reference `harmonica/infer.py::predict_song_stream`,
   rows before the stream start zeroed, output rows `[148-f, 156-f)`. No LSTM
   state is carried. `f` = 8 (default) or 16 is a user setting; longer doesn't
   help, 0 loses a lot of accuracy.
-- Sizes small/medium/large (single part) and **mix** (default) are user-selectable.
-  Without DirectML it runs **small on CPU** regardless of the choice. Single-part
-  thresholds are per size, shared by both `f`.
-- **Mix (`mix_large_v2.onnx`, `ModelSize::Mix`)** outputs `[1, 3, T, 88]` per
-  head, parts vocal/bass/other. `parts` and `thresholds_f8`/`thresholds_f16`
-  (per part `[th_on, th_sus]`) come from the ONNX metadata, not constants here;
-  the part order is checked at load (`part_thresholds` picks by `future_frames`).
-  `NoteTranscriber` runs one `StreamingDecoder` per part; every
-  `ConfirmedNote`/`NoteEvent`/`NoteConfirmed` carries its `Part` (`All` for
-  single-part models). The thresholds were partly hand-lowered (bass/other
-  th_sus) because the CV picks cut held notes short.
+- **Sizes** `okarina_{s,m,l}.onnx` (`ModelSize::{Small,Medium,Large}`; the
+  files keep the training side's names in their `size`/`train_run` metadata,
+  Re:Kord tells them apart by file name). The setting is `ModelChoice`:
+  **`Auto` (default)** or a fixed size. Budget is 0.256 s per block; measured
+  on the dev PC (CQT + model): L 17 ms on the dGPU but 278 ms on 8 CPU threads
+  and 273 ms (model only) on the iGPU; M ~90 ms on 8 CPU threads, ~80 ms on the
+  iGPU; S ~40 ms on 4 CPU threads. Times on weak CPUs/iGPUs are unmeasured.
+  - `Auto` + DirectML: dGPU → L, iGPU → M (`gpu_class.rs`: first
+    non-software DXGI adapter in high-performance order — the one DirectML's
+    device 0 uses; dGPU = at least 1 GiB dedicated VRAM). No hardware adapter →
+    CPU rule.
+  - CPU rule (`cpu_size`): 8+ threads → M, else S. It also applies when
+    DirectML fails to load, and caps a fixed choice (L chosen but no DirectML →
+    M or S): running over budget on the CPU would silently break real time.
+  - A fixed L without a dGPU is loaded as asked; `NoteModelInfo.over_budget`
+    makes the settings page warn. `load` logs the size and adapter name to
+    stderr (check it on a new machine).
+- All three output `[1, 3, T, 88]` per head, parts vocal/bass/other. `parts`
+  and `thresholds_f8`/`thresholds_f16` (per part `[th_on, th_sus]`) come from
+  the ONNX metadata, not constants here (they differ per size; the vocal th_sus
+  differs between f8 and f16 for S and L); the part order is checked at load
+  (`part_thresholds` picks by `future_frames`). `NoteTranscriber` runs one
+  `StreamingDecoder` per part; every `ConfirmedNote`/`NoteEvent`/
+  `NoteConfirmed` carries its `Part` (`All` only for hand-built note lists).
+  The thresholds were partly hand-lowered (bass/other th_sus) because the CV
+  picks cut held notes short.
+- The Harmonica single-part models (small/medium/large_uni) and
+  `mix_large_v1/v2.onnx` names were retired; `mix_large_v2.onnx` is byte-
+  identical to `okarina_l.onnx`.
   Known behavior, not a bug: low notes of solo instruments are split between bass
   and other, so a pitch can appear in both; bass-part notes can be short
   fragments. `velocity` is not on a common scale across parts, which skews the
   key estimator's weighting toward bass — not re-tuned.
-- With Mix: the roll colors by part; `melody_bass.rs` is used only for
+- The roll colors by part; `melody_bass.rs` is used only for
   `Part::All` notes; the chord is named from bass + other only — **vocal notes
   feed only the tensions** (`evaluate_active` in `pipeline.rs`), since sung
   melody is mostly non-chord tones (vocal-only moments read as chord silence).
@@ -50,13 +70,16 @@ harmonica-repro (reference `harmonica/infer.py::predict_song_stream`,
   (64 ms) + 0.3` (0.88 s at f = 8). The frontend ignores it (see its CLAUDE.md).
 - Finished notes are kept 3.3 s (`RETAINED_SECONDS`) as context for chord
   matching and melody/bass labeling; this only bounds `note_events()`.
-- Tests: `cargo test -p rekord_core --release harmonica_` (golden dir
-  `harmonica-repro/runs/p5/golden`, override `HARMONICA_GOLDEN_DIR`); the
-  `harmonica_mix_*` tests use `runs/s2_deploy/golden` (GuitarSet, notes only in
-  `other`) and `golden_rwc001` (20 s of RWC-Pop 001, all parts; RWC is not
-  redistributable, only ever read from harmonica-repro), override
-  `HARMONICA_MIX_GOLDEN_DIR`; they also skip without `models/mix_large_v2.onnx`.
-  Tolerances are loose in the first blocks of a stream (window mostly zeroed
+- Tests: `cargo test -p rekord_core --release okarina_ -- --test-threads=1`
+  (`tests/okarina_golden.rs`, 10 tests, ~2.5 min). Per size two datasets from
+  harmonica-repro (`HARMONICA_REPRO_DIR` overrides the checkout path): S/M in
+  `runs/okarina_deploy/{small,medium}/`, L in `runs/s2_deploy/`, each with
+  `golden` (GuitarSet, notes only in `other`) and `golden_rwc001` (20 s of
+  RWC-Pop 001, all parts; RWC is not redistributable, only ever read from
+  harmonica-repro). The files there keep the internal names (`mix_small_*`
+  etc.); the test maps them. A size whose model or golden dir is missing is
+  skipped. Tolerance 1e-4 CPU / 1e-3 DirectML (observed < 5e-5 on CPU), but
+  loose in the first blocks of a stream (window mostly zeroed
   rows amplifies the difference between pyke's statically linked ONNX Runtime
   and Microsoft's); notes are identical.
 - **Weights are non-commercial only** (training data include CC BY-NC(-SA)
@@ -64,7 +87,8 @@ harmonica-repro (reference `harmonica/infer.py::predict_song_stream`,
   private HF repo `mazun/rekord`; `build.rs` downloads at the pinned commit
   (`HF_REVISION`) and checks pinned SHA-256s; `core/models/` is gitignored.
   New weights: upload to HF first, then update `HF_REVISION` and the hashes.
-  `mix_large_v1.onnx` stays in the repo for older revisions.
+  The old file names (`mix_large_v1/v2.onnx`, `*_uni_*.onnx`) stay in the HF
+  repo for older revisions.
 
 ## Chord naming (`chord_templates.rs`, `window_chroma` in `pipeline.rs`, `chord_layers/`)
 

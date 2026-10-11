@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use rekord_core::audio_ring::{RecordingInfo, RingTap, SharedRing};
-use rekord_core::harmonica_model::ModelSize;
+use rekord_core::harmonica_model::ModelChoice;
 use rekord_core::key_estimator::{KeyEstimate, Mode};
 use rekord_core::live_capture::CaptureTap;
 use rekord_core::spelling::Accidental;
@@ -76,13 +76,13 @@ fn start_capture(
     // Sanity checks on the frontend-supplied model settings -- server-side
     // insurance so a malformed value can never reach the pipeline, on top
     // of whatever validation the frontend's settings loaders already do.
-    let size = model_size.parse::<ModelSize>().unwrap_or(ModelSize::Mix);
+    let choice = model_size.parse::<ModelChoice>().unwrap_or(ModelChoice::Auto);
     let future_frames = if FUTURE_FRAME_CHOICES.contains(&future_frames) {
         future_frames
     } else {
         DEFAULT_FUTURE_FRAMES
     };
-    let config = NoteModelConfig { size, future_frames, allow_directml: true };
+    let config = NoteModelConfig { choice, future_frames, allow_directml: true };
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_thread = Arc::clone(&stop_flag);
