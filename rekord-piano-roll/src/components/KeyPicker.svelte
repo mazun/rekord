@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { pipeline, keyPcFromLabel, setKeyMode } from "../pipeline.svelte";
+  import { pipeline, setKeyMode } from "../pipeline.svelte";
   import { t } from "../i18n.svelte";
 
   // A toggle plus up/down steppers instead of a dropdown: the collapsed
@@ -11,7 +11,7 @@
   // one otherwise (setKeyMode updates the label immediately). Stepping from
   // Auto starts from what's on screen, falling back to C before the first
   // estimate arrives ("--").
-  const currentPc = $derived(Math.max(0, keyPcFromLabel(pipeline.keyName)));
+  const currentPc = $derived(pipeline.keyPc ?? 0);
 
   function toggleAuto() {
     auto = !auto;

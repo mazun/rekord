@@ -142,8 +142,6 @@ fn main() {
             _ => ChordEngine::with_params(instant, settled),
         };
         let mut key = KeyEstimator::new();
-        let mut last_key = None;
-        let mut prev = 0.0f32;
         let mut k = 1;
         let mut fed = vec![false; notes.len()];
         let mut started = vec![false; notes.len()];
@@ -196,14 +194,13 @@ fn main() {
                 Some((_, k)) => KeyMode::Manual(*k),
                 None => KeyMode::Auto,
             };
-            engine.advance(&events, prev, covered, &mut key, &key_mode, Accidental::Sharp, None, &mut last_key, |e| engine_events.push(e));
-            prev = covered;
+            engine.advance(&events, covered, &mut key, &key_mode, Accidental::Sharp, None, |e| engine_events.push(e));
             let done = covered >= end;
             if done {
                 engine.finish(covered, Accidental::Sharp, |e| engine_events.push(e));
             }
             for e in &engine_events {
-                if let PipelineEvent::KeyChange { t, key_name } = e {
+                if let PipelineEvent::KeyChange { t, key_name, .. } = e {
                     writeln!(keys, "{t:.2} {key_name}").unwrap();
                 }
                 if let PipelineEvent::ChordLayer { layer, changes, .. } = e {

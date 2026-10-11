@@ -32,10 +32,9 @@ const WHITE_ROW_ALPHA = 0.08;
 // committed a few seconds after that. All three layers look the same so a line firming up
 // doesn't pull the eye away from the newest notes. A bar line (downbeat) is stronger and
 // wider than a beat.
-type BeatLayer = "predicted" | "provisional" | "committed";
 const BEAT_LINE_COLOR = 0x5a6580;
 const BAR_LINE_COLOR = 0x9aaad8;
-const BEAT_LINE_ALPHA: Record<BeatLayer, number> = { predicted: 0.4, provisional: 0.4, committed: 0.4 };
+const BEAT_LINE_ALPHA = 0.4;
 const BAR_LINE_WIDTH = 2;
 // A new snapshot's line within this of a line already drawn is the same beat moving to its
 // next layer (its time can shift a little when it does); beats are >= 0.28s apart (215 BPM).
@@ -1138,14 +1137,10 @@ export class PianoRoll {
   /** Applies a BeatLines snapshot: it replaces every line at or after `from_s`. A line
    * matching one already drawn animates to its new layer/time; the rest fade in or out. */
   setBeatLines(lines: BeatLines): void {
-    const incoming: [BeatLine, BeatLayer][] = [
-      ...lines.committed.map((l): [BeatLine, BeatLayer] => [l, "committed"]),
-      ...lines.provisional.map((l): [BeatLine, BeatLayer] => [l, "provisional"]),
-      ...lines.predicted.map((l): [BeatLine, BeatLayer] => [l, "predicted"]),
-    ];
+    const incoming = [...lines.committed, ...lines.provisional, ...lines.predicted];
     const open = this.beatLines.filter((b) => !b.dying && b.targetT >= lines.from_s - BEAT_MATCH_TOLERANCE_S);
     const matched = new Set<BeatSprite>();
-    for (const [line, layer] of incoming) {
+    for (const line of incoming) {
       let best: BeatSprite | null = null;
       for (const b of open) {
         const d = Math.abs(b.targetT - line.t);
@@ -1162,7 +1157,7 @@ export class PianoRoll {
       }
       matched.add(best);
       best.targetT = line.t;
-      best.targetAlpha = BEAT_LINE_ALPHA[layer];
+      best.targetAlpha = BEAT_LINE_ALPHA;
       best.targetBar = +line.bar;
     }
     for (const b of open) {

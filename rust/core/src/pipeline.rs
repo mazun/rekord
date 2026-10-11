@@ -55,6 +55,12 @@ pub struct NoteModelInfo {
     pub over_budget: bool,
 }
 
+impl NoteModelInfo {
+    pub fn of(model: &HarmonicaModel, future_frames: usize) -> Self {
+        Self { size: model.size(), device: model.device(), future_frames, over_budget: model.may_exceed_budget() }
+    }
+}
+
 /// Fixed capture chunk length. A block is processed as soon as the chunk
 /// holding its last sample arrives, so this adds up to one chunk of delay
 /// (it's part of `total_latency_s`); 64 ms is a quarter of a 0.256 s block.
@@ -152,7 +158,7 @@ pub enum PipelineEvent {
     /// a single held chord's duration, not just at the next chord
     /// boundary. `t` is the checkpoint time of the estimate (audio time,
     /// like every other timestamp here).
-    KeyChange { t: f32, key_name: String },
+    KeyChange { t: f32, key_name: String, tonic_pc: i32 },
     /// Every beat line at or after `from_s`, replacing the previous `BeatLines` over that
     /// range (lines before `from_s` are unchanged and already final). Three layers of the
     /// same beats at increasing delay and confidence (see beat_tracker.rs):
@@ -328,17 +334,12 @@ fn run_note_pipeline(
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
     let model = HarmonicaModel::load(config.choice, config.allow_directml)?;
-    let note_model = NoteModelInfo {
-        size: model.size(),
-        device: model.device(),
-        future_frames: config.future_frames,
-        over_budget: model.may_exceed_budget(),
-    };
+    let note_model = NoteModelInfo::of(&model, config.future_frames);
     let mut transcriber = NoteTranscriber::new(model, config.future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut chords = ChordEngine::standard();
-    let mut last_key_name: Option<String> = None;
-    let mut last_covered = 0.0f32;
+    // What the user can change while the session runs, as it is right now.
+    let settings_now = || (*key_mode.lock().unwrap(), *accidental.lock().unwrap(), *beat_grid.lock().unwrap());
     let mut elapsed = 0.0f32;
 
     let (_stream, rx) =
@@ -369,21 +370,8 @@ fn run_note_pipeline(
             for n in transcriber.take_started_notes() {
                 on_event(PipelineEvent::NoteStarted { start_s: n.start_s, pitch_midi: n.pitch_midi, velocity: n.velocity, part: n.part });
             }
-            let current_key_mode = *key_mode.lock().unwrap();
-            let current_accidental = *accidental.lock().unwrap();
-            let current_beat_grid = *beat_grid.lock().unwrap();
-            chords.advance(
-                &note_events,
-                last_covered,
-                covered,
-                &mut key_estimator,
-                &current_key_mode,
-                current_accidental,
-                current_beat_grid,
-                &mut last_key_name,
-                &mut on_event,
-            );
-            last_covered = covered;
+            let (current_key_mode, current_accidental, current_beat_grid) = settings_now();
+            chords.advance(&note_events, covered, &mut key_estimator, &current_key_mode, current_accidental, current_beat_grid, &mut on_event);
         }
         if let Some(d) = duration_s {
             if elapsed >= d {
@@ -403,18 +391,14 @@ fn run_note_pipeline(
     let final_notes = transcriber.finish()?;
     let final_note_events = transcriber.note_events();
     emit_confirmed_notes(final_notes, &mut key_estimator, &mut on_event);
-    let current_key_mode = *key_mode.lock().unwrap();
-    let current_accidental = *accidental.lock().unwrap();
-    let current_beat_grid = *beat_grid.lock().unwrap();
+    let (current_key_mode, current_accidental, current_beat_grid) = settings_now();
     chords.advance(
         &final_note_events,
-        last_covered,
         transcriber.covered_seconds(),
         &mut key_estimator,
         &current_key_mode,
         current_accidental,
         current_beat_grid,
-        &mut last_key_name,
         &mut on_event,
     );
     chords.finish(transcriber.covered_seconds(), current_accidental, &mut on_event);

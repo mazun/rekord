@@ -83,6 +83,10 @@ pub struct ChordEngine {
     last_accidental: Option<Accidental>,
     last_key: Option<KeyEstimate>,
     last_mask: Option<u16>,
+    /// The name of the key last reported in a `KeyChange` (a respelling is a change).
+    last_key_name: Option<String>,
+    /// Where the previous `advance` ended: the next one starts its checkpoints after it.
+    last_covered: f32,
     active: Vec<ActiveChange>,
 }
 
@@ -99,24 +103,26 @@ impl ChordEngine {
                 pending: Vec::new(),
             })
             .collect();
-        Self { slots, last_accidental: None, last_key: None, last_mask: None, active: Vec::new() }
+        Self { slots, last_accidental: None, last_key: None, last_mask: None, last_key_name: None, last_covered: 0.0, active: Vec::new() }
+    }
+
+    fn hold_layers(instant: HoldParams, settled: HoldParams) -> Vec<(ChordLayerId, Box<dyn ChordLayer>)> {
+        vec![
+            (ChordLayerId::Instant, Box::new(HoldLayer::new(instant))),
+            (ChordLayerId::Settled, Box::new(HoldLayer::new(settled))),
+        ]
     }
 
     /// The instant layer and the settled one.
     pub fn with_params(instant: HoldParams, settled: HoldParams) -> Self {
-        Self::new(vec![
-            (ChordLayerId::Instant, Box::new(HoldLayer::new(instant))),
-            (ChordLayerId::Settled, Box::new(HoldLayer::new(settled))),
-        ])
+        Self::new(Self::hold_layers(instant, settled))
     }
 
     /// The two layers and the one that waits 2 s as well.
     pub fn with_confirmed(instant: HoldParams, settled: HoldParams, confirmed: ConfirmedParams) -> Self {
-        Self::new(vec![
-            (ChordLayerId::Instant, Box::new(HoldLayer::new(instant))),
-            (ChordLayerId::Settled, Box::new(HoldLayer::new(settled))),
-            (ChordLayerId::Confirmed, Box::new(ConfirmedLayer::new(confirmed))),
-        ])
+        let mut layers = Self::hold_layers(instant, settled);
+        layers.push((ChordLayerId::Confirmed, Box::new(ConfirmedLayer::new(confirmed))));
+        Self::new(layers)
     }
 
     /// The layers a session runs: all three, with the default numbers. For trying other numbers in
@@ -143,22 +149,22 @@ impl ChordEngine {
         Self::with_confirmed(instant, settled, tuned(ConfirmedParams::standard(), "REKORD_CHORD_TUNE_CONFIRMED", ConfirmedParams::apply_tune))
     }
 
-    /// Runs all layers over the checkpoints in `(prev_covered, covered]` (see `chord_checkpoints`)
-    /// and reports the key and every layer's new decisions. `note_events` is what
-    /// `NoteTranscriber::note_events()` returned at `covered`; `beat_grid` is the beat tracker's
-    /// current grid, if any is known yet (`None` in file mode, which has no beat tracker).
+    /// Runs all layers over the checkpoints after the previous call's `covered` up to `covered`
+    /// (see `chord_checkpoints`) and reports the key and every layer's new decisions.
+    /// `note_events` is what `NoteTranscriber::note_events()` returned at `covered`; `beat_grid`
+    /// is the beat tracker's current grid, if any is known yet (`None` in file mode, which has no
+    /// beat tracker).
     pub fn advance(
         &mut self,
         note_events: &[NoteEvent],
-        prev_covered: f32,
         covered: f32,
         key_estimator: &mut KeyEstimator,
         key_mode: &KeyMode,
         accidental: Accidental,
         beat_grid: Option<BeatGrid>,
-        last_key_name: &mut Option<String>,
         mut on_event: impl FnMut(PipelineEvent),
     ) {
+        let prev_covered = std::mem::replace(&mut self.last_covered, covered);
         for t in chord_checkpoints(note_events, prev_covered, covered) {
             // Re-evaluate the key first: it can update mid-chord, and doing this before the chords
             // lets a just-updated key inform this same checkpoint's labels instead of lagging a
@@ -172,9 +178,9 @@ impl ChordEngine {
             };
             if let Some(key) = current_key {
                 let key_name = key.name(accidental);
-                if Some(&key_name) != last_key_name.as_ref() {
-                    on_event(PipelineEvent::KeyChange { t, key_name: key_name.clone() });
-                    *last_key_name = Some(key_name);
+                if Some(&key_name) != self.last_key_name.as_ref() {
+                    on_event(PipelineEvent::KeyChange { t, key_name: key_name.clone(), tonic_pc: key.relative_major_pc() });
+                    self.last_key_name = Some(key_name);
                 }
             }
             self.last_key = current_key;
@@ -260,13 +266,11 @@ mod tests {
     fn run_engine(mut engine: ChordEngine, notes: &[NoteEvent], end_s: f32) -> Vec<PipelineEvent> {
         let mut key = KeyEstimator::new();
         let mut events = Vec::new();
-        let mut last_key_name = None;
-        let (mut prev, mut k) = (0.0f32, 1);
+        let mut k = 1;
         loop {
             let covered = (k as f32 * 0.256).min(end_s);
             let visible: Vec<NoteEvent> = notes.iter().filter(|n| n.0 <= covered).map(|&(s, e, p, v, part)| (s, e.min(covered), p, v, part)).collect();
-            engine.advance(&visible, prev, covered, &mut key, &KeyMode::Auto, Accidental::Sharp, None, &mut last_key_name, |e| events.push(e));
-            prev = covered;
+            engine.advance(&visible, covered, &mut key, &KeyMode::Auto, Accidental::Sharp, None, |e| events.push(e));
             if covered >= end_s {
                 engine.finish(covered, Accidental::Sharp, |e| events.push(e));
                 break;
@@ -358,13 +362,10 @@ mod tests {
         let mut engine = ChordEngine::with_params(HoldParams::instant(), HoldParams::settled());
         let mut key = KeyEstimator::new();
         let mut events = Vec::new();
-        let mut name = None;
-        let mut prev = 0.0;
         for (i, accidental) in [(1, Accidental::Sharp), (2, Accidental::Sharp), (3, Accidental::Sharp), (4, Accidental::Flat)] {
             let covered = i as f32;
             let visible: Vec<NoteEvent> = notes.iter().map(|&(s, e, p, v, part)| (s, e.min(covered), p, v, part)).collect();
-            engine.advance(&visible, prev, covered, &mut key, &KeyMode::Auto, accidental, None, &mut name, |e| events.push(e));
-            prev = covered;
+            engine.advance(&visible, covered, &mut key, &KeyMode::Auto, accidental, None, |e| events.push(e));
         }
         let instant: Vec<&LayerChord> = layer_events(&events, ChordLayerId::Instant).into_iter().flat_map(|(cs, _)| cs.iter()).collect();
         assert_eq!(instant.len(), 2, "{instant:?}");

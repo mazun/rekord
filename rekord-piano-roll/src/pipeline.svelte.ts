@@ -24,7 +24,7 @@ type PipelineEvent =
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
   | ({ type: "ChordLayer" } & ChordLayerEvent)
   | { type: "ActiveNotes"; changes: { t: number; pcs: number }[] }
-  | { type: "KeyChange"; t: number; key_name: string }
+  | { type: "KeyChange"; t: number; key_name: string; tonic_pc: number }
   | ({ type: "BeatLines" } & BeatLines);
 
 // "loading" until the piano roll exists and the event listener is
@@ -46,6 +46,8 @@ const EMPTY_ROMAN = " ";
 export const pipeline = $state({
   status: "loading" as CaptureStatus,
   keyName: "--",
+  /** The relative-major pitch class of the key shown (null: none yet). */
+  keyPc: null as number | null,
   chord: "--",
   roman: EMPTY_ROMAN,
   tensions: [] as string[],
@@ -70,6 +72,7 @@ export function showDisplay(state: DisplayState): void {
   if (pipeline.chord !== chord) pipeline.chord = chord;
   if (pipeline.roman !== roman) pipeline.roman = roman;
   if (pipeline.keyName !== keyName) pipeline.keyName = keyName;
+  if (pipeline.keyPc !== state.keyPc) pipeline.keyPc = state.keyPc;
   // A $state array is a proxy, so compare by content, not identity.
   const same = state.tensions.length === pipeline.tensions.length && state.tensions.every((v, i) => v === pipeline.tensions[i]);
   if (!same) pipeline.tensions = state.tensions;
@@ -90,16 +93,6 @@ export function keyPairLabel(relativeMajorPc: number, mode: Accidental = setting
   const major = mode === "sharp" ? SHARP_NAMES : FLAT_NAMES;
   const minor = mode === "sharp" ? SHARP_NAMES : mode === "flat" ? FLAT_NAMES : AUTO_MINOR_KEY_NAMES;
   return `${major[relativeMajorPc]} Major (${minor[minorPc]} Minor)`;
-}
-
-/** The relative-major pitch class a displayed key label is for, in whichever spelling it was
- * written (a stale one right after the setting changed still resolves), or -1 for "--". */
-export function keyPcFromLabel(label: string): number {
-  const modes: Accidental[] = ["auto", "sharp", "flat"];
-  for (let pc = 0; pc < 12; pc++) {
-    if (modes.some((m) => keyPairLabel(pc, m) === label)) return pc;
-  }
-  return -1;
 }
 
 export interface PipelineHandlers {
@@ -178,6 +171,7 @@ export async function startCapture(): Promise<void> {
   await stopPlayback();
   pipeline.chord = "--";
   pipeline.keyName = "--";
+  pipeline.keyPc = null;
   pipeline.roman = EMPTY_ROMAN;
   pipeline.tensions = [];
   pipeline.bpm = null;
@@ -218,6 +212,7 @@ export async function setKeyMode(tonicPc: number | null): Promise<void> {
   // waiting on that same round-trip.
   if (tonicPc !== null) {
     pipeline.keyName = keyPairLabel(tonicPc);
+    pipeline.keyPc = tonicPc;
   }
   try {
     await invoke("set_key_mode", { tonicPc });
@@ -230,8 +225,7 @@ export async function setAccidental(): Promise<void> {
   // While capture runs the backend re-announces the chord and key in the new spelling. A key
   // already on screen from before (or while stopped, when nothing is re-announced) is
   // respelled here.
-  const pc = keyPcFromLabel(pipeline.keyName);
-  if (pc >= 0) pipeline.keyName = keyPairLabel(pc);
+  if (pipeline.keyPc !== null) pipeline.keyName = keyPairLabel(pipeline.keyPc);
   try {
     await invoke("set_accidental", { accidental: settings.accidental });
   } catch (err) {

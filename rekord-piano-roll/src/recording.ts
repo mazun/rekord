@@ -57,7 +57,7 @@ export type RecordableEvent =
   | ({ type: "NoteConfirmed" } & ConfirmedNote)
   | ({ type: "ChordLayer" } & ChordLayerEvent)
   | { type: "ActiveNotes"; changes: { t: number; pcs: number }[] }
-  | { type: "KeyChange"; t: number; key_name: string }
+  | { type: "KeyChange"; t: number; key_name: string; tonic_pc: number }
   | ({ type: "BeatLines" } & BeatLines);
 
 /** What the span of the audio recorded on the backend covers (`RecordingInfo` in audio_ring.rs). */
@@ -72,6 +72,8 @@ export interface DisplayState {
   chord: string | null;
   roman: string | null;
   keyName: string | null;
+  /** The relative-major pitch class of the key. */
+  keyPc: number | null;
   tensions: string[];
   bpm: number | null;
 }
@@ -125,7 +127,7 @@ const PRUNE_EVERY = 256;
  * logs through `stateAt`. (The beat lines and the drawn notes themselves stay in the roll.) */
 export class Recording {
   readonly lane = new ChordLane();
-  private keys = new Timeline<string>();
+  private keys = new Timeline<{ name: string; pc: number }>();
   /** The pitch classes sounding (bit `pc` set), from the backend's `ActiveNotes`. */
   private actives = new Timeline<number>();
   /** The chord table the tensions are computed from, sent on `Started`. */
@@ -175,7 +177,7 @@ export class Recording {
         this.see(event.changes[event.changes.length - 1]?.t ?? 0);
         break;
       case "KeyChange":
-        this.keys.append(event.t, event.key_name);
+        this.keys.append(event.t, { name: event.key_name, pc: event.tonic_pc });
         this.see(event.t);
         break;
       case "BeatLines": {
@@ -217,10 +219,12 @@ export class Recording {
       chord && this.vocabulary && chord.root_pc !== null && chord.quality !== null
         ? tensionsFor(this.vocabulary, this.actives.at(t) ?? 0, chord.root_pc, chord.quality)
         : [];
+    const key = this.keys.at(t);
     return {
       chord: chord?.label ?? null,
       roman: chord?.roman_numeral ?? null,
-      keyName: this.keys.at(t) ?? null,
+      keyName: key?.name ?? null,
+      keyPc: key?.pc ?? null,
       tensions,
       bpm: this.bpms.at(t) ?? null,
     };
@@ -269,7 +273,7 @@ export class Recording {
         .segments()
         .filter((s) => s.startS < windowEndS && (s.endS ?? Infinity) > windowStartS)
         .map((s) => ({ start_s: s.startS, end_s: s.endS, label: s.chord.label, layer: LAYER_ORDER[s.layer] })),
-      keys: this.keys.between(windowStartS, windowEndS).map((e) => ({ t: e.t, key_name: e.v })),
+      keys: this.keys.between(windowStartS, windowEndS).map((e) => ({ t: e.t, key_name: e.v.name })),
     };
   }
 

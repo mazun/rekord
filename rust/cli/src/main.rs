@@ -146,18 +146,11 @@ fn run_file(
     println!("Duration: {duration:.1}s, simulating stream with {hop_seconds:.2}s hops\n");
 
     let model = HarmonicaModel::load(choice, allow_directml).context("loading Okarina model")?;
-    print_model_info(NoteModelInfo {
-        size: model.size(),
-        device: model.device(),
-        future_frames,
-        over_budget: model.may_exceed_budget(),
-    });
+    print_model_info(NoteModelInfo::of(&model, future_frames));
     let mut transcriber = NoteTranscriber::new(model, future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut chords = ChordEngine::standard();
     let mut printer = Printer::new(accidental, chord_layers);
-    let mut last_key_name: Option<String> = None;
-    let mut last_covered = 0.0f32;
 
     let hop_samples = (hop_seconds * harmonica_model::SAMPLE_RATE as f32).round() as usize;
     let mut pos = 0usize;
@@ -172,16 +165,13 @@ fn run_file(
             pipeline::emit_confirmed_notes(notes, &mut key_estimator, |e| printer.print(e));
             chords.advance(
                 &note_events,
-                last_covered,
                 covered,
                 &mut key_estimator,
                 &pipeline::KeyMode::Auto,
                 accidental,
                 None, // file mode has no beat tracker to snap chord onsets to
-                &mut last_key_name,
                 |e| printer.print(e),
             );
-            last_covered = covered;
         }
     }
 
@@ -192,13 +182,11 @@ fn run_file(
     pipeline::emit_confirmed_notes(final_notes, &mut key_estimator, |e| printer.print(e));
     chords.advance(
         &final_note_events,
-        last_covered,
         transcriber.covered_seconds(),
         &mut key_estimator,
         &pipeline::KeyMode::Auto,
         accidental,
         None,
-        &mut last_key_name,
         |e| printer.print(e),
     );
     chords.finish(transcriber.covered_seconds(), accidental, |e| printer.print(e));
