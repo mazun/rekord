@@ -212,6 +212,11 @@ export class Recording {
     this.hasAudio = false;
   }
 
+  /** The tempo at audio time `t` (Infinity: the latest), the one readout the beat lines move. */
+  bpmAt(t: number): number | null {
+    return this.bpms.at(t) ?? null;
+  }
+
   /** The readouts as they were at audio time `t` (Infinity: the latest). */
   stateAt(t: number): DisplayState {
     const chord = this.lane.at(t)?.chord;
@@ -226,7 +231,7 @@ export class Recording {
       keyName: key?.name ?? null,
       keyPc: key?.pc ?? null,
       tensions,
-      bpm: this.bpms.at(t) ?? null,
+      bpm: this.bpmAt(t),
     };
   }
 

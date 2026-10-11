@@ -150,8 +150,12 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
     } else if (payload.type === "BeatLines") {
       handlers.onBeatLines(payload);
     }
-    // The chord, key, tension and tempo readouts (all but the notes): show the latest.
-    if (payload.type !== "Started" && payload.type !== "NoteStarted" && payload.type !== "NoteConfirmed") {
+    // The chord, key, tension and tempo readouts (all but the notes): show the latest. The beat
+    // lines (about 15 a second) can only move the tempo.
+    if (payload.type === "BeatLines") {
+      const bpm = recording.bpmAt(Infinity);
+      if (pipeline.bpm !== bpm) pipeline.bpm = bpm;
+    } else if (payload.type !== "Started" && payload.type !== "NoteStarted" && payload.type !== "NoteConfirmed") {
       showDisplay(recording.stateAt(Infinity));
     }
   });

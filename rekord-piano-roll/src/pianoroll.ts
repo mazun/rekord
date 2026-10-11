@@ -3,6 +3,7 @@ import { planChordUpdate, type LaneSegment, type LaneUpdate } from "./chordlane"
 import { HeldClock, LiveClock, PlaybackClock, type RollClock } from "./clock";
 import { HISTORY_S } from "./recording";
 import type { NotePart } from "./settings.svelte";
+import { snapToBeats } from "./snap";
 
 const MIN_PITCH = 21; // A0
 const MAX_PITCH = 108; // C8
@@ -133,8 +134,6 @@ const SELECTION_EDGE_WIDTH = 2;
 const SELECTION_MIN_S = 0.05;
 /** How close (px) a press must be to a selection edge to drag it. */
 const SELECTION_GRAB_PX = 6;
-/** Beats further apart than this (a gap in the detected beats) have no eighth-note grid between them. */
-const SNAP_MAX_BEAT_GAP_S = 2;
 // The playback cursor while it travels along the roll (before it reaches the keyboard edge).
 const CURSOR_COLOR = 0xffffff;
 const CURSOR_LINE_WIDTH = 2;
@@ -273,6 +272,9 @@ export class PianoRoll {
   private partLayers = {} as Record<NotePart, Container>;
   private beatLayer = new Container();
   private beatLines: BeatSprite[] = [];
+  /** The target times of the beat lines still counted, sorted (what a selection snaps to); null
+   * when a snapshot or a pruned line has changed them since it was last built. */
+  private snapBeats: number[] | null = null;
   private chordLayer = new Container();
   // Chords fading out, under the ones that replace them.
   private chordGhostLayer = new Container();
@@ -314,6 +316,9 @@ export class PianoRoll {
   private drawnThumb = { w: -1, active: false };
   // Start time of the oldest retained note/chord/beat line, recomputed every tick.
   private oldestS = Infinity;
+  /** The display time read once at the start of a tick, so every item positioned in that frame
+   * (thousands of notes and lines) shares it instead of each asking the clock; null between ticks. */
+  private tickDisplayS: number | null = null;
   private markerS: number | null = null;
   private markerLayer = new Container();
   private markerLine = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
@@ -588,20 +593,8 @@ export class PianoRoll {
    * or across a gap in them. */
   private snapTime(t: number): number {
     if (this.freeSelect) return t;
-    const beats = this.beatLines.filter((b) => !b.dying).map((b) => b.targetT).sort((a, b) => a - b);
-    if (beats.length < 2 || t < beats[0] || t > beats[beats.length - 1]) return t;
-    let best = t;
-    let bestD = Infinity;
-    const consider = (c: number) => {
-      const d = Math.abs(c - t);
-      if (d < bestD) [best, bestD] = [c, d];
-    };
-    for (let i = 0; i < beats.length; i++) {
-      if (beats[i] > t + SNAP_MAX_BEAT_GAP_S) break;
-      consider(beats[i]);
-      if (i + 1 < beats.length && beats[i + 1] - beats[i] <= SNAP_MAX_BEAT_GAP_S) consider((beats[i] + beats[i + 1]) / 2);
-    }
-    return best;
+    this.snapBeats ??= this.beatLines.filter((b) => !b.dying).map((b) => b.targetT).sort((a, b) => a - b);
+    return snapToBeats(this.snapBeats, t);
   }
 
   /** Time `t` lies in the selection, which can be dragged out (not while capturing: the roll is live). */
@@ -848,6 +841,7 @@ export class PianoRoll {
     this.notes = [];
     for (const b of this.beatLines) b.graphic.destroy();
     this.beatLines = [];
+    this.snapBeats = null;
     for (const c of this.chordSegments) this.destroyChordSprite(c);
     this.chordSegments = [];
     this.chordPrevHeadS = -Infinity;
@@ -923,7 +917,7 @@ export class PianoRoll {
   }
 
   private xForTime(t: number): number {
-    return this.playheadX() + (t - this.displayS()) * this.pixelsPerSecond;
+    return this.playheadX() + (t - (this.tickDisplayS ?? this.displayS())) * this.pixelsPerSecond;
   }
 
   /** Scales the time axis: 2 = twice the pixels per second (slower scroll, a shorter window).
@@ -1107,13 +1101,13 @@ export class PianoRoll {
       const rightX = this.xForTime(seg.shownEndS ?? openEdgeS);
       const onScreen = rightX >= 0 && leftX <= this.app.screen.width;
       const isSilence = seg.label === SILENCE_LABEL;
-      for (const g of [seg.boundary, seg.labelText, seg.romanText]) g.visible = onScreen;
+      seg.boundary.visible = seg.labelText.visible = seg.romanText.visible = onScreen;
       seg.band.visible = onScreen && !isSilence; // silence has no band
       if (!onScreen) {
         kept.push(seg);
         continue;
       }
-      for (const g of [seg.band, seg.boundary, seg.labelText, seg.romanText]) g.alpha = seg.alpha;
+      seg.band.alpha = seg.boundary.alpha = seg.labelText.alpha = seg.romanText.alpha = seg.alpha;
       const width = Math.max(0, rightX - leftX);
       seg.band.tint = seg.tint;
       seg.band.x = leftX;
@@ -1138,6 +1132,7 @@ export class PianoRoll {
   /** Applies a BeatLines snapshot: it replaces every line at or after `from_s`. A line
    * matching one already drawn animates to its new layer/time; the rest fade in or out. */
   setBeatLines(lines: BeatLines): void {
+    this.snapBeats = null;
     const incoming = [...lines.committed, ...lines.provisional, ...lines.predicted];
     const open = this.beatLines.filter((b) => !b.dying && b.targetT >= lines.from_s - BEAT_MATCH_TOLERANCE_S);
     const matched = new Set<BeatSprite>();
@@ -1172,6 +1167,8 @@ export class PianoRoll {
   private tickBeatLines(dtS: number): void {
     const k = 1 - Math.exp(-dtS / BEAT_ANIM_TAU_S);
     const height = this.app.screen.height;
+    const screenWidth = this.app.screen.width;
+    const headS = this.clock.headS();
     const kept: BeatSprite[] = [];
     for (const b of this.beatLines) {
       b.t += (b.targetT - b.t) * k;
@@ -1179,12 +1176,17 @@ export class PianoRoll {
       b.bar += (b.targetBar - b.bar) * k;
       const width = 1 + (BAR_LINE_WIDTH - 1) * b.bar;
       const x = this.xForTime(b.t) - width / 2;
-      if ((b.dying && b.alpha < 0.01) || b.t < this.clock.headS() - HISTORY_S) {
+      if ((b.dying && b.alpha < 0.01) || b.t < headS - HISTORY_S) {
         b.graphic.destroy();
+        if (!b.dying) this.snapBeats = null;
         continue;
       }
       this.oldestS = Math.min(this.oldestS, b.t);
-      b.graphic.visible = x + width >= 0 && x <= this.app.screen.width;
+      b.graphic.visible = x + width >= 0 && x <= screenWidth;
+      if (!b.graphic.visible) {
+        kept.push(b); // only its animation state moves while it is off screen
+        continue;
+      }
       b.graphic.x = x;
       b.graphic.scale.set(width, height);
       b.graphic.alpha = b.alpha * (1 + b.bar * 0.4);
@@ -1202,13 +1204,22 @@ export class PianoRoll {
       this.clock = new HeldClock(this.clock.headS(), this.clock.displayS(), this.clock.cursorS());
     }
     this.oldestS = Infinity;
+    this.tickDisplayS = this.displayS();
+    try {
+      this.tickFrame();
+    } finally {
+      this.tickDisplayS = null;
+    }
+  }
+
+  private tickFrame(): void {
     this.tickBeatLines(this.app.ticker.deltaMS / 1000);
     this.tickChordSegments(this.app.ticker.deltaMS / 1000);
     const cursorS = this.clock.cursorS();
     const headS = this.clock.headS();
     const live = this.clock.kind === "live";
     const activePitches = new Set<number>();
-    const retained: NoteSprite[] = [];
+    let kept = 0;
     const openEndS = this.live.wallS() - OPEN_NOTE_LAG_S;
     const screenWidth = this.app.screen.width;
     for (const n of this.notes) {
@@ -1222,7 +1233,7 @@ export class PianoRoll {
         n.graphic.destroy();
         continue;
       }
-      retained.push(n);
+      this.notes[kept++] = n;
       this.oldestS = Math.min(this.oldestS, n.start_s);
       const x = this.xForTime(n.start_s);
       const right = this.xForTime(Math.max(n.end_s, n.start_s + 2 / this.pixelsPerSecond));
@@ -1236,7 +1247,7 @@ export class PianoRoll {
       // once it has stopped, an unconfirmed note ends where its end_s froze).
       if (cursorS >= n.start_s && ((n.open && live) || cursorS <= n.end_s)) activePitches.add(n.pitch_midi);
     }
-    this.notes = retained;
+    this.notes.length = kept;
     // Highlighted at the cursor whatever moves it: the live clock, a scrolled-back stopped roll
     // or playback.
     for (const pitch of this.keys.keys()) {
