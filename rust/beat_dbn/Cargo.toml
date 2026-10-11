@@ -10,3 +10,6 @@ license = "MIT"
 [dev-dependencies]
 ndarray = "0.17"
 ndarray-npy = { version = "0.10", default-features = false, features = ["npz"] }
+
+[lints]
+workspace = true

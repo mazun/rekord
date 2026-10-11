@@ -2,5 +2,12 @@
 resolver = "2"
 members = ["core", "cli", "beat_dbn"]
 
+[workspace.lints.clippy]
+# Numeric/DSP code: index loops mirror the reference math, `!(a < b)` is
+# deliberately NaN-aware, and the per-frame helpers take many scalar params.
+needless_range_loop = "allow"
+neg_cmp_op_on_partial_ord = "allow"
+too_many_arguments = "allow"
+
 [profile.release]
 opt-level = 3

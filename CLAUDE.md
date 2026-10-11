@@ -46,6 +46,14 @@ Set-Location rekord-piano-roll; npm run tauri dev
   changes, run a real live session. All samples are C major, so cover key logic
   by ear in another key.
 
+## Lint / format
+
+- Rust: `cargo fmt --all` and `cargo clippy --release --all-targets` (workspace
+  lints in `rust/Cargo.toml`); keep both clean.
+- Frontend: Biome. `npm run lint` / `npm run format` in `rekord-piano-roll/`
+  (config `biome.json`; `.svelte` unused-variable rules are off because Biome
+  can't see template usage — `npm run check` covers that).
+
 ## Working conventions
 
 - The user reviews UI/timing changes in the **real running app**; expect
