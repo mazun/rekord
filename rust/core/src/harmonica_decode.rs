@@ -80,10 +80,6 @@ impl StreamingDecoder {
         Self { th_on, th_sus, frames_seen: 0, finished: false, pitches: [PitchState::default(); N_PITCH] }
     }
 
-    pub fn frames_seen(&self) -> usize {
-        self.frames_seen
-    }
-
     /// Frames whose note state is final: `frames_seen - 1` while streaming
     /// (the newest frame's own onset candidacy isn't decided until the next
     /// frame arrives), clamped at 0; `frames_seen` once `finish` has run.

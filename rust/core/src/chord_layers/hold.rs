@@ -121,7 +121,6 @@ pub struct HoldLayer {
     displayed_raw: Option<(i32, &'static str)>,
     /// The challenger to `displayed` and when it first led (reset when the leader changes).
     pending: Option<(ChordAt, f32)>,
-    pending_raw: Option<(i32, &'static str)>,
     /// The latest change time and the latest `decided_s` reported, which no later change may precede.
     last_change_t: f32,
     decided_s: f32,
@@ -134,7 +133,6 @@ impl HoldLayer {
             displayed: None,
             displayed_raw: None,
             pending: None,
-            pending_raw: None,
             last_change_t: f32::NEG_INFINITY,
             decided_s: f32::NEG_INFINITY,
         }
@@ -189,7 +187,6 @@ impl ChordLayer for HoldLayer {
                             _ => t,
                         };
                         self.pending = Some((candidate, since));
-                        self.pending_raw = raw;
                         let bass_only = matches!(
                             (cur, candidate),
                             (ChordAt::Match(a), ChordAt::Match(b)) if a.root_pc == b.root_pc && a.quality == b.quality

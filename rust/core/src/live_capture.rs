@@ -109,7 +109,6 @@ pub fn spawn_loopback_capture<const N: usize>(
     // this failure being completely silent.
     let dropped_chunks = Arc::new(AtomicUsize::new(0));
     let dropped_chunks_cb = Arc::clone(&dropped_chunks);
-    let dropped_chunks_cb2 = Arc::clone(&dropped_chunks);
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device.build_input_stream(
@@ -127,7 +126,7 @@ pub fn spawn_loopback_capture<const N: usize>(
             move |data: &[i16], _| {
                 let floats: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                 if raw_tx.try_send(floats).is_err() {
-                    dropped_chunks_cb2.fetch_add(1, Ordering::Relaxed);
+                    dropped_chunks_cb.fetch_add(1, Ordering::Relaxed);
                 }
             },
             err_fn,

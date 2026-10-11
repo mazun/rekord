@@ -38,15 +38,6 @@ export class Timeline<T> {
     return this.entries.slice(first).filter((e) => e.t <= toS);
   }
 
-  last(): T | undefined {
-    return this.entries[this.entries.length - 1]?.v;
-  }
-
-  replaceLast(v: T): void {
-    const last = this.entries[this.entries.length - 1];
-    if (last) last.v = v;
-  }
-
   /** Drops what happened before `t`, keeping the one entry that is still in effect at `t`. */
   pruneBefore(t: number): void {
     let keepFrom = 0;

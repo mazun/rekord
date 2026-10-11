@@ -52,7 +52,7 @@ const AUTO_MINOR_NAMES: [&str; 12] = ["C", "C♯", "D", "E♭", "E", "F", "F♯"
 // Major keys by tonic, in key-signature order of preference (G♭ over F♯, as the flat side).
 const MAJOR_KEY_NAMES: [&str; 12] = FLAT_NAMES;
 // Relative minors: fewest accidentals in the signature.
-const MINOR_KEY_NAMES: [&str; 12] = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "G♯", "A", "B♭", "B"];
+const MINOR_KEY_NAMES: [&str; 12] = AUTO_MINOR_NAMES;
 
 /// A single plain note name in `mode`, with no chord or key context (the CLI's note lines).
 pub fn note_name(pc: i32, mode: Accidental) -> &'static str {

@@ -79,16 +79,11 @@ pub const DEFAULT_FUTURE_FRAMES: usize = 8;
 /// `roman_numeral()` only ever consult `relative_major_pc()`, so a manual
 /// pick just needs the target relative-major pitch class, not a real
 /// major/minor judgment call.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum KeyMode {
+    #[default]
     Auto,
     Manual(KeyEstimate),
-}
-
-impl Default for KeyMode {
-    fn default() -> Self {
-        KeyMode::Auto
-    }
 }
 
 pub fn midi_to_name(pitch: i32, mode: Accidental) -> String {

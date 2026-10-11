@@ -19,7 +19,9 @@ use std::path::Path;
 
 use rekord_core::audio_ring::SharedRing;
 use rekord_core::harmonica_model::Part;
+use rekord_core::pipeline::midi_to_name;
 use rekord_core::playback::SynthNote;
+use rekord_core::spelling::Accidental;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
@@ -34,8 +36,6 @@ pub struct ExportRange {
     lane: serde_json::Value,
     keys: serde_json::Value,
 }
-
-const SHARP_NAMES: [&str; 12] = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 
 // How many frames are converted at a time, so a long window doesn't allocate it all as floats.
 const READ_CHUNK_FRAMES: usize = 1 << 16;
@@ -85,9 +85,8 @@ fn notes_text(range: &ExportRange) -> String {
         let start = (n.start_s - range.window_start_s).max(0.0);
         let end = (n.end_s - range.window_start_s).min(range.window_end_s - range.window_start_s);
         let part = n.part.name();
-        let name = SHARP_NAMES[usize::from(n.pitch % 12)];
-        let octave = i32::from(n.pitch / 12) - 1;
-        out.push_str(&format!("[{start:7.3}s -> {end:7.3}s] note {name}{octave} (vel {:.2}) [{part}]\n", n.velocity));
+        let name = midi_to_name(i32::from(n.pitch), Accidental::Sharp);
+        out.push_str(&format!("[{start:7.3}s -> {end:7.3}s] note {name} (vel {:.2}) [{part}]\n", n.velocity));
     }
     out
 }

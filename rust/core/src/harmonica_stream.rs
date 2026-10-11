@@ -63,16 +63,8 @@ impl BlockStreamer {
         }
     }
 
-    pub fn model(&self) -> &HarmonicaModel {
-        &self.model
-    }
-
     pub fn blocks_done(&self) -> usize {
         self.next_block
-    }
-
-    pub fn samples_received(&self) -> usize {
-        self.total_received
     }
 
     /// Sample `abs` (an absolute index into the whole stream, possibly
@@ -292,14 +284,6 @@ impl NoteTranscriber {
         self.announced = open;
         started.sort_by(|a, b| a.start_s.partial_cmp(&b.start_s).unwrap());
         started
-    }
-
-    pub fn model(&self) -> &HarmonicaModel {
-        self.streamer.model()
-    }
-
-    pub fn future_frames(&self) -> usize {
-        self.future_frames
     }
 
     pub fn blocks_done(&self) -> usize {
