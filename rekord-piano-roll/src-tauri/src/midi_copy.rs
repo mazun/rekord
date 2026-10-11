@@ -33,7 +33,11 @@ impl Layout {
             Layout::Vocal => vec![("Vocal", 0, Part::Vocal)],
             Layout::Bass => vec![("Bass", 0, Part::Bass)],
             Layout::Other => vec![("Other", 0, Part::Other)],
-            Layout::Split => vec![("Vocal", 0, Part::Vocal), ("Bass", 1, Part::Bass), ("Other", 2, Part::Other)],
+            Layout::Split => vec![
+                ("Vocal", 0, Part::Vocal),
+                ("Bass", 1, Part::Bass),
+                ("Other", 2, Part::Other),
+            ],
         }
     }
 }
@@ -49,13 +53,19 @@ pub struct MidiRange {
 
 /// Writes the .mid file for `range` to the temp folder and returns its path.
 fn write_file(range: &MidiRange) -> Result<PathBuf, String> {
-    let bpm = range.bpm.filter(|b| b.is_finite() && *b >= 20.0 && *b <= 400.0).unwrap_or(DEFAULT_BPM);
+    let bpm = range
+        .bpm
+        .filter(|b| b.is_finite() && *b >= 20.0 && *b <= 400.0)
+        .unwrap_or(DEFAULT_BPM);
     let bytes = smf_bytes(&range.notes, bpm, range.layout).ok_or("no notes in the selection")?;
 
     let dir = std::env::temp_dir().join("ReKord midi");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     prune(&dir);
-    let unix_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis();
+    let unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
     let path = dir.join(format!("rekord_{unix_ms}.mid"));
     fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
@@ -84,7 +94,9 @@ pub fn drag(_window: &tauri::WebviewWindow, _range: MidiRange) -> Result<(), Str
 }
 
 fn prune(dir: &std::path::Path) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     let mut files: Vec<(PathBuf, std::time::SystemTime)> = entries
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|x| x == "mid"))
@@ -145,8 +157,13 @@ fn smf_bytes(notes: &[SynthNote], bpm: f64, layout: Layout) -> Option<Vec<u8>> {
         for (i, n) in mine.iter().enumerate() {
             let pitch = n.pitch.min(127);
             let on = to_ticks(n.start_s);
-            let next_on = mine[i + 1..].iter().find(|m| m.pitch.min(127) == pitch).map(|m| to_ticks(m.start_s));
-            let off = to_ticks(n.end_s).min(next_on.unwrap_or(u32::MAX)).max(on + 1);
+            let next_on = mine[i + 1..]
+                .iter()
+                .find(|m| m.pitch.min(127) == pitch)
+                .map(|m| to_ticks(m.start_s));
+            let off = to_ticks(n.end_s)
+                .min(next_on.unwrap_or(u32::MAX))
+                .max(on + 1);
             let vel = (n.velocity * 127.0).round().clamp(1.0, 127.0) as u8;
             ev.push((on, true, pitch, vel));
             ev.push((off, false, pitch, 0));
@@ -183,7 +200,13 @@ mod tests {
     use super::*;
 
     fn note(start_s: f64, end_s: f64, pitch: u8, part: Part) -> SynthNote {
-        SynthNote { start_s, end_s, pitch, velocity: 0.5, part }
+        SynthNote {
+            start_s,
+            end_s,
+            pitch,
+            velocity: 0.5,
+            part,
+        }
     }
 
     #[test]
@@ -202,15 +225,26 @@ mod tests {
         let b = smf_bytes(&[note(0.0, 0.5, 60, Part::Other)], 120.0, Layout::Other).unwrap();
         assert_eq!(&b[..4], b"MThd");
         assert_eq!(u16::from_be_bytes([b[10], b[11]]), 1);
-        assert!(!b.windows(3).any(|w| w == [0xff, 0x51, 0x03]), "no tempo event");
+        assert!(
+            !b.windows(3).any(|w| w == [0xff, 0x51, 0x03]),
+            "no tempo event"
+        );
         // ends with: note-off after 480 ticks (vlq 83 60), then end of track
-        assert_eq!(&b[b.len() - 9..], [0x83, 0x60, 0x80, 60, 0, 0x00, 0xff, 0x2f, 0x00]);
+        assert_eq!(
+            &b[b.len() - 9..],
+            [0x83, 0x60, 0x80, 60, 0, 0x00, 0xff, 0x2f, 0x00]
+        );
     }
 
     #[test]
     fn layouts() {
-        let notes = [note(0.0, 0.5, 72, Part::Vocal), note(0.0, 0.5, 36, Part::Bass), note(0.0, 0.5, 60, Part::Other)];
-        let tracks = |layout| smf_bytes(&notes, 120.0, layout).map(|b| u16::from_be_bytes([b[10], b[11]]));
+        let notes = [
+            note(0.0, 0.5, 72, Part::Vocal),
+            note(0.0, 0.5, 36, Part::Bass),
+            note(0.0, 0.5, 60, Part::Other),
+        ];
+        let tracks =
+            |layout| smf_bytes(&notes, 120.0, layout).map(|b| u16::from_be_bytes([b[10], b[11]]));
         assert_eq!(tracks(Layout::Vocal), Some(1));
         assert_eq!(tracks(Layout::Split), Some(3));
         assert_eq!(smf_bytes(&notes[..1], 120.0, Layout::Bass), None);
@@ -222,7 +256,15 @@ mod tests {
     #[test]
     fn same_pitch_overlap_is_cut_at_the_next_start() {
         // Two overlapping C4s in one part: the first must end when the second starts.
-        let b = smf_bytes(&[note(0.0, 1.0, 60, Part::Other), note(0.5, 1.0, 60, Part::Other)], 120.0, Layout::Other).unwrap();
+        let b = smf_bytes(
+            &[
+                note(0.0, 1.0, 60, Part::Other),
+                note(0.5, 1.0, 60, Part::Other),
+            ],
+            120.0,
+            Layout::Other,
+        )
+        .unwrap();
         let off_then_on = [0x83, 0x60, 0x80, 60, 0, 0x00, 0x90, 60, 64];
         assert!(b.windows(off_then_on.len()).any(|w| w == off_then_on));
     }

@@ -10,12 +10,13 @@ use rekord_core::audio_ring::{RecordingInfo, RingTap, SharedRing};
 use rekord_core::harmonica_model::ModelChoice;
 use rekord_core::key_estimator::{KeyEstimate, Mode};
 use rekord_core::live_capture::CaptureTap;
-use rekord_core::spelling::Accidental;
 use rekord_core::pipeline::{
-    KeyMode, LiveControls, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
+    KeyMode, LiveControls, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES,
+    FUTURE_FRAME_CHOICES,
 };
 use rekord_core::playback::{self, PlaybackParams, PlaybackSession, SynthNote};
-use tauri::{AppHandle, Emitter, State};
+use rekord_core::spelling::Accidental;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Default)]
 struct CaptureState {
@@ -50,7 +51,10 @@ fn stop_playback(state: &Mutex<PlaybackState>) -> Result<(), String> {
 }
 
 // Runs `f` on the playback in progress, if it hasn't ended.
-fn with_playback<T>(state: &Mutex<PlaybackState>, f: impl FnOnce(&PlaybackSession) -> Result<T, String>) -> Result<T, String> {
+fn with_playback<T>(
+    state: &Mutex<PlaybackState>,
+    f: impl FnOnce(&PlaybackSession) -> Result<T, String>,
+) -> Result<T, String> {
     let guard = lock(state)?;
     match guard.session.as_ref() {
         Some(session) if !session.is_finished() => f(session),
@@ -80,13 +84,19 @@ fn start_capture(
     // Sanity checks on the frontend-supplied model settings -- server-side
     // insurance so a malformed value can never reach the pipeline, on top
     // of whatever validation the frontend's settings loaders already do.
-    let choice = model_size.parse::<ModelChoice>().unwrap_or(ModelChoice::Auto);
+    let choice = model_size
+        .parse::<ModelChoice>()
+        .unwrap_or(ModelChoice::Auto);
     let future_frames = if FUTURE_FRAME_CHOICES.contains(&future_frames) {
         future_frames
     } else {
         DEFAULT_FUTURE_FRAMES
     };
-    let config = NoteModelConfig { choice, future_frames, allow_directml: true };
+    let config = NoteModelConfig {
+        choice,
+        future_frames,
+        allow_directml: true,
+    };
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_thread = Arc::clone(&stop_flag);
@@ -129,7 +139,10 @@ fn start_capture(
 fn set_key_mode(state: State<Mutex<CaptureState>>, tonic_pc: Option<i32>) -> Result<(), String> {
     let guard = lock(&state)?;
     let mode = match tonic_pc {
-        Some(pc) => KeyMode::Manual(KeyEstimate { tonic_pc: pc.rem_euclid(12), mode: Mode::Major }),
+        Some(pc) => KeyMode::Manual(KeyEstimate {
+            tonic_pc: pc.rem_euclid(12),
+            mode: Mode::Major,
+        }),
         None => KeyMode::Auto,
     };
     *lock(&guard.key_mode)? = mode;
@@ -142,14 +155,19 @@ fn set_key_mode(state: State<Mutex<CaptureState>>, tonic_pc: Option<i32>) -> Res
 #[tauri::command]
 fn set_accidental(state: State<Mutex<CaptureState>>, accidental: String) -> Result<(), String> {
     let guard = lock(&state)?;
-    *lock(&guard.accidental)? = accidental.parse().map_err(|e: anyhow::Error| e.to_string())?;
+    *lock(&guard.accidental)? = accidental
+        .parse()
+        .map_err(|e: anyhow::Error| e.to_string())?;
     Ok(())
 }
 
 // Returns what the recording now covers (`None` if nothing was ever recorded),
 // which is what playback can use.
 #[tauri::command]
-fn stop_capture(state: State<Mutex<CaptureState>>, ring: State<SharedRing>) -> Result<Option<RecordingInfo>, String> {
+fn stop_capture(
+    state: State<Mutex<CaptureState>>,
+    ring: State<SharedRing>,
+) -> Result<Option<RecordingInfo>, String> {
     let (stop_flag, handle) = {
         let mut guard = lock(&state)?;
         (guard.stop_flag.take(), guard.handle.take())
@@ -174,21 +192,29 @@ fn stop_capture(state: State<Mutex<CaptureState>>, ring: State<SharedRing>) -> R
 #[tauri::command]
 async fn playback_start(
     app: AppHandle,
-    capture: State<'_, Mutex<CaptureState>>,
-    playback_state: State<'_, Mutex<PlaybackState>>,
-    ring: State<'_, SharedRing>,
     from_s: f64,
     notes: Vec<SynthNote>,
     params: PlaybackParams,
     gen: u32,
 ) -> Result<(), String> {
+    let capture = app.state::<Mutex<CaptureState>>();
+    let playback_state = app.state::<Mutex<PlaybackState>>();
+    let ring = app.state::<SharedRing>();
     if lock(&capture)?.handle.is_some() {
         return Err("capture is running".into());
     }
     stop_playback(&playback_state)?;
-    let session = playback::start(Arc::clone(&ring), notes, from_s, params, gen, move |event| {
-        let _ = app.emit("playback-event", &event);
-    })
+    let emitter = app.clone();
+    let session = playback::start(
+        Arc::clone(&ring),
+        notes,
+        from_s,
+        params,
+        gen,
+        move |event| {
+            let _ = emitter.emit("playback-event", &event);
+        },
+    )
     .map_err(|e| format!("{e:#}"))?;
     lock(&playback_state)?.session = Some(session);
     Ok(())
@@ -203,14 +229,26 @@ async fn playback_pause(playback_state: State<'_, Mutex<PlaybackState>>) -> Resu
 // Plays from `pos_s`, resuming a paused playback. Fails once the recording has
 // been played to its end; the frontend then starts a fresh playback instead.
 #[tauri::command]
-fn playback_seek(playback_state: State<Mutex<PlaybackState>>, pos_s: f64, gen: u32) -> Result<(), String> {
-    with_playback(&playback_state, |session| session.seek(pos_s, gen).map_err(|e| e.to_string()))
+fn playback_seek(
+    playback_state: State<Mutex<PlaybackState>>,
+    pos_s: f64,
+    gen: u32,
+) -> Result<(), String> {
+    with_playback(&playback_state, |session| {
+        session.seek(pos_s, gen).map_err(|e| e.to_string())
+    })
 }
 
 #[tauri::command]
-fn playback_set_params(playback_state: State<Mutex<PlaybackState>>, params: PlaybackParams) -> Result<(), String> {
+fn playback_set_params(
+    playback_state: State<Mutex<PlaybackState>>,
+    params: PlaybackParams,
+) -> Result<(), String> {
     // Nothing to change when nothing is playing.
-    let _ = with_playback(&playback_state, |session| Ok(session.set_params(&params)));
+    let _ = with_playback(&playback_state, |session| {
+        session.set_params(&params);
+        Ok(())
+    });
     Ok(())
 }
 
@@ -223,7 +261,10 @@ async fn playback_stop(playback_state: State<'_, Mutex<PlaybackState>>) -> Resul
 // once a drag from the selection has moved). A sync command: it runs on the main thread, which the
 // OS drag needs.
 #[tauri::command]
-fn drag_notes_as_midi(window: tauri::WebviewWindow, range: midi_copy::MidiRange) -> Result<(), String> {
+fn drag_notes_as_midi(
+    window: tauri::WebviewWindow,
+    range: midi_copy::MidiRange,
+) -> Result<(), String> {
     midi_copy::drag(&window, range)
 }
 
@@ -238,7 +279,11 @@ fn debug_export_enabled() -> bool {
 // returns its path. Debug builds only.
 #[cfg(debug_assertions)]
 #[tauri::command]
-async fn debug_export_range(app: AppHandle, ring: State<'_, SharedRing>, range: debug_export::ExportRange) -> Result<String, String> {
+async fn debug_export_range(
+    app: AppHandle,
+    ring: State<'_, SharedRing>,
+    range: debug_export::ExportRange,
+) -> Result<String, String> {
     debug_export::export(&app, &ring, range)
 }
 

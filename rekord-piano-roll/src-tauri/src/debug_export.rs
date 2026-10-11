@@ -40,18 +40,37 @@ pub struct ExportRange {
 const READ_CHUNK_FRAMES: usize = 1 << 16;
 
 pub fn export(app: &AppHandle, ring: &SharedRing, range: ExportRange) -> Result<String, String> {
-    if !(range.window_end_s > range.window_start_s) {
+    // `is_nan()` keeps NaN bounds rejected, as the negated `>` did.
+    if range.window_end_s.is_nan()
+        || range.window_start_s.is_nan()
+        || range.window_end_s <= range.window_start_s
+    {
         return Err("empty range".into());
     }
-    let unix_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
-    let base = app.path().document_dir().map_err(|e| e.to_string())?.join("ReKord debug exports");
+    let unix_s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let base = app
+        .path()
+        .document_dir()
+        .map_err(|e| e.to_string())?
+        .join("ReKord debug exports");
     let dir = base.join(format!("export_{unix_s}"));
     fs::create_dir_all(dir.join("raw")).map_err(|e| format!("{}: {e}", dir.display()))?;
 
-    let sample_rate = write_audio(ring, &dir.join("audio.wav"), range.window_start_s, range.window_end_s)?;
+    let sample_rate = write_audio(
+        ring,
+        &dir.join("audio.wav"),
+        range.window_start_s,
+        range.window_end_s,
+    )?;
     write_text(&dir.join("raw").join("001.txt"), &notes_text(&range))?;
     let layers = serde_json::json!({ "chord_layers": range.chord_layers, "lane": range.lane, "keys": range.keys });
-    write_text(&dir.join("chord_layers.json"), &serde_json::to_string_pretty(&layers).map_err(|e| e.to_string())?)?;
+    write_text(
+        &dir.join("chord_layers.json"),
+        &serde_json::to_string_pretty(&layers).map_err(|e| e.to_string())?,
+    )?;
     let meta = serde_json::json!({
         "profile": "debug",
         "app_version": env!("CARGO_PKG_VERSION"),
@@ -66,7 +85,10 @@ pub fn export(app: &AppHandle, ring: &SharedRing, range: ExportRange) -> Result<
         "replay": "chord_replay <this folder>/raw <out_dir>   (REKORD_CHORD_TUNE=layer=confirmed for the 2 s layer)",
         "note_count": range.notes.len(),
     });
-    write_text(&dir.join("meta.json"), &serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?)?;
+    write_text(
+        &dir.join("meta.json"),
+        &serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
+    )?;
     Ok(dir.display().to_string())
 }
 
@@ -85,7 +107,10 @@ fn notes_text(range: &ExportRange) -> String {
         let end = (n.end_s - range.window_start_s).min(range.window_end_s - range.window_start_s);
         let part = n.part.name();
         let name = midi_to_name(i32::from(n.pitch), Accidental::Sharp);
-        out.push_str(&format!("[{start:7.3}s -> {end:7.3}s] note {name} (vel {:.2}) [{part}]\n", n.velocity));
+        out.push_str(&format!(
+            "[{start:7.3}s -> {end:7.3}s] note {name} (vel {:.2}) [{part}]\n",
+            n.velocity
+        ));
     }
     out
 }
@@ -159,11 +184,20 @@ mod tests {
             window_end_s: 20.0,
             selection_start_s: 12.0,
             selection_end_s: 18.0,
-            notes: vec![SynthNote { start_s: 9.0, end_s: 11.5, pitch: 66, velocity: 0.567, part: Part::Other }],
+            notes: vec![SynthNote {
+                start_s: 9.0,
+                end_s: 11.5,
+                pitch: 66,
+                velocity: 0.567,
+                part: Part::Other,
+            }],
             chord_layers: serde_json::Value::Null,
             lane: serde_json::Value::Null,
             keys: serde_json::Value::Null,
         };
-        assert_eq!(notes_text(&range), "[  0.000s ->   1.500s] note F♯4 (vel 0.57) [other]\n");
+        assert_eq!(
+            notes_text(&range),
+            "[  0.000s ->   1.500s] note F♯4 (vel 0.57) [other]\n"
+        );
     }
 }
