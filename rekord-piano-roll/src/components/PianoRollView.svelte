@@ -11,7 +11,6 @@
   import { PianoRoll, type NotePart } from "../pianoroll";
   import {
     connectPipeline,
-    pipeline,
     startCapture,
     stopCapture,
   } from "../pipeline.svelte";
@@ -27,7 +26,6 @@
 
   let container: HTMLElement;
   let roll: PianoRoll | null = null;
-  let rolesEnabled = $state(true);
   let hiddenParts = $state({ vocal: false, bass: false, other: false });
 
   function togglePart(part: (typeof PARTS)[number]) {
@@ -35,13 +33,6 @@
     roll?.setPartVisible(part, !hiddenParts[part]);
     // A part hidden on the roll is not sounded in playback either.
     setPlaybackPartVisible(part, !hiddenParts[part]);
-  }
-
-  // No separate checkbox -- the legend row itself is the button, and its
-  // on/off state reads via dimming alone (see .roles-toggle.off).
-  function toggleRoles() {
-    rolesEnabled = !rolesEnabled;
-    roll?.setRoleColoringEnabled(rolesEnabled);
   }
 
   const ZOOM_STEP = 0.2;
@@ -85,8 +76,8 @@
     setTimeout(() => (menu = null), 1200);
   }
 
-  // The parts hidden with the legend are left out of a MIDI drag ("all" has no legend entry).
-  const isPartShown = (part: NotePart) => part === "all" || !hiddenParts[part];
+  // The parts hidden with the legend are left out of a MIDI drag.
+  const isPartShown = (part: NotePart) => !hiddenParts[part];
 
   const exportLabel = $derived(
     debugExport.status === "busy"
@@ -109,7 +100,6 @@
         return;
       }
       roll = created;
-      roll.setRoleColoringEnabled(rolesEnabled);
       applyZoom();
       roll.onSelectionChange = (range) => {
         menu = null;
@@ -182,33 +172,19 @@
   <PlayButton />
   <div class="legend">
     <PlaybackVolume />
-    {#if pipeline.noteModel}
-      <!-- The models label every note with its part themselves: one button per part, each
-           showing or hiding that part's notes. -->
-      {#each PARTS as part (part)}
-        <button
-          class="roles-toggle"
-          class:off={hiddenParts[part]}
-          type="button"
-          title={t("pianoRollView.partToggle")}
-          onclick={() => togglePart(part)}
-        >
-          <span class="legend-swatch {part}"></span>{t(`pianoRollView.${part}`)}
-        </button>
-      {/each}
-    {:else}
+    <!-- The model labels every note with its part: one button per part, each showing or
+         hiding that part's notes. -->
+    {#each PARTS as part (part)}
       <button
-        id="roles-toggle"
         class="roles-toggle"
-        class:off={!rolesEnabled}
+        class:off={hiddenParts[part]}
         type="button"
-        title={t("pianoRollView.rolesToggle")}
-        onclick={toggleRoles}
+        title={t("pianoRollView.partToggle")}
+        onclick={() => togglePart(part)}
       >
-        <span class="legend-swatch melody"></span>{t("pianoRollView.melody")}
-        <span class="legend-swatch bass"></span>{t("pianoRollView.bass")}
+        <span class="legend-swatch {part}"></span>{t(`pianoRollView.${part}`)}
       </button>
-    {/if}
+    {/each}
   </div>
   <!-- Time-axis zoom: the magnifier sits in the corner above the keyboard (the chord lane's
        height, KEYBOARD_WIDTH x CHORD_LANE_HEIGHT in pianoroll.ts); hovering it opens the controls over
@@ -446,9 +422,7 @@
     background: rgba(20, 22, 28, 0.7);
   }
 
-  /* Off reads via dimming alone (no separate checkbox) -- bright means the
-     coloring is currently applied, dim means notes are drawn in the default
-     color regardless of role. */
+  /* Off reads via dimming alone (no separate checkbox): dim means that part is hidden. */
   .roles-toggle.off {
     opacity: 0.35;
   }
@@ -487,9 +461,8 @@
     border-radius: 2px;
   }
 
-  /* Mirrors MELODY_COLOR_MAX/BASS_COLOR_MAX/NOTE_COLOR_MAX in pianoroll.ts; vocal shares the
-     melody color, other the default note color. */
-  .legend-swatch.melody,
+  /* Mirrors MELODY_COLOR_MAX/BASS_COLOR_MAX/NOTE_COLOR_MAX in pianoroll.ts (vocal uses the
+     "melody" green). */
   .legend-swatch.vocal {
     background: #6be3a0;
   }

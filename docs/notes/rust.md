@@ -44,7 +44,7 @@ hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_strea
   differs between f8 and f16 for S and L); the part order is checked at load
   (`part_thresholds` picks by `future_frames`). `NoteTranscriber` runs one
   `StreamingDecoder` per part; every `ConfirmedNote`/`NoteEvent`/
-  `NoteConfirmed` carries its `Part` (`All` only for hand-built note lists).
+  `NoteConfirmed` carries its `Part`.
   The thresholds were partly hand-lowered (bass/other th_sus) because the CV
   picks cut held notes short.
 - The Harmonica single-part models (small/medium/large_uni) and
@@ -54,9 +54,9 @@ hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_strea
   and other, so a pitch can appear in both; bass-part notes can be short
   fragments. `velocity` is not on a common scale across parts, which skews the
   key estimator's weighting toward bass — not re-tuned.
-- The roll colors by part; `melody_bass.rs` is used only for
-  `Part::All` notes; the chord is named from bass + other only — **vocal notes
-  feed only the tensions** (`evaluate_active` in `pipeline.rs`), since sung
+- The roll colors by part (the symbolic melody/bass skyline, `melody_bass.rs`,
+  was removed with the single-part models; it is in git history); the chord is
+  named from bass + other only — **vocal notes feed only the tensions** (`evaluate_active` in `pipeline.rs`), since sung
   melody is mostly non-chord tones (vocal-only moments read as chord silence).
   The user chose to leave a bass-part-only slash rule because chord display
   beyond tensions is to be rebuilt around a separate chord model.
@@ -69,7 +69,7 @@ hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_strea
 - Display latency is structural: `total_latency_s = (8 + f)·0.032 + capture hop
   (64 ms) + 0.3` (0.88 s at f = 8). The frontend ignores it (see its CLAUDE.md).
 - Finished notes are kept 3.3 s (`RETAINED_SECONDS`) as context for chord
-  matching and melody/bass labeling; this only bounds `note_events()`.
+  matching; this only bounds `note_events()`.
 - Tests: `cargo test -p rekord_core --release okarina_ -- --test-threads=1`
   (`tests/okarina_golden.rs`, 10 tests, ~2.5 min). Per size two datasets from
   harmonica-repro (`HARMONICA_REPRO_DIR` overrides the checkout path): S/M in
@@ -175,17 +175,6 @@ C♭/F♭/E♯/B♯ and double accidentals never appear. The frontend mirrors on
 key-pair table (`keyPairLabel` in `pipeline.svelte.ts`); keep it in step with
 `key_pair_name`. Because Auto follows the key, a key misdetection also respells
 chords (accepted). Not yet checked by ear in the live app.
-
-## Melody/bass labeling (`melody_bass.rs`)
-
-A symbolic skyline rule (highest/lowest sounding note; Uitdenbogerd & Zobel)
-over the live `NoteConfirmed` stream, not source separation — a Demucs attempt
-(branch `feature/on-demand-analysis`) only relabeled notes already detected.
-The register cutoffs, relative-velocity filter and voice-leading jump gate are
-this project's own; tune empirically but keep the core extreme-note rule. Its
-thresholds were measured on basic-pitch notes (one song) and not re-tuned for
-Harmonica's velocity. `melody`/`bass` aren't mutually exclusive in the backend;
-the frontend prefers melody when both are set.
 
 ## Beat tracking (`beat_model.rs`, `beat_tracker.rs`, `beat_dbn/`)
 

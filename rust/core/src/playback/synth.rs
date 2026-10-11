@@ -24,8 +24,8 @@ pub const MAX_VOICES: usize = 64;
 /// Peak amplitude of one note at full velocity.
 const NOTE_AMPLITUDE: f64 = 0.12;
 
-/// Number of `Part` variants (`All`, `Vocal`, `Bass`, `Other`).
-pub const PARTS: usize = 4;
+/// Number of `Part` variants (`Vocal`, `Bass`, `Other`).
+pub const PARTS: usize = 3;
 
 /// A note to sound.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]

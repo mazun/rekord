@@ -370,6 +370,5 @@ fn okarina_transcriber_dml() {
                 assert!(saw_part_in_events.contains(&part), "{}: note_events never carried a {part:?} note", g.label());
             }
         }
-        assert!(confirmed.iter().all(|n| n.part != Part::All), "Okarina notes must never be tagged Part::All");
     }
 }

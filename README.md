@@ -3,7 +3,7 @@
 A tool for real-time chord and note recognition from audio playing on your
 PC (via WASAPI loopback). Recognition results are shown as a piano roll and
 chord names, and the tool also estimates the key and shows Roman-numeral
-labels along with melody/bass classification.
+labels.
 
 ## How it works
 
@@ -22,8 +22,6 @@ labels along with melody/bass classification.
 3. **Key estimation** — the key is estimated via Krumhansl-Schmuckler-style
    pitch-class correlation (Bellman-Budge profiles), and chords are shown as
    Roman numerals.
-4. **Melody/bass** — determined by a symbolic skyline rule (highest/lowest
-   note) applied to the stream of confirmed notes.
 
 No machine learning model is used for chord names or key estimation. The
 reasoning behind these design decisions is in [CLAUDE.md](CLAUDE.md).

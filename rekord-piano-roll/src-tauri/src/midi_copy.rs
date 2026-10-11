@@ -18,8 +18,6 @@ const KEEP_FILES: usize = 20;
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Layout {
-    /// Every note on one track (channel 1).
-    Merged,
     /// Only that part, on one track (channel 1).
     Vocal,
     Bass,
@@ -29,14 +27,13 @@ pub enum Layout {
 }
 
 impl Layout {
-    /// The tracks to write: name, channel, and the part(s) it takes (`None`: all of them).
-    fn tracks(self) -> Vec<(&'static str, u8, Option<Part>)> {
+    /// The tracks to write: name, channel, and the part it takes.
+    fn tracks(self) -> Vec<(&'static str, u8, Part)> {
         match self {
-            Layout::Merged => vec![("All", 0, None)],
-            Layout::Vocal => vec![("Vocal", 0, Some(Part::Vocal))],
-            Layout::Bass => vec![("Bass", 0, Some(Part::Bass))],
-            Layout::Other => vec![("Other", 0, Some(Part::Other))],
-            Layout::Split => vec![("Vocal", 0, Some(Part::Vocal)), ("Bass", 1, Some(Part::Bass)), ("Other", 2, Some(Part::Other))],
+            Layout::Vocal => vec![("Vocal", 0, Part::Vocal)],
+            Layout::Bass => vec![("Bass", 0, Part::Bass)],
+            Layout::Other => vec![("Other", 0, Part::Other)],
+            Layout::Split => vec![("Vocal", 0, Part::Vocal), ("Bass", 1, Part::Bass), ("Other", 2, Part::Other)],
         }
     }
 }
@@ -137,13 +134,13 @@ fn smf_bytes(notes: &[SynthNote], bpm: f64, layout: Layout) -> Option<Vec<u8>> {
     // times are still laid out in beats of `bpm`, so the notes sit on the grid once the project
     // runs at the song's tempo.
     for (name, channel, part) in layout.tracks() {
-        let mut mine: Vec<&SynthNote> = notes.iter().filter(|n| part.is_none_or(|p| n.part == p)).collect();
+        let mut mine: Vec<&SynthNote> = notes.iter().filter(|n| n.part == part).collect();
         if mine.is_empty() {
             continue;
         }
         mine.sort_by(|a, b| a.start_s.total_cmp(&b.start_s));
-        // (tick, is_on, pitch, velocity). A note ends where the next one of its pitch starts (the
-        // parts overlap when merged), else the later note-on would be cut by the earlier note-off.
+        // (tick, is_on, pitch, velocity). A note ends where the next one of its pitch starts,
+        // else the later note-on would be cut by the earlier note-off.
         let mut ev: Vec<(u32, bool, u8, u8)> = Vec::new();
         for (i, n) in mine.iter().enumerate() {
             let pitch = n.pitch.min(127);
@@ -202,7 +199,7 @@ mod tests {
     #[test]
     fn one_note_at_120_bpm() {
         // 0.5 s at 120 bpm is one beat = 480 ticks.
-        let b = smf_bytes(&[note(0.0, 0.5, 60, Part::Other)], 120.0, Layout::Merged).unwrap();
+        let b = smf_bytes(&[note(0.0, 0.5, 60, Part::Other)], 120.0, Layout::Other).unwrap();
         assert_eq!(&b[..4], b"MThd");
         assert_eq!(u16::from_be_bytes([b[10], b[11]]), 1);
         assert!(!b.windows(3).any(|w| w == [0xff, 0x51, 0x03]), "no tempo event");
@@ -214,7 +211,6 @@ mod tests {
     fn layouts() {
         let notes = [note(0.0, 0.5, 72, Part::Vocal), note(0.0, 0.5, 36, Part::Bass), note(0.0, 0.5, 60, Part::Other)];
         let tracks = |layout| smf_bytes(&notes, 120.0, layout).map(|b| u16::from_be_bytes([b[10], b[11]]));
-        assert_eq!(tracks(Layout::Merged), Some(1));
         assert_eq!(tracks(Layout::Vocal), Some(1));
         assert_eq!(tracks(Layout::Split), Some(3));
         assert_eq!(smf_bytes(&notes[..1], 120.0, Layout::Bass), None);
@@ -225,8 +221,8 @@ mod tests {
 
     #[test]
     fn same_pitch_overlap_is_cut_at_the_next_start() {
-        // Two overlapping C4s (e.g. two parts merged): the first must end when the second starts.
-        let b = smf_bytes(&[note(0.0, 1.0, 60, Part::Vocal), note(0.5, 1.0, 60, Part::Other)], 120.0, Layout::Merged).unwrap();
+        // Two overlapping C4s in one part: the first must end when the second starts.
+        let b = smf_bytes(&[note(0.0, 1.0, 60, Part::Other), note(0.5, 1.0, 60, Part::Other)], 120.0, Layout::Other).unwrap();
         let off_then_on = [0x83, 0x60, 0x80, 60, 0, 0x00, 0x90, 60, 64];
         assert!(b.windows(off_then_on.len()).any(|w| w == off_then_on));
     }

@@ -49,11 +49,9 @@ const CQT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/models/cqt156.onnx"
 
 /// A note-transcription output part. The model separates `Vocal`, `Bass` and
 /// `Other` (everything else, drums excluded -- they aren't pitched notes).
-/// `All` marks notes that aren't split by part (hand-built note lists, tests).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Part {
-    All,
     Vocal,
     Bass,
     Other,
@@ -63,7 +61,6 @@ impl Part {
     /// The name the `parts` ONNX metadata field uses for this part.
     pub fn name(self) -> &'static str {
         match self {
-            Part::All => "all",
             Part::Vocal => "vocal",
             Part::Bass => "bass",
             Part::Other => "other",

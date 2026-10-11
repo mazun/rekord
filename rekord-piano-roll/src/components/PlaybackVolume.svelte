@@ -1,17 +1,13 @@
 <script lang="ts">
-  import { pipeline } from "../pipeline.svelte";
   import { saveVolumes, settings, WAVES, type VoicePart, type Wave } from "../settings.svelte";
   import { pushPlaybackParams } from "../transport.svelte";
   import { t } from "../i18n.svelte";
 
   // A speaker button opening a small panel with the playback mix: the recorded audio, the notes'
-  // overall volume, and (for the 3-part model) each part's wave shape and volume, each with a mute
+  // overall volume, and each part's wave shape and volume, each with a mute
   // button. It lives next to the play button rather than on the settings page: opening settings stops
   // playback, and the point is to adjust the balance while listening.
   const PARTS = ["vocal", "bass", "other"] as const;
-  // Before the first session no model has run yet and notes carry the part "all", which has just a
-  // wave of its own.
-  const threePart = $derived(pipeline.noteModel !== null);
 
   let open = $state(false);
   let root: HTMLElement;
@@ -126,9 +122,6 @@
           changed();
         })}
         <span class="name">{t("playbackVolume.notes")}</span>
-        {#if !threePart}
-          {@render wavePicker("all")}
-        {/if}
         <input
           type="range"
           min="0"
@@ -142,31 +135,29 @@
         />
       </div>
 
-      {#if threePart}
-        <div class="parts" class:muted={settings.muteNotes}>
-          {#each PARTS as part (part)}
-            <div class="row" class:muted={settings.voices[part].muted}>
-              {@render muteButton(settings.voices[part].muted, () => {
-                settings.voices[part].muted = !settings.voices[part].muted;
+      <div class="parts" class:muted={settings.muteNotes}>
+        {#each PARTS as part (part)}
+          <div class="row" class:muted={settings.voices[part].muted}>
+            {@render muteButton(settings.voices[part].muted, () => {
+              settings.voices[part].muted = !settings.voices[part].muted;
+              changed();
+            })}
+            <span class="name"><span class="swatch {part}"></span>{t(`pianoRollView.${part}`)}</span>
+            {@render wavePicker(part)}
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={settings.voices[part].volume}
+              oninput={(e) => {
+                settings.voices[part].volume = e.currentTarget.valueAsNumber;
                 changed();
-              })}
-              <span class="name"><span class="swatch {part}"></span>{t(`pianoRollView.${part}`)}</span>
-              {@render wavePicker(part)}
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={settings.voices[part].volume}
-                oninput={(e) => {
-                  settings.voices[part].volume = e.currentTarget.valueAsNumber;
-                  changed();
-                }}
-              />
-            </div>
-          {/each}
-        </div>
-      {/if}
+              }}
+            />
+          </div>
+        {/each}
+      </div>
     </div>
   {/if}
 </div>

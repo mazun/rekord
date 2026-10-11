@@ -64,9 +64,9 @@ browser pane is usually hidden, which throttles requestAnimationFrame — call
 `window.__settle()` right before each screenshot (it returns the on-screen
 lines); read state via `window.__roll`. Region zoom isn't supported there.
 
-## With the Mix model
+## Note parts
 
-The roll colors by part (vocal = melody green, bass = orange, other = blue); the
+The roll colors by part (vocal = green, bass = orange, other = blue); the
 legend toggles each part's visibility.
 
 ## Recording playback

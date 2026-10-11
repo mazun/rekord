@@ -84,12 +84,7 @@ fn notes_text(range: &ExportRange) -> String {
     for n in notes {
         let start = (n.start_s - range.window_start_s).max(0.0);
         let end = (n.end_s - range.window_start_s).min(range.window_end_s - range.window_start_s);
-        let part = match n.part {
-            Part::All => "all",
-            Part::Vocal => "vocal",
-            Part::Bass => "bass",
-            Part::Other => "other",
-        };
+        let part = n.part.name();
         let name = SHARP_NAMES[usize::from(n.pitch % 12)];
         let octave = i32::from(n.pitch / 12) - 1;
         out.push_str(&format!("[{start:7.3}s -> {end:7.3}s] note {name}{octave} (vel {:.2}) [{part}]\n", n.velocity));

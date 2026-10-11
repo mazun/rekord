@@ -45,8 +45,8 @@ const DEFAULT_VOLUME_NOTES = 0.5;
 export type Wave = "sine" | "triangle" | "square" | "saw";
 export const WAVES: readonly Wave[] = ["sine", "triangle", "square", "saw"];
 
-/** The parts notes are labeled with: "all" is what the single-part models produce. */
-export type VoicePart = "all" | "vocal" | "bass" | "other";
+/** The parts notes are labeled with. */
+export type VoicePart = "vocal" | "bass" | "other";
 
 export interface Voice {
   wave: Wave;
@@ -55,7 +55,6 @@ export interface Voice {
 }
 
 const DEFAULT_VOICES: Record<VoicePart, Voice> = {
-  all: { wave: "sine", volume: 1, muted: false },
   vocal: { wave: "square", volume: 1, muted: false },
   bass: { wave: "triangle", volume: 1, muted: false },
   other: { wave: "sine", volume: 1, muted: false },

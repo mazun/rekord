@@ -12,7 +12,7 @@ design and measurements: [docs/chord-layers.md](../docs/chord-layers.md).
 - **Note transcription and beat tracking are developed in `harmonica-repro`:
   change behavior there first, regenerate golden vectors, then port.** Don't
   tune the Rust side alone. Golden tests skip when the data is absent.
-- Chord/key/melody constants are this project's own and were swept on RWC-Pop
+- Chord/key constants are this project's own and were swept on RWC-Pop
   (odd songs to tune, even to check); tune empirically, never validate with
   synthetic audio.
 - Key estimator: only the scoring is textbook; the window/switching rule is a
@@ -40,8 +40,7 @@ design and measurements: [docs/chord-layers.md](../docs/chord-layers.md).
   layers, append-only), `window_chroma` in `pipeline.rs`.
 - Key: `key_estimator.rs`. Spelling: `spelling.rs` (frontend mirrors
   `keyPairLabel` — keep in step with `key_pair_name`).
-- Melody/bass: `melody_bass.rs` (symbolic skyline). Beats: `beat_model.rs`,
-  `beat_tracker.rs`, `beat_dbn/`.
+- Beats: `beat_model.rs`, `beat_tracker.rs`, `beat_dbn/`.
 - Live session: `run_live_session` in `pipeline.rs` (beat tracker on a second
   thread). Recording: `audio_ring.rs`, `live_capture.rs`, `playback/`.
 

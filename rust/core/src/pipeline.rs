@@ -14,13 +14,12 @@ use crate::beat_model::{self, BeatModel};
 use crate::beat_tracker::{BeatGrid, BeatTracker};
 use crate::chord_layers::{ActiveChange, ChordEngine, ChordLayerId, LayerChord};
 use crate::chord_templates::{self, ChordVocabulary};
-use crate::harmonica_decode::{ConfirmedNote, NoteEvent};
+use crate::harmonica_decode::ConfirmedNote;
 use crate::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, ModelSize, Part};
 use crate::harmonica_stream::NoteTranscriber;
 use crate::key_estimator::{KeyEstimate, KeyEstimator};
 use crate::spelling::{note_name, Accidental};
 use crate::live_capture;
-use crate::melody_bass::{LineTracker, NoteRoles};
 
 pub use crate::chord_layers::ChordAt;
 
@@ -136,21 +135,8 @@ pub enum PipelineEvent {
     /// to shade/intensify the note by how strongly it sounded, correctly
     /// distinguishing notes within the same chord.
     ///
-    /// `part` is the model's own output part (vocal/bass/other for the Mix
-    /// model; `All` for the single-part models, which can't tell them apart).
-    /// For `All` notes, `melody`/`bass` say whether the note belongs to the
-    /// top/bottom voice line (see `melody_bass`), both false meaning an inner
-    /// voice; for the other parts the model has already answered that, so
-    /// both are false.
-    NoteConfirmed {
-        start_s: f32,
-        end_s: f32,
-        pitch_midi: i32,
-        velocity: f32,
-        part: Part,
-        melody: bool,
-        bass: bool,
-    },
+    /// `part` is the model's own output part (vocal/bass/other).
+    NoteConfirmed { start_s: f32, end_s: f32, pitch_midi: i32, velocity: f32, part: Part },
     /// What one chord layer newly decided (see `chord_layers` and docs/chord-layers.md): the chords
     /// it says begin at the given times, and `decided_s`, the time up to which it has decided
     /// everything (all `changes` are at or before it, and nothing before it is ever revised).
@@ -280,24 +266,17 @@ pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(
 /// end-of-session flush so a note is only ever observed from one place.
 pub fn emit_confirmed_notes(
     notes: Vec<ConfirmedNote>,
-    note_events: &[NoteEvent],
     key_estimator: &mut KeyEstimator,
-    lines: &mut LineTracker,
     mut on_event: impl FnMut(PipelineEvent),
 ) {
     for n in notes {
         key_estimator.observe(&n);
-        // The skyline rule only makes sense when the model gives no parts of
-        // its own (it would see the vocal/bass/other notes mixed together).
-        let roles = if n.part == Part::All { lines.classify(&n, note_events) } else { NoteRoles::default() };
         on_event(PipelineEvent::NoteConfirmed {
             start_s: n.start_s,
             end_s: n.end_s,
             pitch_midi: n.pitch_midi,
             velocity: n.velocity,
             part: n.part,
-            melody: roles.melody,
-            bass: roles.bass,
         });
     }
 }
@@ -362,7 +341,6 @@ fn run_note_pipeline(
     };
     let mut transcriber = NoteTranscriber::new(model, config.future_frames);
     let mut key_estimator = KeyEstimator::new();
-    let mut lines = LineTracker::new();
     let mut chords = ChordEngine::standard();
     let mut last_key_name: Option<String> = None;
     let mut last_covered = 0.0f32;
@@ -392,7 +370,7 @@ fn run_note_pipeline(
         if transcriber.blocks_done() != blocks_before {
             let note_events = transcriber.note_events();
             let covered = transcriber.covered_seconds();
-            emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, &mut on_event);
+            emit_confirmed_notes(notes, &mut key_estimator, &mut on_event);
             for n in transcriber.take_started_notes() {
                 on_event(PipelineEvent::NoteStarted { start_s: n.start_s, pitch_midi: n.pitch_midi, velocity: n.velocity, part: n.part });
             }
@@ -429,7 +407,7 @@ fn run_note_pipeline(
     // is silently dropped.
     let final_notes = transcriber.finish()?;
     let final_note_events = transcriber.note_events();
-    emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, &mut on_event);
+    emit_confirmed_notes(final_notes, &mut key_estimator, &mut on_event);
     let current_key_mode = *key_mode.lock().unwrap();
     let current_accidental = *accidental.lock().unwrap();
     let current_beat_grid = *beat_grid.lock().unwrap();

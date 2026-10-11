@@ -10,7 +10,6 @@ pub mod harmonica_model;
 pub mod harmonica_stream;
 pub mod key_estimator;
 pub mod live_capture;
-pub mod melody_bass;
 pub mod pipeline;
 pub mod playback;
 pub mod spelling;

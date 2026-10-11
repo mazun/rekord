@@ -6,7 +6,6 @@ use rekord_core::chord_templates::{extra_tensions, ChordMatch};
 use rekord_core::harmonica_model::{self, Device, HarmonicaModel, ModelChoice, Part};
 use rekord_core::harmonica_stream::NoteTranscriber;
 use rekord_core::key_estimator::KeyEstimator;
-use rekord_core::melody_bass::LineTracker;
 use rekord_core::pipeline::{
     self, midi_to_name, NoteModelConfig, NoteModelInfo, PipelineEvent, CAPTURE_HOP_S,
     DEFAULT_FUTURE_FRAMES, FUTURE_FRAME_CHOICES,
@@ -109,15 +108,11 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
                 over_budget_note(note_model),
             );
         }
-        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity, part, melody, bass } => {
-            let role = match (part, melody, bass) {
-                (Part::Vocal, ..) => " [vocal]",
-                (Part::Bass, ..) => " [bass part]",
-                (Part::Other, ..) => " [other]",
-                (Part::All, true, true) => " [melody+bass]",
-                (Part::All, true, false) => " [melody]",
-                (Part::All, false, true) => " [bass]",
-                (Part::All, false, false) => "",
+        PipelineEvent::NoteConfirmed { start_s, end_s, pitch_midi, velocity, part } => {
+            let role = match part {
+                Part::Vocal => " [vocal]",
+                Part::Bass => " [bass part]",
+                Part::Other => " [other]",
             };
             println!(
                 "[{start_s:6.2}s -> {end_s:6.2}s] note {} (vel {velocity:.2}){role}",
@@ -159,7 +154,6 @@ fn run_file(
     });
     let mut transcriber = NoteTranscriber::new(model, future_frames);
     let mut key_estimator = KeyEstimator::new();
-    let mut lines = LineTracker::new();
     let mut chords = ChordEngine::standard();
     let mut printer = Printer::new(accidental, chord_layers);
     let mut last_key_name: Option<String> = None;
@@ -175,7 +169,7 @@ fn run_file(
         if transcriber.blocks_done() != blocks_before {
             let note_events = transcriber.note_events();
             let covered = transcriber.covered_seconds();
-            pipeline::emit_confirmed_notes(notes, &note_events, &mut key_estimator, &mut lines, |e| printer.print(e));
+            pipeline::emit_confirmed_notes(notes, &mut key_estimator, |e| printer.print(e));
             chords.advance(
                 &note_events,
                 last_covered,
@@ -195,7 +189,7 @@ fn run_file(
     // note, exactly as the reference does over a whole file.
     let final_notes = transcriber.finish()?;
     let final_note_events = transcriber.note_events();
-    pipeline::emit_confirmed_notes(final_notes, &final_note_events, &mut key_estimator, &mut lines, |e| printer.print(e));
+    pipeline::emit_confirmed_notes(final_notes, &mut key_estimator, |e| printer.print(e));
     chords.advance(
         &final_note_events,
         last_covered,

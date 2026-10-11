@@ -1,4 +1,4 @@
-# Re:Kord (リコード) — real-time chord/melody recognition
+# Re:Kord (リコード) — real-time chord/note recognition
 
 "Re:Kord" is the display name; code identifiers use `rekord` (crates
 `rekord_core`/`rekord_engine`, `rekord-piano-roll/`, Tauri `productName`

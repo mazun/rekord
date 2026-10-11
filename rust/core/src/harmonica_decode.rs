@@ -28,8 +28,7 @@ pub struct ConfirmedNote {
     pub start_s: f32,
     pub end_s: f32,
     pub pitch_midi: i32,
-    /// Which output part of the model this note came from (`Part::All` for a
-    /// single-part model).
+    /// Which output part of the model this note came from.
     pub part: Part,
     /// The onset probability at the note's onset frame (the local maximum's
     /// own value) -- not mean sustain, which saturates near 1 for almost

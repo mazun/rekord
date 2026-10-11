@@ -62,7 +62,7 @@ fn parse(line: &str) -> Option<(f32, f32, i32, f32, Part)> {
         "vocal" => Part::Vocal,
         "bass" => Part::Bass,
         "other" => Part::Other,
-        _ => Part::All,
+        _ => return None,
     };
     Some((s, e, 12 * (octave + 1) + pc_of(&letters), vel.parse().ok()?, part))
 }
@@ -186,8 +186,6 @@ fn main() {
                             pitch_midi: n.2,
                             velocity: n.3,
                             part: n.4,
-                            melody: false,
-                            bass: false,
                         },
                         &mut log,
                     );

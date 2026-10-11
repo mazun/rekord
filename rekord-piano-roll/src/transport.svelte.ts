@@ -46,10 +46,9 @@ let gen = 0;
 // Parts hidden on the roll are not sounded either.
 const hiddenParts = new Set<NotePart>();
 
-const VOICE_PARTS: VoicePart[] = ["all", "vocal", "bass", "other"];
+const VOICE_PARTS: VoicePart[] = ["vocal", "bass", "other"];
 
-// What the backend mixes: the muted and the hidden are sent as gain 0. The single-part models' notes
-// ("all") have no volume of their own, only the overall one.
+// What the backend mixes: the muted and the hidden are sent as gain 0.
 function params() {
   return {
     original_gain: settings.muteOriginal ? 0 : settings.volumeOriginal,
@@ -57,7 +56,7 @@ function params() {
     voices: VOICE_PARTS.map((part) => {
       const voice = settings.voices[part];
       const silent = voice.muted || hiddenParts.has(part);
-      return { part, wave: voice.wave, gain: silent ? 0 : part === "all" ? 1 : voice.volume };
+      return { part, wave: voice.wave, gain: silent ? 0 : voice.volume };
     }),
   };
 }

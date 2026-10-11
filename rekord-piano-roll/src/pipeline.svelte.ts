@@ -150,8 +150,6 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
         pitch_midi: payload.pitch_midi,
         velocity: payload.velocity,
         part: payload.part,
-        melody: payload.melody,
-        bass: payload.bass,
       });
     } else if (payload.type === "ChordLayer") {
       const update = recording.lane.takeUpdate();
