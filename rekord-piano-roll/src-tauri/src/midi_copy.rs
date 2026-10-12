@@ -74,23 +74,83 @@ fn write_file(range: &MidiRange) -> Result<PathBuf, String> {
 /// Starts a native drag of the .mid file out of the window (to drop onto a DAW's track or a folder).
 /// On Windows this returns once the drag has ended.
 #[cfg(windows)]
-pub fn drag(window: &tauri::WebviewWindow, range: MidiRange) -> Result<(), String> {
+pub fn drag(range: MidiRange) -> Result<(), String> {
     let path = write_file(&range)?;
-    drag::start_drag(
-        window,
-        drag::DragItem::Files(vec![path]),
-        // No drag picture of our own (undecodable bytes make the crate skip it): a custom one changed
-        // nothing about what is shown while dragging, which is Windows' own file-drag look.
-        drag::Image::Raw(Vec::new()),
-        |_result, _cursor| {},
-        drag::Options::default(),
-    )
-    .map_err(|e| e.to_string())
+    crate::os_drag::drag(&path, &thumbnail(&range.notes))
 }
 
 #[cfg(not(windows))]
-pub fn drag(_window: &tauri::WebviewWindow, _range: MidiRange) -> Result<(), String> {
+pub fn drag(_range: MidiRange) -> Result<(), String> {
     Err("dragging a file out is only supported on Windows".into())
+}
+
+#[cfg(windows)]
+const THUMB_W: usize = 144;
+#[cfg(windows)]
+const THUMB_H: usize = 72;
+
+/// The drag picture: the notes as bars on a small dark card (time across, pitch up), coloured by
+/// part. Premultiplied BGRA.
+#[cfg(windows)]
+fn thumbnail(notes: &[SynthNote]) -> crate::os_drag::DragPicture {
+    const CARD: [u8; 3] = [0x26, 0x2b, 0x36]; // the roll's guide colour
+    const BORDER: [u8; 3] = [96, 104, 124];
+    const CARD_ALPHA: u32 = 230;
+    let mut px = vec![0u8; THUMB_W * THUMB_H * 4];
+    // Writes an opaque-ish RGB pixel with `alpha` (0-255), premultiplied.
+    let mut put = |x: usize, y: usize, rgb: [u8; 3], alpha: u32| {
+        let i = (y * THUMB_W + x) * 4;
+        for (c, v) in [rgb[2], rgb[1], rgb[0]].into_iter().enumerate() {
+            px[i + c] = (u32::from(v) * alpha / 255) as u8;
+        }
+        px[i + 3] = alpha as u8;
+    };
+    for y in 0..THUMB_H {
+        for x in 0..THUMB_W {
+            // Corner cut: clip a 3 px triangle off each corner.
+            let dx = x.min(THUMB_W - 1 - x);
+            let dy = y.min(THUMB_H - 1 - y);
+            if dx + dy < 3 {
+                continue;
+            }
+            let edge = dx == 0 || dy == 0;
+            put(x, y, if edge { BORDER } else { CARD }, CARD_ALPHA);
+        }
+    }
+    let end = notes.iter().map(|n| n.end_s).fold(0.0, f64::max);
+    let lo = notes.iter().map(|n| n.pitch).min().unwrap_or(0);
+    let hi = notes.iter().map(|n| n.pitch).max().unwrap_or(0);
+    if end > 0.0 {
+        let (pad, bar_h) = (8.0, 3usize);
+        let inner_w = THUMB_W as f64 - 2.0 * pad;
+        let inner_h = THUMB_H as f64 - 2.0 * pad - bar_h as f64;
+        let span = f64::from(hi - lo).max(1.0);
+        for n in notes {
+            // The roll's palettes (pianoroll.ts noteColors), shaded by velocity.
+            let (min, max): ([u8; 3], [u8; 3]) = match n.part {
+                Part::Vocal => ([0x1f, 0x3d, 0x2c], [0x6b, 0xe3, 0xa0]),
+                Part::Bass => ([0x3d, 0x2c, 0x1f], [0xff, 0x9f, 0x5b]),
+                Part::Other => ([0x2c, 0x35, 0x50], [0xae, 0xcb, 0xff]),
+            };
+            let v = f64::from(n.velocity.clamp(0.0, 1.0));
+            let rgb = [0, 1, 2].map(|c| {
+                (f64::from(min[c]) + (f64::from(max[c]) - f64::from(min[c])) * v).round() as u8
+            });
+            let x0 = (pad + n.start_s.max(0.0) / end * inner_w) as usize;
+            let x1 = ((pad + n.end_s / end * inner_w) as usize).max(x0 + 2);
+            let y0 = (pad + (1.0 - f64::from(n.pitch - lo) / span) * inner_h) as usize;
+            for y in y0..(y0 + bar_h).min(THUMB_H - 1) {
+                for x in x0..x1.min(THUMB_W - 1) {
+                    put(x, y, rgb, 255);
+                }
+            }
+        }
+    }
+    crate::os_drag::DragPicture {
+        width: THUMB_W as u32,
+        height: THUMB_H as u32,
+        bgra: px,
+    }
 }
 
 fn prune(dir: &std::path::Path) {
