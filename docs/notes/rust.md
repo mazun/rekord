@@ -41,15 +41,23 @@ hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_strea
 - All three output `[1, 3, T, 88]` per head, parts vocal/bass/other. `parts`
   and `thresholds_f8`/`thresholds_f16` (per part `[th_on, th_sus]`) come from
   the ONNX metadata, not constants here (they differ per size; the vocal th_sus
-  differs between f8 and f16 for S and L); the part order is checked at load
+  differs between f8 and f16 for S only; L is .25/.40 at both); the part order is checked at load
   (`part_thresholds` picks by `future_frames`). `NoteTranscriber` runs one
   `StreamingDecoder` per part; every `ConfirmedNote`/`NoteEvent`/
   `NoteConfirmed` carries its `Part`.
   The thresholds were partly hand-lowered (bass/other th_sus) because the CV
   picks cut held notes short.
 - The Harmonica single-part models (small/medium/large_uni) and
-  `mix_large_v1/v2.onnx` names were retired; `mix_large_v2.onnx` is byte-
-  identical to `okarina_l.onnx`.
+  `mix_large_v1/v2.onnx` names were retired. 2026-10-13: `okarina_l.onnx` is now
+  `mix_large_v3.onnx` (run `s2g`: the vocal teacher is openvpi GAME's single
+  notes instead of the earlier one; RWC-Pop vocal COnP50 .422 → .602, COnPOff
+  .193 → .331, bass/other ±0.003; same structure, speed and I/O; vocal th_sus
+  .35/.30 → .40 at f8/f16). The previous L is kept locally as
+  `okarina_l_prev.onnx` (byte-identical to the old `mix_large_v2.onnx`) for A/B
+  listening; build.rs ignores it. S/M still have the old vocal teacher. Uploaded
+  to HF as `6df6787` (`HF_REVISION`). GAME licensing: code MIT, model files
+  CC BY-NC-SA 4.0 (v1.0.0 release notes); compatible with our weights' license,
+  noted in the model card.
   Known behavior, not a bug: low notes of solo instruments are split between bass
   and other, so a pitch can appear in both; bass-part notes can be short
   fragments. `velocity` is not on a common scale across parts, which skews the
@@ -73,7 +81,7 @@ hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_strea
 - Tests: `cargo test -p rekord_core --release okarina_ -- --test-threads=1`
   (`tests/okarina_golden.rs`, 10 tests, ~2.5 min). Per size two datasets from
   harmonica-repro (`HARMONICA_REPRO_DIR` overrides the checkout path): S/M in
-  `runs/okarina_deploy/{small,medium}/`, L in `runs/s2_deploy/`, each with
+  `runs/okarina_deploy/{small,medium}/`, L in `runs/s2g_deploy/`, each with
   `golden` (GuitarSet, notes only in `other`) and `golden_rwc001` (20 s of
   RWC-Pop 001, all parts; RWC is not redistributable, only ever read from
   harmonica-repro). The files there keep the internal names (`mix_small_*`

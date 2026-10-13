@@ -17,7 +17,7 @@
 //!
 //! - S: `runs/okarina_deploy/small/{golden,golden_rwc001}`
 //! - M: `runs/okarina_deploy/medium/{golden,golden_rwc001}`
-//! - L: `runs/s2_deploy/{golden,golden_rwc001}`
+//! - L: `runs/s2g_deploy/{golden,golden_rwc001}`
 //!
 //! Tolerances are 1e-4 on CPU and 1e-3 on DirectML. Tests skip (not fail)
 //! for a size whose golden directory or `models/okarina_*.onnx` is absent;
@@ -113,7 +113,7 @@ fn goldens() -> Vec<Golden> {
             "runs/okarina_deploy/medium",
             "mix_medium",
         ),
-        (ModelSize::Large, "runs/s2_deploy", "mix_large"),
+        (ModelSize::Large, "runs/s2g_deploy", "mix_large"),
     ] {
         let model = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("models")
