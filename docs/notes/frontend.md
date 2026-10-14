@@ -144,7 +144,11 @@ not exported (the roll keeps them, `Recording` does not). `dev/chords-mock.js` f
 notes (clipped to it, times relative to its start; parts hidden with the legend left out) become a
 .mid in `%TEMP%/ReKord midi/` (newest 20 kept): one track per part, channels 1-3 for Vocal/Bass/Other
 when split, **no tempo/time-signature event** (a DAW would ask to import it) -- ticks are laid out in
-beats of the tracker's BPM (120 without one), so the project tempo must match the song's. A **drag from
+beats of the tracker's BPM (120 without one), so the project tempo must match the song's. **Drums**: with
+the drum lane shown, a drag pressed on empty roll also writes a "Drums" track on channel 10 in the General
+MIDI map (kick 36, snare 38, tom 47, closed hi-hat 42, crash 49; 16th-note lengths, velocity from the
+hit's strength); a drag pressed on a note stays that part alone. With the keyboard hidden the notes are
+left out too (what is on screen goes in), and the drag picture shows the hits as coloured rows. A **drag from
 inside the selection** drags the file out of the window (`os_drag.rs`: `DoDragDrop` on the shell's own
 file data object; the picture, drawn in `midi_copy.rs` `thumbnail` (the notes as bars in the roll's
 colours), is a click-through topmost layered window that follows the cursor from `QueryContinueDrag`.

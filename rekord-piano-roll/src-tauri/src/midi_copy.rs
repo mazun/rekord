@@ -5,11 +5,16 @@
 use std::fs;
 use std::path::PathBuf;
 
+use rekord_core::drum_stream::Drum;
 use rekord_core::okarina_model::Part;
-use rekord_core::playback::SynthNote;
+use rekord_core::playback::{SynthDrumHit, SynthNote};
 use serde::Deserialize;
 
 const TICKS_PER_BEAT: u16 = 480;
+/// General MIDI percussion channel (channel 10).
+const DRUM_CHANNEL: u8 = 9;
+/// How long a drum hit's note lasts (a 16th note); drums ignore it, but a DAW draws it.
+const DRUM_NOTE_TICKS: u32 = (TICKS_PER_BEAT / 4) as u32;
 const DEFAULT_BPM: f64 = 120.0;
 // Files older than this many are removed when a new one is made.
 const KEEP_FILES: usize = 20;
@@ -22,11 +27,17 @@ pub enum Layout {
     Vocal,
     Bass,
     Other,
-    /// Vocal, Bass and Other on their own tracks and channels (1, 2, 3).
+    /// Vocal, Bass and Other on their own tracks and channels (1, 2, 3), and the drums on channel
+    /// 10 in the General MIDI drum map.
     Split,
 }
 
 impl Layout {
+    /// Whether the drums go in too (not when a single part was asked for).
+    fn has_drums(self) -> bool {
+        matches!(self, Layout::Split)
+    }
+
     /// The tracks to write: name, channel, and the part it takes.
     fn tracks(self) -> Vec<(&'static str, u8, Part)> {
         match self {
@@ -46,6 +57,9 @@ impl Layout {
 pub struct MidiRange {
     /// Notes already clipped to the selection, times relative to its start.
     notes: Vec<SynthNote>,
+    /// The drum hits in the selection, times relative to its start (written with the split layout
+    /// only).
+    drums: Vec<SynthDrumHit>,
     /// The tempo at the selection (the beat tracker's), if it had one.
     bpm: Option<f64>,
     layout: Layout,
@@ -57,7 +71,8 @@ fn write_file(range: &MidiRange) -> Result<PathBuf, String> {
         .bpm
         .filter(|b| b.is_finite() && *b >= 20.0 && *b <= 400.0)
         .unwrap_or(DEFAULT_BPM);
-    let bytes = smf_bytes(&range.notes, bpm, range.layout).ok_or("no notes in the selection")?;
+    let bytes = smf_bytes(&range.notes, &range.drums, bpm, range.layout)
+        .ok_or("no notes in the selection")?;
 
     let dir = std::env::temp_dir().join("ReKord midi");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -76,7 +91,12 @@ fn write_file(range: &MidiRange) -> Result<PathBuf, String> {
 #[cfg(windows)]
 pub fn drag(range: MidiRange) -> Result<(), String> {
     let path = write_file(&range)?;
-    crate::os_drag::drag(&path, &thumbnail(&range.notes))
+    let drums = if range.layout.has_drums() {
+        &range.drums[..]
+    } else {
+        &[]
+    };
+    crate::os_drag::drag(&path, &thumbnail(&range.notes, drums))
 }
 
 #[cfg(not(windows))]
@@ -88,11 +108,15 @@ pub fn drag(_range: MidiRange) -> Result<(), String> {
 const THUMB_W: usize = 144;
 #[cfg(windows)]
 const THUMB_H: usize = 72;
+/// Height of one drum row in the drag picture.
+#[cfg(windows)]
+const DRUM_ROW_PX: usize = 3;
 
 /// The drag picture: the notes as bars on a small dark card (time across, pitch up), coloured by
-/// part. Premultiplied BGRA.
+/// part, with the drum hits as ticks in rows along the bottom (coloured as on the roll).
+/// Premultiplied BGRA.
 #[cfg(windows)]
-fn thumbnail(notes: &[SynthNote]) -> crate::os_drag::DragPicture {
+fn thumbnail(notes: &[SynthNote], drums: &[SynthDrumHit]) -> crate::os_drag::DragPicture {
     const CARD: [u8; 3] = [0x26, 0x2b, 0x36]; // the roll's guide colour
     const BORDER: [u8; 3] = [96, 104, 124];
     const CARD_ALPHA: u32 = 230;
@@ -117,13 +141,37 @@ fn thumbnail(notes: &[SynthNote]) -> crate::os_drag::DragPicture {
             put(x, y, if edge { BORDER } else { CARD }, CARD_ALPHA);
         }
     }
-    let end = notes.iter().map(|n| n.end_s).fold(0.0, f64::max);
+    let end = notes
+        .iter()
+        .map(|n| n.end_s)
+        .chain(drums.iter().map(|h| h.t))
+        .fold(0.0, f64::max);
     let lo = notes.iter().map(|n| n.pitch).min().unwrap_or(0);
     let hi = notes.iter().map(|n| n.pitch).max().unwrap_or(0);
     if end > 0.0 {
         let (pad, bar_h) = (8.0, 3usize);
         let inner_w = THUMB_W as f64 - 2.0 * pad;
-        let inner_h = THUMB_H as f64 - 2.0 * pad - bar_h as f64;
+        // The drum rows (cymbal on top, as on the roll) take the bottom of the card.
+        let drum_rows = if drums.is_empty() { 0 } else { 5 };
+        let drum_h = drum_rows * DRUM_ROW_PX;
+        let inner_h = THUMB_H as f64 - 2.0 * pad - bar_h as f64 - drum_h as f64;
+        let drum_top = THUMB_H as f64 - pad - drum_h as f64;
+        for h in drums {
+            let (row, rgb): (usize, [u8; 3]) = match h.drum {
+                Drum::Cymbal => (0, [0xc9, 0xa7, 0xff]),
+                Drum::HiHat => (1, [0x7f, 0xe0, 0xe8]),
+                Drum::Tom => (2, [0x8b, 0xe0, 0x8b]),
+                Drum::Snare => (3, [0xff, 0xe2, 0x7a]),
+                Drum::Kick => (4, [0xff, 0x7d, 0x6e]),
+            };
+            let x = (pad + h.t.max(0.0) / end * inner_w) as usize;
+            let y = drum_top as usize + row * DRUM_ROW_PX;
+            for yy in y..(y + DRUM_ROW_PX - 1).min(THUMB_H - 1) {
+                for xx in x..(x + 2).min(THUMB_W - 1) {
+                    put(xx, yy, rgb, 255);
+                }
+            }
+        }
         let span = f64::from(hi - lo).max(1.0);
         for n in notes {
             // The roll's palettes (pianoroll.ts noteColors), shaded by velocity.
@@ -195,8 +243,52 @@ fn name_event(name: &str) -> Vec<u8> {
     e
 }
 
-/// The file for `layout`, or `None` when none of the notes belongs on any of its tracks.
-fn smf_bytes(notes: &[SynthNote], bpm: f64, layout: Layout) -> Option<Vec<u8>> {
+/// A note to write: on tick, wanted off tick, pitch, velocity.
+type TrackNote = (u32, u32, u8, u8);
+
+/// One track of `notes` (sorted by their on tick) on `channel`. A note ends where the next one of
+/// its pitch starts, else the later note-on would be cut by the earlier note-off.
+fn note_track(name: &str, channel: u8, notes: &[TrackNote]) -> Vec<u8> {
+    // (tick, is_on, pitch, velocity)
+    let mut ev: Vec<(u32, bool, u8, u8)> = Vec::new();
+    for (i, &(on, wanted_off, pitch, vel)) in notes.iter().enumerate() {
+        let next_on = notes[i + 1..].iter().find(|m| m.2 == pitch).map(|m| m.0);
+        let off = wanted_off.min(next_on.unwrap_or(u32::MAX)).max(on + 1);
+        ev.push((on, true, pitch, vel));
+        ev.push((off, false, pitch, 0));
+    }
+    // Note-offs before note-ons at the same tick.
+    ev.sort_by_key(|&(tick, is_on, pitch, _)| (tick, is_on, pitch));
+    let mut body = name_event(name);
+    let mut last = 0;
+    for (tick, is_on, pitch, vel) in ev {
+        push_vlq(&mut body, tick - last);
+        last = tick;
+        body.extend_from_slice(&[(if is_on { 0x90 } else { 0x80 }) | channel, pitch, vel]);
+    }
+    body.extend_from_slice(&[0x00, 0xff, 0x2f, 0x00]);
+    track_chunk(&body)
+}
+
+/// The General MIDI percussion key a drum is written as.
+fn gm_key(drum: Drum) -> u8 {
+    match drum {
+        Drum::Kick => 36,   // Bass Drum 1
+        Drum::Snare => 38,  // Acoustic Snare
+        Drum::Tom => 47,    // Low-Mid Tom
+        Drum::HiHat => 42,  // Closed Hi-Hat
+        Drum::Cymbal => 49, // Crash Cymbal 1
+    }
+}
+
+/// The file for `layout`, or `None` when none of the notes (or, for the split layout, drum hits)
+/// belongs on any of its tracks.
+fn smf_bytes(
+    notes: &[SynthNote],
+    drums: &[SynthDrumHit],
+    bpm: f64,
+    layout: Layout,
+) -> Option<Vec<u8>> {
     let ticks_per_s = f64::from(TICKS_PER_BEAT) * bpm / 60.0;
     let to_ticks = |s: f64| (s.max(0.0) * ticks_per_s).round() as u32;
 
@@ -211,34 +303,32 @@ fn smf_bytes(notes: &[SynthNote], bpm: f64, layout: Layout) -> Option<Vec<u8>> {
             continue;
         }
         mine.sort_by(|a, b| a.start_s.total_cmp(&b.start_s));
-        // (tick, is_on, pitch, velocity). A note ends where the next one of its pitch starts,
-        // else the later note-on would be cut by the earlier note-off.
-        let mut ev: Vec<(u32, bool, u8, u8)> = Vec::new();
-        for (i, n) in mine.iter().enumerate() {
-            let pitch = n.pitch.min(127);
-            let on = to_ticks(n.start_s);
-            let next_on = mine[i + 1..]
-                .iter()
-                .find(|m| m.pitch.min(127) == pitch)
-                .map(|m| to_ticks(m.start_s));
-            let off = to_ticks(n.end_s)
-                .min(next_on.unwrap_or(u32::MAX))
-                .max(on + 1);
-            let vel = (n.velocity * 127.0).round().clamp(1.0, 127.0) as u8;
-            ev.push((on, true, pitch, vel));
-            ev.push((off, false, pitch, 0));
-        }
-        // Note-offs before note-ons at the same tick.
-        ev.sort_by_key(|&(tick, is_on, pitch, _)| (tick, is_on, pitch));
-        let mut body = name_event(name);
-        let mut last = 0;
-        for (tick, is_on, pitch, vel) in ev {
-            push_vlq(&mut body, tick - last);
-            last = tick;
-            body.extend_from_slice(&[(if is_on { 0x90 } else { 0x80 }) | channel, pitch, vel]);
-        }
-        body.extend_from_slice(&[0x00, 0xff, 0x2f, 0x00]);
-        tracks.push(track_chunk(&body));
+        let items: Vec<TrackNote> = mine
+            .iter()
+            .map(|n| {
+                let vel = (n.velocity * 127.0).round().clamp(1.0, 127.0) as u8;
+                (
+                    to_ticks(n.start_s),
+                    to_ticks(n.end_s),
+                    n.pitch.min(127),
+                    vel,
+                )
+            })
+            .collect();
+        tracks.push(note_track(name, channel, &items));
+    }
+    if layout.has_drums() && !drums.is_empty() {
+        let mut sorted = drums.to_vec();
+        sorted.sort_by(|a, b| a.t.total_cmp(&b.t));
+        let items: Vec<TrackNote> = sorted
+            .iter()
+            .map(|h| {
+                let on = to_ticks(h.t);
+                let vel = ((0.4 + 0.6 * f64::from(h.strength.clamp(0.0, 1.0))) * 127.0).round();
+                (on, on + DRUM_NOTE_TICKS, gm_key(h.drum), vel as u8)
+            })
+            .collect();
+        tracks.push(note_track("Drums", DRUM_CHANNEL, &items));
     }
     if tracks.is_empty() {
         return None;
@@ -282,7 +372,13 @@ mod tests {
     #[test]
     fn one_note_at_120_bpm() {
         // 0.5 s at 120 bpm is one beat = 480 ticks.
-        let b = smf_bytes(&[note(0.0, 0.5, 60, Part::Other)], 120.0, Layout::Other).unwrap();
+        let b = smf_bytes(
+            &[note(0.0, 0.5, 60, Part::Other)],
+            &[],
+            120.0,
+            Layout::Other,
+        )
+        .unwrap();
         assert_eq!(&b[..4], b"MThd");
         assert_eq!(u16::from_be_bytes([b[10], b[11]]), 1);
         assert!(
@@ -303,14 +399,47 @@ mod tests {
             note(0.0, 0.5, 36, Part::Bass),
             note(0.0, 0.5, 60, Part::Other),
         ];
-        let tracks =
-            |layout| smf_bytes(&notes, 120.0, layout).map(|b| u16::from_be_bytes([b[10], b[11]]));
+        let tracks = |layout| {
+            smf_bytes(&notes, &[], 120.0, layout).map(|b| u16::from_be_bytes([b[10], b[11]]))
+        };
         assert_eq!(tracks(Layout::Vocal), Some(1));
         assert_eq!(tracks(Layout::Split), Some(3));
-        assert_eq!(smf_bytes(&notes[..1], 120.0, Layout::Bass), None);
+        assert_eq!(smf_bytes(&notes[..1], &[], 120.0, Layout::Bass), None);
         // Split puts Bass on channel 2 (note-on status 0x91).
-        let b = smf_bytes(&notes, 120.0, Layout::Split).unwrap();
+        let b = smf_bytes(&notes, &[], 120.0, Layout::Split).unwrap();
         assert!(b.windows(3).any(|w| w == [0x91, 36, 64]));
+    }
+
+    fn hit(t: f64, drum: Drum) -> SynthDrumHit {
+        SynthDrumHit {
+            t,
+            drum,
+            strength: 1.0,
+        }
+    }
+
+    #[test]
+    fn drums_go_on_channel_10_in_the_gm_map_with_the_split_layout_only() {
+        let notes = [note(0.0, 0.5, 60, Part::Other)];
+        let drums = [
+            hit(0.0, Drum::Kick),
+            hit(0.5, Drum::Snare),
+            hit(0.5, Drum::HiHat),
+            hit(1.0, Drum::Tom),
+            hit(1.0, Drum::Cymbal),
+        ];
+        let b = smf_bytes(&notes, &drums, 120.0, Layout::Split).unwrap();
+        assert_eq!(u16::from_be_bytes([b[10], b[11]]), 2, "Other + Drums");
+        for key in [36, 38, 42, 47, 49] {
+            assert!(b.windows(3).any(|w| w == [0x99, key, 127]), "key {key}");
+        }
+        // a single part's file has no drums
+        let part = smf_bytes(&notes, &drums, 120.0, Layout::Other).unwrap();
+        assert_eq!(u16::from_be_bytes([part[10], part[11]]), 1);
+        // drums alone are a file of their own
+        let only = smf_bytes(&[], &drums, 120.0, Layout::Split).unwrap();
+        assert_eq!(u16::from_be_bytes([only[10], only[11]]), 1);
+        assert_eq!(smf_bytes(&[], &drums, 120.0, Layout::Other), None);
     }
 
     #[test]
@@ -321,6 +450,7 @@ mod tests {
                 note(0.0, 1.0, 60, Part::Other),
                 note(0.5, 1.0, 60, Part::Other),
             ],
+            &[],
             120.0,
             Layout::Other,
         )
