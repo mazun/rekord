@@ -15,8 +15,8 @@
 //! live (relative to the harmonica-repro checkout, default
 //! `../../../harmonica-repro`, override with HARMONICA_REPRO_DIR):
 //!
-//! - S: `runs/okarina_deploy/small/{golden,golden_rwc001}`
-//! - M: `runs/okarina_deploy/medium/{golden,golden_rwc001}`
+//! - S: `runs/okarina_deploy_g/small/{golden,golden_rwc001}`
+//! - M: `runs/okarina_deploy_g/medium/{golden,golden_rwc001}`
 //! - L: `runs/s2g_deploy/{golden,golden_rwc001}`
 //!
 //! Tolerances are 1e-4 on CPU and 1e-3 on DirectML. Tests skip (not fail)
@@ -107,10 +107,10 @@ fn goldens() -> Vec<Golden> {
     let repro = repro_dir();
     let mut out = Vec::new();
     for (size, base, key) in [
-        (ModelSize::Small, "runs/okarina_deploy/small", "mix_small"),
+        (ModelSize::Small, "runs/okarina_deploy_g/small", "mix_small"),
         (
             ModelSize::Medium,
-            "runs/okarina_deploy/medium",
+            "runs/okarina_deploy_g/medium",
             "mix_medium",
         ),
         (ModelSize::Large, "runs/s2g_deploy", "mix_large"),
