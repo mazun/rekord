@@ -22,7 +22,7 @@ use anyhow::Result;
 
 use crate::drum_model::{DrumModel, FRAMES_PER_SECOND, HOP, N_CLASSES, SAMPLE_RATE};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Drum {
     Kick,

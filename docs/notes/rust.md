@@ -300,7 +300,11 @@ Mono 44.1 kHz in, madmom's log-filtered spectrogram inside the graph, 100 fps ×
   wave (sine/triangle/PolyBLEP square/saw) and volume under an overall notes
   volume; gains are slider values squared and ramp across a 10 ms block. The
   frontend sends all notes at Play; a muted/hidden part is gain 0; waves,
-  volumes and mutes change live (`playback_set_params`).
+  volumes and mutes change live (`playback_set_params`). Drum hits (also sent at
+  Play) come from `playback/drum_synth.rs`, pure like the note synth (the noise
+  is a hash of the absolute sample index): kick/tom a swept sine, snare sine +
+  noise, hi-hat/cymbal high-passed noise, loudness from the hit's strength; one
+  master `drums_gain`, skipped entirely while it is 0. All untuned.
 - Capture and playback exclude each other (the loopback would record the
   playback): `start_capture` stops playback, and Play is disabled while capturing.
 - Sync: the callback reports `(pos_s, at_epoch_ms)` — the recording time audible

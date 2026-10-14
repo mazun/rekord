@@ -73,7 +73,8 @@ at the keyboard's x. `PipelineEvent::DrumHits` arrives per layer (instant / sett
 confirmed, `decided_s` each); like the chord lane, a later layer replaces the earlier
 ones over the span it has decided, so `setDrumHits` destroys a lower layer's sprites
 at or before `decided_s` and the layers' own hits never need a per-frame ownership
-check. Hits are not recorded (no replay/export), only drawn and kept for `HISTORY_S`.
+check. `Recording` keeps the hits per layer with the same replacement rule (`synthDrumHits`) and
+playback sounds them (below); they are not in the debug export.
 
 The keyboard toggle (`PianorollToggle`) and the drum toggle (`DrumToggle`) are
 independent settings (`pianorollVisible`, `drumsVisible`); the window collapses only
@@ -109,7 +110,9 @@ audio plus the roll's notes synthesized; backend in rust/CLAUDE.md).
   time its beats describe). Piano keys highlight at the cursor in every non-live
   mode.
 - The mix (audio and notes volumes; per-part wave pickers, volumes and mutes for
-  the 3-part model) is a popover next to Play, not in settings, since opening
+  the 3-part model; one volume and mute for all the drums, which the backend synthesizes from
+  the transcribed hits in `playback/drum_synth.rs`: sweep sine for kick/tom, sine + noise for
+  snare, high-passed noise for hi-hat/cymbal, untuned; per-drum volumes not done) is a popover next to Play, not in settings, since opening
   settings stops playback. Waves and volumes are remembered, mutes are not.
 - **Cursor vs view** (DAW-style): `RollClock` has the *view* (`displayS`, the time
   at the keyboard edge) and the *cursor* (`cursorS`, the audio's time). On

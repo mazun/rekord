@@ -16,7 +16,7 @@ use rekord_core::pipeline::{
     KeyMode, LiveControls, NoteModelConfig, CAPTURE_HOP_S, DEFAULT_FUTURE_FRAMES,
     FUTURE_FRAME_CHOICES,
 };
-use rekord_core::playback::{self, PlaybackParams, PlaybackSession, SynthNote};
+use rekord_core::playback::{self, PlaybackParams, PlaybackSession, SynthDrumHit, SynthNote};
 use rekord_core::spelling::Accidental;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -189,13 +189,15 @@ fn stop_capture(
 // The playback commands are `async` so that opening the output device and
 // waiting for a fade don't block the main thread. `gen` is chosen by the
 // frontend and tags every position report that follows from the command (see
-// `PlaybackEvent`); `notes` are all the notes of the recording, `params`
-// says how loud things are and how each part's notes sound.
+// `PlaybackEvent`); `notes` are all the notes of the recording and `drum_hits`
+// all its drum hits, `params` says how loud things are and how each part's notes
+// sound.
 #[tauri::command]
 async fn playback_start(
     app: AppHandle,
     from_s: f64,
     notes: Vec<SynthNote>,
+    drum_hits: Vec<SynthDrumHit>,
     params: PlaybackParams,
     gen: u32,
 ) -> Result<(), String> {
@@ -210,6 +212,7 @@ async fn playback_start(
     let session = playback::start(
         Arc::clone(&ring),
         notes,
+        drum_hits,
         from_s,
         params,
         gen,

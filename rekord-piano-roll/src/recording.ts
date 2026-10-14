@@ -6,7 +6,15 @@ import {
   LAYER_ORDER,
   type LayerChord,
 } from "./chordlane";
-import type { BeatLines, ConfirmedNote, DrumHitsEvent, NotePart, StartedNote } from "./pianoroll";
+import type {
+  BeatLines,
+  ConfirmedNote,
+  DrumHit,
+  DrumHitsEvent,
+  DrumLayerId,
+  NotePart,
+  StartedNote,
+} from "./pianoroll";
 import { type ChordVocabulary, tensionsFor } from "./tensions";
 
 // How much of the past is kept (notes, chords, beat lines, and on the backend the audio itself:
@@ -65,8 +73,12 @@ export type RecordableEvent =
   | { type: "ActiveNotes"; changes: { t: number; pcs: number }[] }
   | { type: "KeyChange"; t: number; key_name: string; tonic_pc: number }
   | ({ type: "BeatLines" } & BeatLines)
-  // Drawn by the roll only (not replayed or exported).
+  // Replayed as sounds only (not exported).
   | ({ type: "DrumHits" } & DrumHitsEvent);
+
+// Later layers have decided more of the past more accurately: they replace the earlier ones' hits
+// over the span they have decided (same rule as the roll's drum lane).
+const DRUM_LAYERS: DrumLayerId[] = ["instant", "settled", "confirmed"];
 
 /** What the span of the audio recorded on the backend covers (`RecordingInfo` in audio_ring.rs). */
 export interface RecordingInfo {
@@ -143,6 +155,8 @@ export class Recording {
   private bpms = new Timeline<number | null>();
   private bpmTracker = new BpmTracker();
   private notes: RecordedNote[] = [];
+  /** The drum hits each layer reported and no later layer has replaced. */
+  private drums: Record<DrumLayerId, DrumHit[]> = { instant: [], settled: [], confirmed: [] };
   private openNotes = new Map<string, RecordedNote>();
   private newestS = 0;
   private sincePrune = 0;
@@ -180,6 +194,15 @@ export class Recording {
         this.lane.apply(event);
         this.see(event.decided_s);
         break;
+      case "DrumHits": {
+        const rank = DRUM_LAYERS.indexOf(event.layer);
+        for (const lower of DRUM_LAYERS.slice(0, rank)) {
+          this.drums[lower] = this.drums[lower].filter((h) => h.t > event.decided_s);
+        }
+        this.drums[event.layer].push(...event.hits);
+        this.see(event.decided_s);
+        break;
+      }
       case "ActiveNotes":
         for (const c of event.changes) this.actives.append(c.t, c.pcs);
         this.see(event.changes[event.changes.length - 1]?.t ?? 0);
@@ -212,6 +235,7 @@ export class Recording {
     this.bpms.clear();
     this.bpmTracker.reset();
     this.notes = [];
+    this.drums = { instant: [], settled: [], confirmed: [] };
     this.openNotes.clear();
     this.newestS = 0;
     this.sincePrune = 0;
@@ -259,6 +283,15 @@ export class Recording {
       });
     }
     return out;
+  }
+
+  /** The drum hits to sound, as the backend's synth takes them: the most settled layer's wherever
+   * it has decided, in time order. */
+  synthDrumHits(): DrumHit[] {
+    const hits = DRUM_LAYERS.flatMap((layer) => this.drums[layer]).filter(
+      (h) => h.t >= this.startS,
+    );
+    return hits.sort((a, b) => a.t - b.t);
   }
 
   /** The notes of the selected range for "copy as MIDI": clipped to it, times relative to its
@@ -311,6 +344,8 @@ export class Recording {
     this.sincePrune = 0;
     const cut = this.newestS - HISTORY_S;
     this.notes = this.notes.filter((n) => n.end_s === null || n.end_s >= cut);
+    for (const layer of DRUM_LAYERS)
+      this.drums[layer] = this.drums[layer].filter((h) => h.t >= cut);
     this.lane.pruneBefore(cut);
     this.keys.pruneBefore(cut);
     this.actives.pruneBefore(cut);

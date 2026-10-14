@@ -159,6 +159,25 @@
           </div>
         {/each}
       </div>
+
+      <div class="row drums" class:muted={settings.muteDrums}>
+        {@render muteButton(settings.muteDrums, () => {
+          settings.muteDrums = !settings.muteDrums;
+          changed();
+        })}
+        <span class="name">{t("playbackVolume.drums")}</span>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={settings.volumeDrums}
+          oninput={(e) => {
+            settings.volumeDrums = e.currentTarget.valueAsNumber;
+            changed();
+          }}
+        />
+      </div>
     </fieldset>
   {/if}
 </div>
@@ -242,6 +261,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #3a3f4d;
+  }
+
+  .drums {
     padding-top: 0.5rem;
     border-top: 1px solid #3a3f4d;
   }

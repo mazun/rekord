@@ -51,6 +51,7 @@ function params() {
   return {
     original_gain: settings.muteOriginal ? 0 : settings.volumeOriginal,
     notes_gain: settings.muteNotes ? 0 : settings.volumeNotes,
+    drums_gain: settings.muteDrums ? 0 : settings.volumeDrums,
     voices: PARTS.map((part) => {
       const voice = settings.voices[part];
       const silent = voice.muted || hiddenParts.has(part);
@@ -134,6 +135,7 @@ async function playFrom(fromS: number): Promise<void> {
     await invoke("playback_start", {
       fromS,
       notes: recording.synthNotes(),
+      drumHits: recording.synthDrumHits(),
       params: params(),
       gen: myGen,
     });

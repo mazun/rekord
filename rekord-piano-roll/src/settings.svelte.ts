@@ -42,8 +42,11 @@ function loadAccidental(): Accidental {
 const VOLUME_ORIGINAL_STORAGE_KEY = "chord.volumeOriginal";
 const VOLUME_NOTES_STORAGE_KEY = "chord.volumeSine"; // named from when the notes were always sine waves
 const VOICES_STORAGE_KEY = "chord.voices";
+// One volume for all the synthesized drums (no per-drum mix yet).
+const VOLUME_DRUMS_STORAGE_KEY = "chord.volumeDrums";
 const DEFAULT_VOLUME_ORIGINAL = 0.8;
 const DEFAULT_VOLUME_NOTES = 0.5;
+const DEFAULT_VOLUME_DRUMS = 0.5;
 
 export type Wave = "sine" | "triangle" | "square" | "saw";
 export const WAVES: readonly Wave[] = ["sine", "triangle", "square", "saw"];
@@ -120,14 +123,17 @@ export const settings = $state({
   accidental: loadAccidental(),
   volumeOriginal: loadVolume(VOLUME_ORIGINAL_STORAGE_KEY, DEFAULT_VOLUME_ORIGINAL),
   volumeNotes: loadVolume(VOLUME_NOTES_STORAGE_KEY, DEFAULT_VOLUME_NOTES),
+  volumeDrums: loadVolume(VOLUME_DRUMS_STORAGE_KEY, DEFAULT_VOLUME_DRUMS),
   muteOriginal: false,
   muteNotes: false,
+  muteDrums: false,
   voices: loadVoices(),
 });
 
 export function saveVolumes(): void {
   localStorage.setItem(VOLUME_ORIGINAL_STORAGE_KEY, String(settings.volumeOriginal));
   localStorage.setItem(VOLUME_NOTES_STORAGE_KEY, String(settings.volumeNotes));
+  localStorage.setItem(VOLUME_DRUMS_STORAGE_KEY, String(settings.volumeDrums));
   const voices = Object.fromEntries(
     Object.entries(settings.voices).map(([part, v]) => [part, { wave: v.wave, volume: v.volume }]),
   );

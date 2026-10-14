@@ -22,6 +22,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, bail, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use super::drum_synth::{render_drums, SynthDrumHit};
 use super::synth::{render_notes, SynthNote, Voices, Wave, PARTS};
 use crate::audio_ring::SharedRing;
 use crate::okarina_model::Part;
@@ -49,11 +50,13 @@ pub struct PartVoice {
 /// Volume and voice settings that can change while playing. The gains are the
 /// UI's slider values in `[0, 1]`; the engine squares them (a perceptual-ish
 /// taper). `notes_gain` is the master for all synthesized notes, on top of
-/// each part's own gain. A part missing from `voices` is silent.
+/// each part's own gain. A part missing from `voices` is silent. `drums_gain` is the
+/// master for all synthesized drum hits.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 pub struct PlaybackParams {
     pub original_gain: f32,
     pub notes_gain: f32,
+    pub drums_gain: f32,
     pub voices: Vec<PartVoice>,
 }
 
@@ -62,7 +65,15 @@ pub struct PlaybackParams {
 struct Mix {
     original: f32,
     notes: f32,
+    drums: f32,
     voices: Voices,
+}
+
+/// What is synthesized on top of the recording.
+#[derive(Clone, Debug, Default)]
+struct Score {
+    notes: Vec<SynthNote>,
+    drums: Vec<SynthDrumHit>,
 }
 
 fn taper(slider: f32) -> f32 {
@@ -111,6 +122,7 @@ struct Shared {
     /// `f32` bits of the slider values.
     original_gain: AtomicU32,
     notes_gain: AtomicU32,
+    drums_gain: AtomicU32,
     /// Per part (`Part as usize`): `Wave` as `u8`, and `f32` bits of the slider value.
     waves: [AtomicU8; PARTS],
     part_gains: [AtomicU32; PARTS],
@@ -128,6 +140,7 @@ impl Shared {
             stop: AtomicBool::new(false),
             original_gain: AtomicU32::new(0),
             notes_gain: AtomicU32::new(0),
+            drums_gain: AtomicU32::new(0),
             waves: std::array::from_fn(|_| AtomicU8::new(0)),
             part_gains: std::array::from_fn(|_| AtomicU32::new(0)),
         };
@@ -140,6 +153,8 @@ impl Shared {
             .store(p.original_gain.to_bits(), Ordering::Relaxed);
         self.notes_gain
             .store(p.notes_gain.to_bits(), Ordering::Relaxed);
+        self.drums_gain
+            .store(p.drums_gain.to_bits(), Ordering::Relaxed);
         let mut gains = [0.0f32; PARTS];
         for v in &p.voices {
             let i = v.part as usize;
@@ -159,6 +174,7 @@ impl Shared {
         Mix {
             original: gain(&self.original_gain),
             notes: gain(&self.notes_gain),
+            drums: gain(&self.drums_gain),
             voices: Voices {
                 waves: std::array::from_fn(|i| {
                     WAVES[self.waves[i].load(Ordering::Relaxed) as usize % WAVES.len()]
@@ -197,7 +213,7 @@ struct Block {
 /// copy).
 struct Renderer {
     ring: SharedRing,
-    notes: Vec<SynthNote>,
+    score: Score,
     out_rate: u32,
     out_channels: usize,
     src_rate: u32,
@@ -212,13 +228,14 @@ struct Renderer {
     prev_mix: Mix,
     src: Vec<f32>,
     mono: Vec<f32>,
+    drum_mono: Vec<f32>,
 }
 
 impl Renderer {
     /// Starts at `from_s` (clamped into the recording), as generation `gen`.
     fn new(
         ring: SharedRing,
-        notes: Vec<SynthNote>,
+        score: Score,
         out_rate: u32,
         out_channels: usize,
         mix: Mix,
@@ -231,11 +248,12 @@ impl Renderer {
             .as_ref()
             .map(|r| r.info())
             .context("no recording")?;
-        let mut notes = notes;
-        notes.sort_by(|a, b| a.start_s.total_cmp(&b.start_s));
+        let mut score = score;
+        score.notes.sort_by(|a, b| a.start_s.total_cmp(&b.start_s));
+        score.drums.sort_by(|a, b| a.t.total_cmp(&b.t));
         let mut r = Self {
             ring,
-            notes,
+            score,
             out_rate,
             out_channels,
             src_rate: info.sample_rate,
@@ -249,6 +267,7 @@ impl Renderer {
             prev_mix: mix,
             src: Vec::new(),
             mono: Vec::new(),
+            drum_mono: Vec::new(),
         };
         r.seek(from_s, gen);
         Ok(r)
@@ -283,30 +302,42 @@ impl Renderer {
         }
         self.mono.resize(n, 0.0);
         render_notes(
-            &self.notes,
+            &self.score.notes,
             pos_s,
             self.out_rate,
             &mix.voices,
             &self.prev_mix.voices.gains,
             &mut self.mono,
         );
+        self.drum_mono.resize(n, 0.0);
+        // Nothing to compute while the drums are (and were) silent.
+        if mix.drums == 0.0 && self.prev_mix.drums == 0.0 {
+            self.drum_mono.fill(0.0);
+        } else {
+            render_drums(&self.score.drums, pos_s, self.out_rate, &mut self.drum_mono);
+        }
 
         let ch = self.out_channels;
         let mut samples = vec![0.0f32; n * ch];
-        let (go0, gs0) = (self.prev_mix.original, self.prev_mix.notes);
+        let (go0, gs0, gd0) = (
+            self.prev_mix.original,
+            self.prev_mix.notes,
+            self.prev_mix.drums,
+        );
         for i in 0..n {
             // Gains ramp linearly across the block: no zipper noise on a slider drag.
             let a = (i + 1) as f32 / n as f32;
             let go = go0 + (mix.original - go0) * a;
             let gs = gs0 + (mix.notes - gs0) * a;
+            let gd = gd0 + (mix.drums - gd0) * a;
             let s = frac0 + i as f64 * ratio;
             let j = s.floor() as usize;
             let f = (s - j as f64) as f32;
             let l = self.src[2 * j] * (1.0 - f) + self.src[2 * j + 2] * f;
             let r = self.src[2 * j + 1] * (1.0 - f) + self.src[2 * j + 3] * f;
-            let notes = self.mono[i] * gs;
-            let l = (l * go + notes).clamp(-1.0, 1.0);
-            let r = (r * go + notes).clamp(-1.0, 1.0);
+            let synth = self.mono[i] * gs + self.drum_mono[i] * gd;
+            let l = (l * go + synth).clamp(-1.0, 1.0);
+            let r = (r * go + synth).clamp(-1.0, 1.0);
             let frame = &mut samples[i * ch..(i + 1) * ch];
             match ch {
                 1 => frame[0] = (l + r) * 0.5,
@@ -469,11 +500,13 @@ pub struct PlaybackSession {
 }
 
 /// Starts playing `ring` from `from_s` (clamped into the recording) with the
-/// given notes sounded as sines. Blocks until the output stream is running, or
-/// returns why it could not be opened (no device, unsupported sample format).
+/// given notes and drum hits synthesized on top. Blocks until the output stream
+/// is running, or returns why it could not be opened (no device, unsupported
+/// sample format).
 pub fn start(
     ring: SharedRing,
     notes: Vec<SynthNote>,
+    drums: Vec<SynthDrumHit>,
     from_s: f64,
     params: PlaybackParams,
     gen: u32,
@@ -497,7 +530,7 @@ pub fn start(
     let thread = std::thread::spawn(move || {
         engine_thread(
             ring,
-            notes,
+            Score { notes, drums },
             from_s,
             gen,
             thread_shared,
@@ -573,7 +606,7 @@ impl Drop for PlaybackSession {
 #[allow(clippy::too_many_arguments)]
 fn engine_thread(
     ring: SharedRing,
-    notes: Vec<SynthNote>,
+    score: Score,
     from_s: f64,
     gen: u32,
     shared: Arc<Shared>,
@@ -581,7 +614,7 @@ fn engine_thread(
     init_tx: SyncSender<Result<(), String>>,
     mut on_event: impl FnMut(PlaybackEvent),
 ) {
-    let opened = open_stream(ring, notes, from_s, gen, &shared);
+    let opened = open_stream(ring, score, from_s, gen, &shared);
     let (stream, mut renderer, block_tx, tick_rx) = match opened {
         Ok(o) => {
             let _ = init_tx.send(Ok(()));
@@ -650,7 +683,7 @@ type Opened = (cpal::Stream, Renderer, SyncSender<Block>, Receiver<Tick>);
 
 fn open_stream(
     ring: SharedRing,
-    notes: Vec<SynthNote>,
+    score: Score,
     from_s: f64,
     gen: u32,
     shared: &Arc<Shared>,
@@ -665,7 +698,7 @@ fn open_stream(
     let sample_format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
 
-    let renderer = Renderer::new(ring, notes, out_rate, channels, shared.mix(), from_s, gen)?;
+    let renderer = Renderer::new(ring, score, out_rate, channels, shared.mix(), from_s, gen)?;
 
     let (block_tx, block_rx) = sync_channel::<Block>(QUEUE_BLOCKS);
     let (tick_tx, tick_rx) = channel::<Tick>();
@@ -726,6 +759,7 @@ mod tests {
         Mix {
             original,
             notes,
+            drums: 0.0,
             voices: Voices::uniform(Wave::Sine, 1.0),
         }
     }
@@ -743,8 +777,16 @@ mod tests {
 
     #[test]
     fn same_rate_copies_the_recording_exactly() {
-        let mut r =
-            Renderer::new(ramp_ring(1000, 500), vec![], 1000, 2, mix(1.0, 0.0), 0.0, 0).unwrap();
+        let mut r = Renderer::new(
+            ramp_ring(1000, 500),
+            Score::default(),
+            1000,
+            2,
+            mix(1.0, 0.0),
+            0.0,
+            0,
+        )
+        .unwrap();
         r.seek(0.1, 7);
         let block = r.next_block(10, &mix(1.0, 0.0));
         assert_eq!(block.gen, 7);
@@ -759,8 +801,16 @@ mod tests {
 
     #[test]
     fn marks_the_last_block_and_pads_with_silence() {
-        let mut r =
-            Renderer::new(ramp_ring(1000, 25), vec![], 1000, 2, mix(1.0, 0.0), 0.0, 0).unwrap();
+        let mut r = Renderer::new(
+            ramp_ring(1000, 25),
+            Score::default(),
+            1000,
+            2,
+            mix(1.0, 0.0),
+            0.0,
+            0,
+        )
+        .unwrap();
         r.seek(0.0, 1);
         assert!(!r.next_block(10, &mix(1.0, 0.0)).last);
         assert!(!r.next_block(10, &mix(1.0, 0.0)).last);
@@ -780,7 +830,7 @@ mod tests {
         let mut ring = StereoRing::new(1000, 1000);
         ring.push_f32(&vec![0.5; 2000], 2);
         let ring: SharedRing = Arc::new(Mutex::new(Some(ring)));
-        let mut r = Renderer::new(ring, vec![], 1500, 2, mix(1.0, 0.0), 0.0, 0).unwrap();
+        let mut r = Renderer::new(ring, Score::default(), 1500, 2, mix(1.0, 0.0), 0.0, 0).unwrap();
         r.seek(0.2, 1);
         for _ in 0..3 {
             let block = r.next_block(15, &mix(1.0, 0.0));
@@ -803,7 +853,10 @@ mod tests {
         };
         let mut r = Renderer::new(
             ramp_ring(48_000, 48_000),
-            vec![note],
+            Score {
+                notes: vec![note],
+                drums: vec![],
+            },
             48_000,
             1,
             mix(0.0, 1.0),
@@ -831,10 +884,45 @@ mod tests {
     }
 
     #[test]
+    fn drums_are_mixed_in_only_at_their_own_gain() {
+        let score = Score {
+            notes: vec![],
+            drums: vec![SynthDrumHit {
+                t: 0.5,
+                drum: crate::drum_stream::Drum::Snare,
+                strength: 1.0,
+            }],
+        };
+        let mut r = Renderer::new(
+            ramp_ring(48_000, 48_000),
+            score,
+            48_000,
+            1,
+            mix(0.0, 1.0),
+            0.0,
+            0,
+        )
+        .unwrap();
+        r.seek(0.5, 1);
+        let silent = r.next_block(480, &mix(0.0, 1.0));
+        assert!(silent.samples.iter().all(|&s| s == 0.0), "drums gain 0");
+        let mut loud = mix(0.0, 1.0);
+        loud.drums = 1.0;
+        r.next_block(480, &loud); // the gain ramps up across this block
+        r.seek(0.5, 2);
+        let block = r.next_block(480, &loud);
+        assert!(
+            block.samples.iter().any(|s| s.abs() > 0.05),
+            "the hit is audible"
+        );
+    }
+
+    #[test]
     fn params_round_trip_through_the_shared_state() {
         let params = PlaybackParams {
             original_gain: 0.5,
             notes_gain: 1.0,
+            drums_gain: 0.5,
             voices: vec![
                 PartVoice {
                     part: Part::Bass,
@@ -851,6 +939,7 @@ mod tests {
         let mix = Shared::new(0, 0.0, params).mix();
         assert_eq!(mix.original, 0.25);
         assert_eq!(mix.notes, 1.0);
+        assert_eq!(mix.drums, 0.25);
         assert_eq!(mix.voices.waves[Part::Bass as usize], Wave::Saw);
         assert_eq!(mix.voices.waves[Part::Vocal as usize], Wave::Triangle);
         assert_eq!(mix.voices.gains[Part::Bass as usize], 0.25);
