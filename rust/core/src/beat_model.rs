@@ -21,7 +21,7 @@ pub struct BeatModel {
     net: Session,
 }
 
-fn session(path: &str, threads: usize) -> Result<Session> {
+pub(crate) fn session(path: &str, threads: usize) -> Result<Session> {
     Session::builder()
         .map_err(|e| anyhow!("{e}"))?
         .with_optimization_level(GraphOptimizationLevel::Level3)

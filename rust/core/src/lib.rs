@@ -4,6 +4,8 @@ pub mod beat_model;
 pub mod beat_tracker;
 pub mod chord_layers;
 pub mod chord_templates;
+pub mod drum_model;
+pub mod drum_stream;
 pub mod gpu_class;
 pub mod key_estimator;
 pub mod live_capture;

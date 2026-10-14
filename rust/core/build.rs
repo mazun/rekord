@@ -12,6 +12,12 @@
 //!   now, so a read-access token is needed (HF_TOKEN, or huggingface's own
 //!   token file). The weights are for non-commercial use only, see the
 //!   model card at https://huggingface.co/mazun/rekord.
+//! - adtof_frame_rnn.onnx: ADTOF Frame_RNN (Zehren et al., CC BY-NC-SA 4.0) for
+//!   drum transcription. The authors only publish a TensorFlow checkpoint; this
+//!   is a community conversion (thebluescreen/adtof-drums-onnx on Hugging
+//!   Face, public, with the madmom spectrogram built into the graph), fetched
+//!   from there at a pinned commit and SHA-256 (`fetch_drum_model`) rather than
+//!   re-hosted. No token is sent to that repo.
 //! - beatthis_small0.onnx + logmel.onnx: Beat This! (MIT, CPJKU) is only
 //!   published as a PyTorch checkpoint, so export_beat_models.py downloads and
 //!   converts it (and generates the log-mel frontend). This needs Python >= 3.10
@@ -53,6 +59,14 @@ const OKARINA_MODELS: [(&str, &str); 4] = [
     ),
 ];
 
+/// The community ONNX conversion of ADTOF Frame_RNN (public repo, pinned like `HF_REVISION`).
+const DRUM_REPO: &str = "thebluescreen/adtof-drums-onnx";
+const DRUM_REVISION: &str = "d0e809bb1c1b6fe8a4a00c576852117a0636ab5a";
+const DRUM_MODEL: (&str, &str) = (
+    "adtof_frame_rnn.onnx",
+    "189ca3c2bc7339a5f0fdc0bb11069d4bcc4fafabd142e945228c368c379b6227",
+);
+
 // ureq's read_to_vec() defaults to a 10MB cap; cqt156.onnx alone is ~17MB.
 const MAX_MODEL_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -74,6 +88,7 @@ fn main() {
     std::fs::create_dir_all(&models_dir).expect("creating models/ directory");
 
     fetch_okarina_models(&models_dir);
+    fetch_drum_model(&models_dir);
     export_beat_models(&manifest_dir, &models_dir);
 }
 
@@ -93,12 +108,41 @@ fn fetch_okarina_models(models_dir: &Path) {
             println!("cargo:warning={name} does not match the pinned model; re-downloading");
         }
 
-        download_model(models_dir, name, sha256, token.as_deref());
+        download_model(
+            models_dir,
+            (HF_REPO, HF_REVISION),
+            name,
+            sha256,
+            token.as_deref(),
+        );
     }
 }
 
-fn download_model(models_dir: &Path, name: &str, sha256: &str, token: Option<&str>) {
-    let url = format!("https://huggingface.co/{HF_REPO}/resolve/{HF_REVISION}/{name}");
+fn fetch_drum_model(models_dir: &Path) {
+    let (name, sha256) = DRUM_MODEL;
+    let path = models_dir.join(name);
+    println!("cargo:rerun-if-changed={}", path.display());
+
+    if let Ok(bytes) = std::fs::read(&path) {
+        if sha256_hex(&bytes) == sha256 {
+            return;
+        }
+        println!("cargo:warning={name} does not match the pinned model; re-downloading");
+    }
+
+    download_model(models_dir, (DRUM_REPO, DRUM_REVISION), name, sha256, None);
+}
+
+/// `source` is (Hugging Face repo, commit). `token` is only for the private repo.
+fn download_model(
+    models_dir: &Path,
+    source: (&str, &str),
+    name: &str,
+    sha256: &str,
+    token: Option<&str>,
+) {
+    let (repo, revision) = source;
+    let url = format!("https://huggingface.co/{repo}/resolve/{revision}/{name}");
     eprintln!("Downloading {name} from {url} ...");
 
     let mut req = ureq::get(&url);
@@ -125,10 +169,10 @@ fn download_model(models_dir: &Path, name: &str, sha256: &str, token: Option<&st
         .unwrap_or_else(|e| {
             panic!(
                 "downloading {name} from {url}: {e}\n\
-                 The repo is private for now: set HF_TOKEN to a read-access token for \
-                 {HF_REPO} (or have huggingface's token file), or copy the file from \
+                 {HF_REPO} is private for now: set HF_TOKEN to a read-access token for it \
+                 (or have huggingface's token file), or copy the file from \
                  harmonica-repro's runs/p5/onnx/ into models/ (it's then checked against \
-                 the pinned SHA-256)."
+                 the pinned SHA-256). {DRUM_REPO} is public and needs no token."
             )
         });
 

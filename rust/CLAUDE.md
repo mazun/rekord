@@ -41,6 +41,9 @@ design and measurements: [docs/chord-layers.md](../docs/chord-layers.md).
 - Key: `key_estimator.rs`. Spelling: `spelling.rs` (frontend mirrors
   `keyPairLabel` — keep in step with `key_pair_name`).
 - Beats: `beat_model.rs`, `beat_tracker.rs`, `beat_dbn/`.
+- Drums: `drum_model.rs`, `drum_stream.rs` — ADTOF Frame_RNN (CPU only), own thread
+  `run_drum_transcriber`; emits `DrumHits` in 3 layers (instant/settled/confirmed). Streaming is
+  approximate (see the notes file). Weights come from a public community repo, not `mazun/rekord`.
 - Live session: `run_live_session` in `pipeline.rs` (beat tracker on a second
   thread). Recording: `audio_ring.rs`, `live_capture.rs`, `playback/`.
 

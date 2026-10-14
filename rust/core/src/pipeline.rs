@@ -14,6 +14,8 @@ use crate::beat_model::{self, BeatModel};
 use crate::beat_tracker::{BeatGrid, BeatTracker};
 use crate::chord_layers::{ActiveChange, ChordEngine, ChordLayerId, LayerChord, LiveSettings};
 use crate::chord_templates::{self, ChordVocabulary};
+use crate::drum_model::{self, DrumModel};
+use crate::drum_stream::{DrumLayerId, DrumTranscriber, LayerHits};
 use crate::key_estimator::{KeyEstimate, KeyEstimator};
 use crate::live_capture;
 use crate::okarina_decode::ConfirmedNote;
@@ -22,6 +24,7 @@ use crate::okarina_stream::NoteTranscriber;
 use crate::spelling::{note_name, Accidental};
 
 pub use crate::chord_layers::ChordAt;
+pub use crate::drum_stream::{Drum, DrumHit};
 
 // Extra fudge for IPC/processing overhead and jitter on top of the
 // pipeline's own structural confirm delay, so the reported total_latency_s
@@ -201,6 +204,19 @@ pub enum PipelineEvent {
         provisional: Vec<BeatLine>,
         predicted: Vec<BeatLine>,
     },
+    /// What one drum layer newly decided (drums: kick, snare, tom, hi-hat, cymbal+ride): the
+    /// hits in time order, and `decided_s`, the time up to which the layer has decided
+    /// everything (all `hits` are before it, and a hit already sent never changes). The layers
+    /// decide the same audio at increasing delay -- about 0.6 s, 1.3 s and 3.3 s after the sound
+    /// -- and a later one corrects an earlier one (an early layer misses quiet hits, hi-hats
+    /// most); the frontend shows each layer's decisions for the span only it has decided, like
+    /// `ChordLayer`. The drums come from their own model on its own thread (see
+    /// `run_drum_transcriber`).
+    DrumHits {
+        layer: DrumLayerId,
+        hits: Vec<DrumHit>,
+        decided_s: f32,
+    },
 }
 
 // How far back each BeatLines snapshot reaches. Only needs to cover what's still on screen
@@ -314,6 +330,52 @@ pub fn run_beat_tracker<F: FnMut(PipelineEvent)>(
     }
 }
 
+/// The drum transcriber's side of a live session, on its own thread like the beat tracker: gets
+/// a copy of every capture chunk (mono, `drum_model::SAMPLE_RATE`) and emits `DrumHits`. A
+/// missing model only disables the drums. Public for the CLI's file mode and replay tools.
+pub fn run_drum_transcriber<F: FnMut(PipelineEvent)>(
+    rx: Receiver<Vec<f32>>,
+    stop: &AtomicBool,
+    on_event: &Mutex<F>,
+) {
+    let model = match DrumModel::load(1) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("drum transcription disabled: {e:#}");
+            return;
+        }
+    };
+    let mut transcriber = DrumTranscriber::new(model);
+    let emit = |layers: Vec<LayerHits>| {
+        for l in layers {
+            (on_event.lock().unwrap())(PipelineEvent::DrumHits {
+                layer: l.layer,
+                hits: l.hits,
+                decided_s: l.decided_s,
+            });
+        }
+    };
+    while let Ok(mut chunk) = rx.recv() {
+        // if it ever falls behind, catch up in one push rather than one model run per chunk
+        while let Ok(more) = rx.try_recv() {
+            chunk.extend(more);
+        }
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+        match transcriber.push(&chunk) {
+            Ok(hits) => emit(hits),
+            Err(e) => {
+                eprintln!("drum transcription stopped: {e:#}");
+                return;
+            }
+        }
+    }
+    if let Ok(hits) = transcriber.finish() {
+        emit(hits);
+    }
+}
+
 /// Emit one `NoteConfirmed` per finished note (whatever a `NoteTranscriber`
 /// `push`/`finish` returned -- each note comes out exactly once), feeding
 /// each through `key_estimator` first. Shared by the per-block path and the
@@ -366,11 +428,13 @@ pub fn run_live_session(
     let on_event = Mutex::new(on_event);
     let beat_grid: Mutex<Option<BeatGrid>> = Mutex::new(None);
     let (beat_tx, beat_rx) = channel::<Vec<f32>>();
+    let (drum_tx, drum_rx) = channel::<Vec<f32>>();
     std::thread::scope(|scope| {
         let beat_stop = &*controls.stop;
         let on_event_ref = &on_event;
         let beat_grid_ref = &beat_grid;
         scope.spawn(move || run_beat_tracker(beat_rx, beat_stop, on_event_ref, beat_grid_ref));
+        scope.spawn(move || run_drum_transcriber(drum_rx, beat_stop, on_event_ref));
         let mut emit = |event| (on_event.lock().unwrap())(event);
         let result = run_note_pipeline(
             config,
@@ -383,12 +447,16 @@ pub fn run_live_session(
                 beat_grid: &beat_grid,
             },
             tap,
-            |chunk| {
-                let _ = beat_tx.send(chunk.to_vec()); // Err only if beat tracking is disabled
+            |beat_chunk, drum_chunk| {
+                // Err only if that analysis is disabled
+                let _ = beat_tx.send(beat_chunk.to_vec());
+                let _ = drum_tx.send(drum_chunk.to_vec());
             },
             &mut emit,
         );
-        drop(beat_tx); // lets the beat thread flush and exit; the scope joins it
+        // lets the beat and drum threads flush and exit; the scope joins them
+        drop(beat_tx);
+        drop(drum_tx);
         result
     })
 }
@@ -408,7 +476,7 @@ fn run_note_pipeline(
     duration_s: Option<f32>,
     session: &Session<'_>,
     tap: Option<Box<dyn live_capture::CaptureTap>>,
-    mut on_chunk: impl FnMut(&[f32]),
+    mut on_chunk: impl FnMut(&[f32], &[f32]),
     mut on_event: impl FnMut(PipelineEvent),
 ) -> Result<()> {
     let Session {
@@ -432,7 +500,11 @@ fn run_note_pipeline(
 
     let (_stream, rx) = live_capture::spawn_loopback_capture(
         hop_seconds,
-        [okarina_model::SAMPLE_RATE, beat_model::SAMPLE_RATE],
+        [
+            okarina_model::SAMPLE_RATE,
+            beat_model::SAMPLE_RATE,
+            drum_model::SAMPLE_RATE,
+        ],
         tap,
     )?;
     let total_latency_s = transcriber.max_note_delay_s() + hop_seconds + LATENCY_SAFETY_MARGIN_S;
@@ -444,7 +516,7 @@ fn run_note_pipeline(
     loop {
         // Loopback delivers no packets while nothing is playing, so the stop flag is polled
         // while waiting too -- otherwise stopping in silence would hang until sound resumed.
-        let [note_chunk, beat_chunk] = match rx.recv_timeout(STOP_POLL) {
+        let [note_chunk, beat_chunk, drum_chunk] = match rx.recv_timeout(STOP_POLL) {
             Ok(chunks) => chunks,
             Err(RecvTimeoutError::Timeout) => {
                 if stop.load(Ordering::Relaxed) {
@@ -454,7 +526,7 @@ fn run_note_pipeline(
             }
             Err(RecvTimeoutError::Disconnected) => break,
         };
-        on_chunk(&beat_chunk);
+        on_chunk(&beat_chunk, &drum_chunk);
         let blocks_before = transcriber.blocks_done();
         let notes = transcriber.push(&note_chunk)?;
         elapsed += hop_seconds;

@@ -222,6 +222,41 @@ Beat This! small0 + madmom's DBN, ported from harmonica-repro
   `python -m beattrack.replay_analyze … --write-ref` (WSL venv-beatnet); render
   with the frontend's `dev/replay.html` (see its CLAUDE.md).
 
+## Drum transcription (`drum_model.rs`, `drum_stream.rs`)
+
+Not developed in harmonica-repro: ADTOF Frame_RNN (Zehren et al., CC BY-NC-SA 4.0) as a
+community ONNX conversion (HF `thebluescreen/adtof-drums-onnx`, `adtof_frame_rnn.onnx`, 2.2 MB).
+Mono 44.1 kHz in, madmom's log-filtered spectrogram inside the graph, 100 fps × 5 classes
+(kick, snare, tom, hi-hat, cymbal+ride) out. Chosen 2026-10-14 after a spike on five real songs
+(SNES OST, rock, jazz, anime, synth drums) judged by ear on whole-file clicks.
+
+- **CPU provider only.** DirectML is far slower (30 s of audio: 6 s vs 0.12 s, superlinear in
+  length) and a whole-song DirectML run overflowed the stack. CPU is RTF ~0.004.
+- **Peak picking is madmom's** (`PeakPicker`, checked against a whole-array reference in the
+  tests): activation minus a moving average, local max, per-class threshold, 0.02 s combine.
+  Thresholds are the authors' except tom (0.32 → 0.38; an anime song gave 61 toms/min, picked by
+  ear, not swept).
+- **Streaming is approximate.** The RNN is bidirectional and its activations depend on the audio
+  far on both sides (activation difference to the whole-file run at hit frames: 0.16 with 0.5 s
+  after, 0.10 with 1 s, 0.03 with 3 s; hi-hat counts of a synth-drum song grow with the context
+  before: 131 at 3 s → 246 at 20 s → 305 whole-file). The first spike's "0.2 s is enough" was
+  measured on mostly non-hit frames and was wrong. Which of whole-file and streamed is *right*
+  is unknown without labels.
+- **Three layers** (`DrumLayerId`, like the chord layers): the same frames are decided with 0.3 s,
+  1 s and 3 s of audio after them, so hits arrive ~0.8 s, ~1.5 s and ~3.5 s after the sound and a
+  later layer corrects an earlier one (`PipelineEvent::DrumHits { layer, hits, decided_s }`).
+  One model run per 0.5 s batch over the last 4 s + 3 s + batch serves all three layers
+  (~15% of a core on one thread). Agreement with the whole-file hits (±1 frame),
+  instant / settled / confirmed: rock 95 / 97 / 98%, jazz 86 / 91 / 94%, synth drums 78 / 80 /
+  85% (their hi-hats: 163 / 186 / 205 of 305).
+- Test `streaming_matches_the_whole_file` needs `DRUM_TEST_AUDIO=<WAV>` (any music with drums;
+  none is in the repo) and skips otherwise. CLI: `--drums` prints the settled layer,
+  `--drum-layer instant|settled|confirmed|all` picks (file mode streams the file in hops; live
+  mode prints the session's `DrumHits`).
+- **Weights**: `build.rs` downloads `adtof_frame_rnn.onnx` from the public community repo
+  `thebluescreen/adtof-drums-onnx` at a pinned commit + SHA-256 (no HF token sent; there is no
+  official ONNX, the authors publish a TensorFlow checkpoint). Not re-hosted in `mazun/rekord`.
+
 ## Build / platform decisions
 
 - **Exception to "everything is Rust": `build.rs` runs `core/export_beat_models.py`

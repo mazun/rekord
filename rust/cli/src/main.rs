@@ -3,6 +3,8 @@ use anyhow::{bail, Context, Result};
 use rekord_core::audio_io;
 use rekord_core::chord_layers::{ChordEngine, ChordLayerId, LiveSettings};
 use rekord_core::chord_templates::{extra_tensions, ChordMatch};
+use rekord_core::drum_model::{self, DrumModel};
+use rekord_core::drum_stream::{DrumHit, DrumLayerId, DrumTranscriber, LayerHits};
 use rekord_core::key_estimator::KeyEstimator;
 use rekord_core::okarina_model::{self, Device, ModelChoice, OkarinaModel, Part};
 use rekord_core::okarina_stream::NoteTranscriber;
@@ -43,16 +45,19 @@ fn print_model_info(note_model: NoteModelInfo) {
 struct Printer {
     accidental: Accidental,
     layers: Vec<ChordLayerId>,
+    /// The drum layers to print (none: the drums are not printed).
+    drums: Vec<DrumLayerId>,
     chord: Option<ChordMatch>,
     pcs: u16,
     tensions: Vec<&'static str>,
 }
 
 impl Printer {
-    fn new(accidental: Accidental, layers: Vec<ChordLayerId>) -> Self {
+    fn new(accidental: Accidental, layers: Vec<ChordLayerId>, drums: Vec<DrumLayerId>) -> Self {
         Self {
             accidental,
             layers,
+            drums,
             chord: None,
             pcs: 0,
             tensions: Vec::new(),
@@ -112,6 +117,9 @@ impl Printer {
                     self.update_tensions();
                 }
             }
+            PipelineEvent::DrumHits { layer, hits, .. } => {
+                print_drum_hits(layer, &hits, &self.drums);
+            }
             other => print_event(other, accidental),
         }
     }
@@ -156,9 +164,50 @@ fn print_event(event: PipelineEvent, accidental: Accidental) {
         PipelineEvent::NoteStarted { .. } => {}
         // snapshots of a moving window; run_live prints each committed line once instead
         PipelineEvent::BeatLines { .. } => {}
-        // the chord events are the Printer's
-        PipelineEvent::ChordLayer { .. } | PipelineEvent::ActiveNotes { .. } => {}
+        // the chord and drum events are the Printer's
+        PipelineEvent::ChordLayer { .. }
+        | PipelineEvent::ActiveNotes { .. }
+        | PipelineEvent::DrumHits { .. } => {}
     }
+}
+
+/// Prints a drum layer's new hits if `shown` includes that layer (tagged when several are).
+fn print_drum_hits(layer: DrumLayerId, hits: &[DrumHit], shown: &[DrumLayerId]) {
+    if !shown.contains(&layer) {
+        return;
+    }
+    let tag = if shown.len() > 1 {
+        format!("  [{layer:?}]")
+    } else {
+        String::new()
+    };
+    for h in hits {
+        println!(
+            "  t={:6.2}s  drum: {} ({:.2}){tag}",
+            h.t,
+            h.drum.label(),
+            h.strength
+        );
+    }
+}
+
+/// Streams the file through the drum transcriber in capture-sized hops and prints the hits.
+fn run_file_drums(audio_path: &str, hop_seconds: f32, shown: &[DrumLayerId]) -> Result<()> {
+    let audio = audio_io::load_audio(audio_path, drum_model::SAMPLE_RATE)?;
+    let model = DrumModel::load(1).context("loading the drum model")?;
+    let mut transcriber = DrumTranscriber::new(model);
+    let hop_samples = (hop_seconds * drum_model::SAMPLE_RATE as f32).round() as usize;
+    let print = |layers: Vec<LayerHits>| {
+        for l in layers {
+            print_drum_hits(l.layer, &l.hits, shown);
+        }
+    };
+    for chunk in audio.chunks(hop_samples) {
+        print(transcriber.push(chunk)?);
+    }
+    print(transcriber.finish()?);
+    println!();
+    Ok(())
 }
 
 fn run_file(
@@ -168,8 +217,11 @@ fn run_file(
     allow_directml: bool,
     hop_seconds: f32,
     accidental: Accidental,
-    chord_layers: Vec<ChordLayerId>,
+    mut printer: Printer,
 ) -> Result<()> {
+    if !printer.drums.is_empty() {
+        run_file_drums(audio_path, hop_seconds, &printer.drums)?;
+    }
     println!("Loading {audio_path} ...");
     let audio = audio_io::load_audio(audio_path, okarina_model::SAMPLE_RATE)?;
     let duration = audio.len() as f32 / okarina_model::SAMPLE_RATE as f32;
@@ -180,7 +232,6 @@ fn run_file(
     let mut transcriber = NoteTranscriber::new(model, future_frames);
     let mut key_estimator = KeyEstimator::new();
     let mut chords = ChordEngine::standard();
-    let mut printer = Printer::new(accidental, chord_layers);
 
     let hop_samples = (hop_seconds * okarina_model::SAMPLE_RATE as f32).round() as usize;
     let mut pos = 0usize;
@@ -236,6 +287,7 @@ fn run_live(
     duration_s: Option<f32>,
     accidental: Accidental,
     chord_layers: Vec<ChordLayerId>,
+    drums: Vec<DrumLayerId>,
 ) -> Result<()> {
     println!("Listening to default speaker output via loopback capture ...");
     match duration_s {
@@ -246,7 +298,7 @@ fn run_live(
     let key_mode = std::sync::Arc::new(std::sync::Mutex::new(pipeline::KeyMode::Auto));
     let accidental_setting = std::sync::Arc::new(std::sync::Mutex::new(accidental));
     let mut printed_until = f32::NEG_INFINITY;
-    let mut printer = Printer::new(accidental, chord_layers);
+    let mut printer = Printer::new(accidental, chord_layers, drums);
     pipeline::run_live_session(
         config,
         hop_seconds,
@@ -283,6 +335,7 @@ fn main() -> Result<()> {
     let mut allow_directml = true;
     let mut accidental = Accidental::Auto;
     let mut live = false;
+    let mut drums: Vec<DrumLayerId> = Vec::new();
     let mut duration: Option<f32> = None;
     let mut chord_layers = vec![ChordLayerId::Settled];
     let mut i = 1;
@@ -338,6 +391,26 @@ fn main() -> Result<()> {
             }
             "--cpu" => allow_directml = false,
             "--live" => live = true,
+            "--drums" => {
+                if drums.is_empty() {
+                    drums = vec![DrumLayerId::Settled];
+                }
+            }
+            "--drum-layer" => {
+                i += 1;
+                let value = args
+                    .get(i)
+                    .context("--drum-layer expects instant, settled, confirmed or all")?;
+                drums = match value.as_str() {
+                    "instant" => vec![DrumLayerId::Instant],
+                    "settled" => vec![DrumLayerId::Settled],
+                    "confirmed" => vec![DrumLayerId::Confirmed],
+                    "all" => DrumLayerId::ALL.to_vec(),
+                    other => bail!(
+                        "--drum-layer expects instant, settled, confirmed or all, got {other}"
+                    ),
+                };
+            }
             "--duration" => {
                 i += 1;
                 let value = args.get(i).context("--duration expects a number")?;
@@ -358,10 +431,10 @@ fn main() -> Result<()> {
             future_frames,
             allow_directml,
         };
-        run_live(config, hop, duration, accidental, chord_layers)
+        run_live(config, hop, duration, accidental, chord_layers, drums)
     } else {
         let audio_file = audio_file.context(
-            "usage: rekord_engine <audio_file> [--size auto|s|m|l] [--future 8|16] [--accidental auto|sharp|flat] [--chord-layer instant|settled|confirmed|all] [--cpu] [--hop 0.064]",
+            "usage: rekord_engine <audio_file> [--size auto|s|m|l] [--future 8|16] [--accidental auto|sharp|flat] [--chord-layer instant|settled|confirmed|all] [--drums] [--drum-layer instant|settled|confirmed|all] [--cpu] [--hop 0.064]",
         )?;
         run_file(
             &audio_file,
@@ -370,7 +443,7 @@ fn main() -> Result<()> {
             allow_directml,
             hop,
             accidental,
-            chord_layers,
+            Printer::new(accidental, chord_layers, drums),
         )
     }
 }
