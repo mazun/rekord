@@ -27,6 +27,8 @@ Detail and rationale per area (read only the relevant section when touching it):
 
 - Clocks: `clock.ts` (`LiveClock`, `HeldClock`, `PlaybackClock`).
 - Chord lane: `chordlane.ts`, `tensions.ts`; render check `dev/chords.html`.
+- Drum lane: `pianoroll.ts` `setDrumHits` / `layoutDrumLane`; keyboard and drum
+  toggles are independent (`PianorollToggle`, `DrumToggle`, `windowSize.ts`).
 - Beat lines: `pianoroll.ts` `setBeatLines`; offline replay via `npm run dev` →
   `http://localhost:1420/dev/replay.html?ref=ref-beats.json` (call
   `window.__settle()` before screenshots).

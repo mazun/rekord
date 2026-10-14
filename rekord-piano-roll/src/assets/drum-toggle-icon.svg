@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" aria-hidden="true">
+  <!-- Snare drum under two crossed sticks -->
+  <path d="M12 52 L12 80 Q12 90 50 90 Q88 90 88 80 L88 52 Z" fill="currentColor" />
+  <ellipse cx="50" cy="52" rx="38" ry="11" fill="currentColor" />
+  <ellipse cx="50" cy="52" rx="30" ry="6" fill="#14161c" />
+  <path d="M20 8 L62 44" stroke="currentColor" stroke-width="8" stroke-linecap="round" />
+  <path d="M80 8 L38 44" stroke="currentColor" stroke-width="8" stroke-linecap="round" />
+</svg>

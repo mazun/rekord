@@ -33,6 +33,17 @@
     setPlaybackPartVisible(part, !hiddenParts[part]);
   }
 
+  // The keyboard and the drum lane are shown independently (the window collapses with neither).
+  function applyVisibility() {
+    // Read both first: with no roll yet, `roll?.` would skip reading them and the effect would
+    // track nothing.
+    const { pianorollVisible, drumsVisible } = settings;
+    roll?.setPianoVisible(pianorollVisible);
+    roll?.setDrumsVisible(drumsVisible);
+  }
+
+  $effect(applyVisibility);
+
   const ZOOM_STEP = 0.2;
   const ZOOM_SNAP = 0.08; // the slider sticks to the centre (1x) within this distance
 
@@ -99,6 +110,7 @@
       }
       roll = created;
       applyZoom();
+      applyVisibility();
       roll.onSelectionChange = (range) => {
         menu = null;
         setExportRange(range);
@@ -119,6 +131,7 @@
         onNoteStarted: (note) => roll?.startNote(note),
         onNote: (note) => roll?.addNote(note),
         onBeatLines: (lines) => roll?.setBeatLines(lines),
+        onDrumHits: (event) => roll?.setDrumHits(event),
         onStopped: (info) => {
           roll?.stop();
           if (info) roll?.setPlayableEnd(info.end_s);
@@ -164,11 +177,11 @@
      Pixi renderer and the roll's clock/notes along with it. -->
 <div
   id="pianoroll-container"
-  class:hidden={!settings.pianorollVisible}
+  class:hidden={!settings.pianorollVisible && !settings.drumsVisible}
   bind:this={container}
 >
   <PlayButton />
-  <div class="legend">
+  <div class="legend" class:hidden={!settings.pianorollVisible}>
     <PlaybackVolume />
     <!-- The model labels every note with its part: one button per part, each showing or
          hiding that part's notes. -->
@@ -288,13 +301,17 @@
      corner, and the two overlapped there. */
   .legend {
     position: absolute;
-    bottom: calc(
-      0.6rem + 14px
-    ); /* clear of the scrollbar along the bottom edge (SCROLLBAR_HEIGHT + SCROLLBAR_BOTTOM_PADDING) */
+    /* Clear of the scrollbar along the bottom edge (SCROLLBAR_HEIGHT + SCROLLBAR_BOTTOM_PADDING),
+       or of the drum lane under the pitch rows; the roll sets the variable for the current layout. */
+    bottom: calc(0.6rem + var(--roll-bottom-reserve, 14px));
     left: 0.6rem;
     z-index: 1;
     display: flex;
     gap: 0.4rem;
+  }
+
+  .legend.hidden {
+    display: none;
   }
 
   /* The corner above the keyboard, which the chord lane leaves empty. */
@@ -306,7 +323,7 @@
     width: 34px; /* KEYBOARD_WIDTH */
     /* CHORD_LANE_HEIGHT, less half a key row: the top key is centred on the lane's lower edge, so
        the free corner ends half a row above it (rows = (height - lane) / (MAX_PITCH - MIN_PITCH)). */
-    height: calc(30px - (100% - 34px) / 174);
+    height: var(--zoom-corner-height, 30px); /* set by the roll (ZOOM_CORNER_HEIGHT in pianoroll.ts) */
   }
 
   .zoom-toggle {

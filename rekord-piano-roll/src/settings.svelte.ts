@@ -8,6 +8,7 @@
 const MODEL_SIZE_STORAGE_KEY = "chord.noteModel";
 const FUTURE_FRAMES_STORAGE_KEY = "chord.futureFrames";
 const PIANOROLL_VISIBLE_STORAGE_KEY = "chord.pianorollVisible";
+const DRUMS_VISIBLE_STORAGE_KEY = "chord.drumsVisible";
 const ACCIDENTAL_STORAGE_KEY = "chord.accidental";
 
 // The Okarina note models S/M/L ("small"/"medium"/"large"; all label vocal/bass/other), or "auto":
@@ -112,7 +113,10 @@ export const settings = $state({
   rollZoom: loadRollZoom(),
   modelSize: loadModelSize(),
   futureFrames: loadFutureFrames(),
+  // The keyboard (pitch rows, keys and notes) and the drum lane are shown independently; with both
+  // hidden the window collapses to the readouts above.
   pianorollVisible: localStorage.getItem(PIANOROLL_VISIBLE_STORAGE_KEY) !== "false",
+  drumsVisible: localStorage.getItem(DRUMS_VISIBLE_STORAGE_KEY) !== "false",
   accidental: loadAccidental(),
   volumeOriginal: loadVolume(VOLUME_ORIGINAL_STORAGE_KEY, DEFAULT_VOLUME_ORIGINAL),
   volumeNotes: loadVolume(VOLUME_NOTES_STORAGE_KEY, DEFAULT_VOLUME_NOTES),
@@ -144,4 +148,8 @@ export function saveAccidental(): void {
 
 export function savePianorollVisible(): void {
   localStorage.setItem(PIANOROLL_VISIBLE_STORAGE_KEY, String(settings.pianorollVisible));
+}
+
+export function saveDrumsVisible(): void {
+  localStorage.setItem(DRUMS_VISIBLE_STORAGE_KEY, String(settings.drumsVisible));
 }

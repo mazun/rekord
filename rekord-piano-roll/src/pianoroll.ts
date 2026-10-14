@@ -99,6 +99,55 @@ const OCTAVE_LABEL_BOTTOM_PADDING = 1;
 const OCTAVE_LABEL_MAX_FONT_SIZE = 9; // "C4" must fit the 13.6px gap right of the black keys
 const OCTAVE_LABEL_MIN_FONT_SIZE = 7;
 
+// Drum lane (rekord_core::drum_stream, via PipelineEvent::DrumHits) under the pitch rows, on the
+// same time axis: one row per drum, each hit a short tick at its time. Like the chord lane, it is
+// fed by three layers that decide at different delays; the hits shown for a stretch of time are
+// those of the most settled layer that has decided it (see setDrumHits). The strip at the
+// keyboard's x carries the row labels.
+export type DrumKind = "kick" | "snare" | "tom" | "hi_hat" | "cymbal";
+export type DrumLayerId = "instant" | "settled" | "confirmed";
+
+export interface DrumHit {
+  t: number;
+  drum: DrumKind;
+  /** The model's activation at the hit (0..1). */
+  strength: number;
+}
+
+/** What one drum layer newly decided: its hits, and the time up to which it has decided. */
+export interface DrumHitsEvent {
+  layer: DrumLayerId;
+  hits: DrumHit[];
+  decided_s: number;
+}
+
+// Top to bottom, like pitch: the high parts above the kick.
+const DRUM_ROWS: { drum: DrumKind; label: string; color: number }[] = [
+  { drum: "cymbal", label: "CY", color: 0xc9a7ff },
+  { drum: "hi_hat", label: "HH", color: 0x7fe0e8 },
+  { drum: "tom", label: "TM", color: 0x8be08b },
+  { drum: "snare", label: "SD", color: 0xffe27a },
+  { drum: "kick", label: "BD", color: 0xff7d6e },
+];
+const DRUM_ROW_HEIGHT = 12;
+// Room under the rows for the scrollbar (which is drawn along the canvas bottom).
+const DRUM_BOTTOM_GUTTER = 14; // SCROLLBAR_HEIGHT + SCROLLBAR_BOTTOM_PADDING
+// The lane's height; rows keep it with or without the pitch rows above.
+const DRUM_LANE_HEIGHT = DRUM_ROWS.length * DRUM_ROW_HEIGHT + DRUM_BOTTOM_GUTTER;
+/** The roll area's height when only the drums are shown (the window is sized to it). */
+export const DRUMS_ONLY_ROLL_HEIGHT = 34 + DRUM_LANE_HEIGHT; // CHORD_LANE_HEIGHT + lane
+const DRUM_HIT_WIDTH = 4;
+const DRUM_HIT_MIN_ALPHA = 0.35;
+const DRUM_ROW_LINE_COLOR = 0x262b36;
+const DRUM_LANE_COLOR = 0x10121a;
+const DRUM_LABEL_COLOR = 0x8b93a7; // matches --text-dim
+const DRUM_LABEL_FONT_SIZE = 9;
+// Layers in the order they decide a stretch of time: a later one corrects the earlier ones.
+const DRUM_LAYER_ORDER: DrumLayerId[] = ["instant", "settled", "confirmed"];
+// The zoom control's corner above the keyboard (PianoRollView.svelte): the chord lane's height,
+// less a margin; with pitch rows it also ends half a row above the top key.
+const ZOOM_CORNER_HEIGHT = 30;
+
 // While stopped, the wheel/trackpad scrolls this many times faster than the content moves under
 // the pointer when dragging, since a wheel notch is only ~100 px and the history is minutes long.
 const WHEEL_SCROLL_SPEED = 4;
@@ -255,6 +304,13 @@ interface KeySprite {
   active: boolean;
 }
 
+// A 1x1 white rect scaled and tinted, like BeatSprite.
+interface DrumSprite {
+  t: number;
+  row: number;
+  graphic: Graphics;
+}
+
 /** Scrolling piano roll driven by note events. A note is first reported
  * when its onset is decided (`NoteStarted`, drawn growing with the clock) and
  * again with its end known (`NoteConfirmed`, which fixes its length); the
@@ -283,6 +339,24 @@ export class PianoRoll {
   // progression moving on, see planChordUpdate).
   private chordPrevHeadS = -Infinity;
   private guides = new Graphics();
+  private noteLayer: Container;
+  private keyboardLayer = new Container();
+  // What is shown of the roll: the pitch rows with the keyboard and notes, and the drum lane under
+  // them. The chord lane stays either way.
+  private pianoVisible = true;
+  private drumsVisible = true;
+  private drumBackdrop = new Graphics();
+  private drumHitLayer = new Container();
+  private drumStrip = new Container();
+  private drumStripBacking = new Graphics();
+  private drumLabels: Text[] = [];
+  // Per layer, the hits it decided that no later layer has taken over (in time order), and how
+  // far it has decided.
+  private drumSprites: Record<DrumLayerId, DrumSprite[]> = {
+    instant: [],
+    settled: [],
+    confirmed: [],
+  };
   private keyboardBacking = new Graphics();
   private octaveLabels = new Map<number, Text>();
   private keys = new Map<number, KeySprite>();
@@ -363,6 +437,7 @@ export class PianoRoll {
 
   private constructor(app: Application, noteLayer: Container) {
     this.app = app;
+    this.noteLayer = noteLayer;
     for (const part of PART_DRAW_ORDER) {
       this.partLayers[part] = new Container();
       noteLayer.addChild(this.partLayers[part]);
@@ -380,9 +455,11 @@ export class PianoRoll {
 
     const noteLayer = new Container();
     const roll = new PianoRoll(app, noteLayer);
-    const keyboardLayer = new Container();
+    const keyboardLayer = roll.keyboardLayer;
     app.stage.addChild(roll.guides);
+    app.stage.addChild(roll.drumBackdrop);
     app.stage.addChild(roll.beatLayer);
+    app.stage.addChild(roll.drumHitLayer);
     app.stage.addChild(noteLayer);
     app.stage.addChild(roll.chordGhostLayer);
     app.stage.addChild(roll.chordLayer);
@@ -408,6 +485,9 @@ export class PianoRoll {
     app.stage.addChild(keyboardLayer);
     keyboardLayer.addChild(roll.keyboardBacking);
     roll.createKeyboard(keyboardLayer);
+    app.stage.addChild(roll.drumStrip);
+    roll.drumStrip.addChild(roll.drumStripBacking);
+    roll.createDrumLabels();
 
     // `resizeTo` (above) reads container.clientWidth/Height synchronously
     // during app.init(), but this runs inside the DOMContentLoaded handler
@@ -652,7 +732,8 @@ export class PianoRoll {
 
   /** The visible note drawn at canvas position (x, y), the newest one when several overlap. */
   private noteAt(x: number, y: number): NoteSprite | null {
-    const noteHeightPx = this.noteHeightPx(this.app.screen.height);
+    if (!this.pianoVisible) return null;
+    const noteHeightPx = this.noteHeightPx();
     const pad = 2; // thin notes are hard to hit exactly
     for (let i = this.notes.length - 1; i >= 0; i--) {
       const n = this.notes[i];
@@ -753,19 +834,23 @@ export class PianoRoll {
 
     this.guides.clear();
     // White-key rows are tinted lighter than black-key rows so pitches are easy to read.
-    const guideRowHeight = (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
+    const guideRowHeight = this.rowHeight();
     for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch += 1) {
       if (isBlackKey(pitch)) continue;
-      const y = this.pitchToY(pitch, height) - guideRowHeight / 2;
+      const y = this.pitchToY(pitch) - guideRowHeight / 2;
       this.guides.rect(0, y, noteAreaWidth, guideRowHeight);
     }
     this.guides.fill({ color: WHITE_ROW_COLOR, alpha: WHITE_ROW_ALPHA });
     for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch += 1) {
       if (pitch % 12 !== 0) continue; // one guide line per C
-      const y = this.pitchToY(pitch, height);
+      const y = this.pitchToY(pitch);
       this.guides.moveTo(0, y).lineTo(noteAreaWidth, y);
     }
     this.guides.stroke({ width: 1, color: GUIDE_COLOR });
+    this.guides.visible = this.pianoVisible;
+    this.noteLayer.visible = this.pianoVisible;
+    this.keyboardLayer.visible = this.pianoVisible;
+    this.layoutDrumLane(noteAreaWidth);
 
     this.scrollbarTrack
       .clear()
@@ -776,7 +861,7 @@ export class PianoRoll {
 
     this.keyboardBacking
       .clear()
-      .rect(0, 0, KEYBOARD_WIDTH, height)
+      .rect(0, 0, KEYBOARD_WIDTH, this.pianoBottom())
       .fill({ color: KEYBOARD_BACKING_COLOR });
     this.keyboardBacking.x = noteAreaWidth;
     this.keyboardBacking.y = 0;
@@ -786,7 +871,7 @@ export class PianoRoll {
       this.redrawKey(pitch);
     }
     // Octave labels sit on each C key, only when they fit inside the key's row at a readable size.
-    const rowHeight = (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
+    const rowHeight = this.rowHeight();
     // Right of the black key the C key is 1.5 rows tall (its own row plus the lower half of the C#
     // row), and the label goes there for the extra height.
     const fontSize = Math.min(OCTAVE_LABEL_MAX_FONT_SIZE, rowHeight * 1.5 * 0.8);
@@ -796,9 +881,160 @@ export class PianoRoll {
       if (!showOctaves) continue;
       text.style.fontSize = fontSize;
       text.x = noteAreaWidth + KEYBOARD_WIDTH - 1;
-      text.y = this.pitchToY(pitch, height) + rowHeight / 2 - OCTAVE_LABEL_BOTTOM_PADDING; // bottom of the key
+      text.y = this.pitchToY(pitch) + rowHeight / 2 - OCTAVE_LABEL_BOTTOM_PADDING; // bottom of the key
     }
     this.relayoutNotes();
+  }
+
+  /** Where the pitch rows end: above the drum lane when both are shown, else at the canvas bottom
+   * (when only the drums are shown the rows aren't drawn at all). */
+  private pianoBottom(): number {
+    const { height } = this.app.screen;
+    return this.pianoVisible && this.drumsVisible ? height - DRUM_LANE_HEIGHT : height;
+  }
+
+  private rowHeight(): number {
+    return Math.max(0, (this.pianoBottom() - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH));
+  }
+
+  /** The top of the drum lane: under the pitch rows, or under the chord lane without them. */
+  private drumLaneTop(): number {
+    return this.pianoVisible ? this.pianoBottom() : CHORD_LANE_HEIGHT;
+  }
+
+  private drumRowHeight(): number {
+    const room = this.app.screen.height - DRUM_BOTTOM_GUTTER - this.drumLaneTop();
+    return Math.max(0, Math.min(DRUM_ROW_HEIGHT, room / DRUM_ROWS.length));
+  }
+
+  private createDrumLabels(): void {
+    for (const row of DRUM_ROWS) {
+      const text = new Text({
+        text: row.label,
+        style: {
+          fontFamily: CHORD_FONT_FAMILY,
+          fontWeight: "600",
+          fontSize: DRUM_LABEL_FONT_SIZE,
+          fill: DRUM_LABEL_COLOR,
+        },
+      });
+      text.anchor.set(0.5, 0.5);
+      this.drumStrip.addChild(text);
+      this.drumLabels.push(text);
+    }
+  }
+
+  /** The drum lane's backdrop, row lines and labels for the current size (the hits are
+   * positioned every tick). Also tells the page how much room the overlays have to leave. */
+  private layoutDrumLane(noteAreaWidth: number): void {
+    const { height } = this.app.screen;
+    this.drumBackdrop.visible = this.drumsVisible;
+    this.drumHitLayer.visible = this.drumsVisible;
+    this.drumStrip.visible = this.drumsVisible;
+    const top = this.drumLaneTop();
+    const rowH = this.drumRowHeight();
+    this.drumBackdrop
+      .clear()
+      .rect(0, top, noteAreaWidth, height - top)
+      .fill({ color: DRUM_LANE_COLOR });
+    for (let i = 0; i <= DRUM_ROWS.length; i++) {
+      this.drumBackdrop.moveTo(0, top + i * rowH).lineTo(noteAreaWidth, top + i * rowH);
+    }
+    this.drumBackdrop.stroke({ width: 1, color: DRUM_ROW_LINE_COLOR });
+    this.drumStripBacking
+      .clear()
+      .rect(noteAreaWidth, top, KEYBOARD_WIDTH, height - top)
+      .fill({ color: KEYBOARD_BACKING_COLOR });
+    this.drumLabels.forEach((text, i) => {
+      text.x = noteAreaWidth + KEYBOARD_WIDTH / 2;
+      text.y = top + (i + 0.5) * rowH;
+      text.visible = rowH >= DRUM_LABEL_FONT_SIZE;
+    });
+    // Page overlays (PianoRollView.svelte): the corner above the keyboard ends half a pitch row
+    // above the top key, and the part legend sits above whatever is under the pitch rows.
+    const style = this.app.canvas.parentElement?.style;
+    style?.setProperty(
+      "--zoom-corner-height",
+      `${this.pianoVisible ? ZOOM_CORNER_HEIGHT - this.rowHeight() / 2 : ZOOM_CORNER_HEIGHT}px`,
+    );
+    style?.setProperty(
+      "--roll-bottom-reserve",
+      `${this.drumsVisible && this.pianoVisible ? DRUM_LANE_HEIGHT : DRUM_BOTTOM_GUTTER}px`,
+    );
+  }
+
+  /** Shows or hides the pitch rows with the keyboard and notes. The chord lane stays. */
+  setPianoVisible(visible: boolean): void {
+    if (this.pianoVisible === visible) return;
+    this.pianoVisible = visible;
+    this.layout();
+  }
+
+  /** Shows or hides the drum lane. */
+  setDrumsVisible(visible: boolean): void {
+    if (this.drumsVisible === visible) return;
+    this.drumsVisible = visible;
+    this.layout();
+  }
+
+  /** Applies what a drum layer newly decided. A later layer's decision replaces the earlier
+   * layers' hits over the span it has decided; where it hasn't yet, the earlier layers' hits stay. */
+  setDrumHits(event: DrumHitsEvent): void {
+    const rank = DRUM_LAYER_ORDER.indexOf(event.layer);
+    for (const lower of DRUM_LAYER_ORDER.slice(0, rank)) {
+      const kept: DrumSprite[] = [];
+      for (const s of this.drumSprites[lower]) {
+        if (s.t <= event.decided_s) s.graphic.destroy();
+        else kept.push(s);
+      }
+      this.drumSprites[lower] = kept;
+    }
+    for (const hit of event.hits) {
+      const row = DRUM_ROWS.findIndex((r) => r.drum === hit.drum);
+      if (row < 0) continue;
+      const graphic = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
+      graphic.tint = DRUM_ROWS[row].color;
+      graphic.alpha = DRUM_HIT_MIN_ALPHA + (1 - DRUM_HIT_MIN_ALPHA) * Math.min(1, hit.strength);
+      graphic.visible = false; // positioned by the next tick
+      this.drumHitLayer.addChild(graphic);
+      this.drumSprites[event.layer].push({ t: hit.t, row, graphic });
+    }
+  }
+
+  private clearDrumHits(): void {
+    for (const layer of DRUM_LAYER_ORDER) {
+      for (const s of this.drumSprites[layer]) s.graphic.destroy();
+      this.drumSprites[layer] = [];
+    }
+  }
+
+  private tickDrumHits(): void {
+    const headS = this.clock.headS();
+    const top = this.drumLaneTop();
+    const rowH = this.drumRowHeight();
+    const hitH = Math.max(1, rowH - 4);
+    const screenWidth = this.app.screen.width;
+    const right = this.playheadX();
+    for (const layer of DRUM_LAYER_ORDER) {
+      let drop = 0;
+      const sprites = this.drumSprites[layer];
+      while (drop < sprites.length && sprites[drop].t < headS - HISTORY_S) {
+        sprites[drop].graphic.destroy();
+        drop++;
+      }
+      if (drop > 0) sprites.splice(0, drop);
+      if (sprites.length > 0) this.oldestS = Math.min(this.oldestS, sprites[0].t);
+      for (const s of sprites) {
+        const x = this.xForTime(s.t) - DRUM_HIT_WIDTH / 2;
+        const show =
+          this.drumsVisible && x + DRUM_HIT_WIDTH >= 0 && x <= Math.min(right, screenWidth);
+        s.graphic.visible = show;
+        if (!show) continue;
+        s.graphic.x = x;
+        s.graphic.y = top + s.row * rowH + (rowH - hitH) / 2;
+        s.graphic.scale.set(DRUM_HIT_WIDTH, hitH);
+      }
+    }
   }
 
   /** Creates the vertical white/black-key strip's Graphics, one per MIDI
@@ -832,13 +1068,12 @@ export class PianoRoll {
   private redrawKey(pitch: number): void {
     const key = this.keys.get(pitch);
     if (!key) return;
-    const { height } = this.app.screen;
     const res = this.app.renderer.resolution;
     const snap = (v: number) => Math.round(v * res) / res;
     const line = 1;
-    const rowHeight = (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH);
-    const top = snap(this.pitchToY(pitch, height) - rowHeight / 2);
-    const bottom = snap(this.pitchToY(pitch, height) + rowHeight / 2);
+    const rowHeight = this.rowHeight();
+    const top = snap(this.pitchToY(pitch) - rowHeight / 2);
+    const bottom = snap(this.pitchToY(pitch) + rowHeight / 2);
     key.graphic.y = top;
     const h = bottom - top;
     const g = key.graphic.clear();
@@ -881,11 +1116,13 @@ export class PianoRoll {
     }
   }
 
-  // Rows fill [CHORD_LANE_HEIGHT, height], not [0, height] -- the chord lane at the top is
-  // reserved space, like KEYBOARD_WIDTH is on the right, not an overlay on top of note rows.
-  private pitchToY(pitch: number, height: number): number {
+  // Rows fill [CHORD_LANE_HEIGHT, pianoBottom()], not [0, height] -- the chord lane at the top and
+  // the drum lane at the bottom are reserved space, like KEYBOARD_WIDTH is on the right, not an
+  // overlay on top of note rows.
+  private pitchToY(pitch: number): number {
+    const bottom = this.pianoBottom();
     const t = (pitch - MIN_PITCH) / (MAX_PITCH - MIN_PITCH);
-    return height - t * (height - CHORD_LANE_HEIGHT);
+    return bottom - t * (bottom - CHORD_LANE_HEIGHT);
   }
 
   /** Clears the view and starts the scroll clock. Call when a session
@@ -906,6 +1143,7 @@ export class PianoRoll {
     this.cursorLayer.visible = false;
     for (const n of this.notes) n.graphic.destroy();
     this.notes = [];
+    this.clearDrumHits();
     for (const b of this.beatLines) b.graphic.destroy();
     this.beatLines = [];
     this.snapBeats = null;
@@ -1009,23 +1247,22 @@ export class PianoRoll {
     this.partLayers[part].visible = visible;
   }
 
-  private noteHeightPx(height: number): number {
-    return Math.max(3, (height - CHORD_LANE_HEIGHT) / (MAX_PITCH - MIN_PITCH) - 1);
+  private noteHeightPx(): number {
+    return Math.max(3, this.rowHeight() - 1);
   }
 
   /** Notes bake their height and y when drawn, so a window height change has to redo them
    * (the per-tick pass only moves x). */
   private relayoutNotes(): void {
-    const height = this.app.screen.height;
-    const noteHeightPx = this.noteHeightPx(height);
+    const noteHeightPx = this.noteHeightPx();
     for (const n of this.notes) {
       this.drawNote(n.graphic, n);
-      n.graphic.y = this.pitchToY(n.pitch_midi, height) - noteHeightPx / 2;
+      n.graphic.y = this.pitchToY(n.pitch_midi) - noteHeightPx / 2;
     }
   }
 
   private drawNote(graphic: Graphics, note: ConfirmedNote): void {
-    const noteHeightPx = this.noteHeightPx(this.app.screen.height);
+    const noteHeightPx = this.noteHeightPx();
     const widthPx = Math.max(2, (note.end_s - note.start_s) * this.pixelsPerSecond);
     const [colorMin, colorMax] = noteColors(note);
     const color = lerpColor(colorMin, colorMax, note.velocity);
@@ -1056,8 +1293,7 @@ export class PianoRoll {
   }
 
   private addSprite(note: ConfirmedNote, open: boolean): void {
-    const height = this.app.screen.height;
-    const noteHeightPx = this.noteHeightPx(height);
+    const noteHeightPx = this.noteHeightPx();
     const graphic = new Graphics();
     this.drawNote(graphic, note);
     // Position it correctly right away -- left at the Graphics default
@@ -1066,7 +1302,7 @@ export class PianoRoll {
     // a frame, reading as "a new note suddenly appearing where one
     // already is."
     graphic.x = this.xForTime(note.start_s);
-    graphic.y = this.pitchToY(note.pitch_midi, height) - noteHeightPx / 2;
+    graphic.y = this.pitchToY(note.pitch_midi) - noteHeightPx / 2;
     this.partLayers[note.part].addChild(graphic);
     this.notes.push({ ...note, graphic, open });
   }
@@ -1331,6 +1567,7 @@ export class PianoRoll {
   private tickFrame(): void {
     this.tickBeatLines(this.app.ticker.deltaMS / 1000);
     this.tickChordSegments(this.app.ticker.deltaMS / 1000);
+    this.tickDrumHits();
     const cursorS = this.clock.cursorS();
     const headS = this.clock.headS();
     const live = this.clock.kind === "live";

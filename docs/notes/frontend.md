@@ -64,6 +64,28 @@ browser pane is usually hidden, which throttles requestAnimationFrame — call
 `window.__settle()` right before each screenshot (it returns the on-screen
 lines); read state via `window.__roll`. Region zoom isn't supported there.
 
+## Drum lane (`pianoroll.ts` `setDrumHits`)
+
+A lane under the pitch rows in the same Pixi canvas (so it shares the clock, zoom,
+beat lines, selection and scroll): one row per drum (CY/HH/TM/SD/BD from the top),
+each hit a short tick tinted by drum, alpha by strength; the labels sit in the strip
+at the keyboard's x. `PipelineEvent::DrumHits` arrives per layer (instant / settled /
+confirmed, `decided_s` each); like the chord lane, a later layer replaces the earlier
+ones over the span it has decided, so `setDrumHits` destroys a lower layer's sprites
+at or before `decided_s` and the layers' own hits never need a per-frame ownership
+check. Hits are not recorded (no replay/export), only drawn and kept for `HISTORY_S`.
+
+The keyboard toggle (`PianorollToggle`) and the drum toggle (`DrumToggle`) are
+independent settings (`pianorollVisible`, `drumsVisible`); the window collapses only
+when both are off (`windowSize.ts` `isRollShown`). The chord lane stays whenever
+either is shown. Layout: `pianoBottom()` ends the pitch rows above the drum lane;
+without pitch rows the lane starts under the chord lane with the same row height.
+The roll writes `--zoom-corner-height` / `--roll-bottom-reserve` on its container for
+the zoom control and the part legend. Drums only (keyboard off): `windowSize.ts`
+`fitDrumsOnly` shrinks the window so the roll area is just chord lane + drum lane
+(`DRUMS_ONLY_ROLL_HEIGHT`, minimum height lifted, size not saved) and `restoreFullHeight`
+brings back the previous height when the keyboard returns.
+
 ## Note parts
 
 The roll colors by part (vocal = green, bass = orange, other = blue); the

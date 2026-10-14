@@ -3,16 +3,20 @@
   import pianorollToggleIconSvg from "../assets/pianoroll-toggle-icon.svg?raw";
   import { t } from "../i18n.svelte";
   import { settings } from "../settings.svelte";
-  import { initWindowSize, setPianorollVisible } from "../windowSize";
+  import { applyStoredRollState, initWindowSize, setRollPartVisible } from "../windowSize";
 
   let button: HTMLButtonElement;
 
   // The collapsed-size measurement runs over the whole app shell, not just
   // this button -- found from here rather than threaded down as a prop,
   // since there's only ever the one.
-  function toggle(visible: boolean, rememberSize = true) {
-    const appShell = button.closest<HTMLElement>(".app");
-    if (appShell) setPianorollVisible(visible, appShell, rememberSize);
+  function appShell(): HTMLElement | null {
+    return button.closest<HTMLElement>(".app");
+  }
+
+  function toggle(visible: boolean) {
+    const shell = appShell();
+    if (shell) setRollPartVisible("piano", visible, shell);
   }
 
   onMount(() => {
@@ -22,8 +26,10 @@
     // current size as what "show" restores to (see windowSize.ts) -- after
     // a webview reload the window is already collapsed. The saved expanded
     // size is applied first so a visible roll reopens at its last size.
+    // (The drum toggle beside this one shares the window; this one does the replay for both.)
     initWindowSize().then(() => {
-      if (!settings.pianorollVisible) toggle(false, false);
+      const shell = appShell();
+      if (shell) applyStoredRollState(shell);
     });
   });
 </script>
@@ -63,12 +69,9 @@
        sits between this box and the svg inside it, so the
        visible icon needs that padding subtracted back out to land flush
        with the grid rather than the icon's own border box. */
-    right: 0;
+    /* One icon-width left of the drum toggle, which takes the right edge. */
+    right: 40px;
     bottom: 0.7rem;
-    /* Narrower than .icon-btn's own 0.55rem right padding -- centers the
-       icon on the piano roll's keyboard strip below (KEYBOARD_WIDTH, 34px,
-       in pianoroll.ts) rather than on this button's own box, which sits
-       further left than the keyboard's true center. */
     padding-right: 4px;
     border: none;
     background: none;

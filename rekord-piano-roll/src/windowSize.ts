@@ -1,6 +1,18 @@
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { tick } from "svelte";
-import { savePianorollVisible, settings } from "./settings.svelte";
+import { DRUMS_ONLY_ROLL_HEIGHT } from "./pianoroll";
+import { saveDrumsVisible, savePianorollVisible, settings } from "./settings.svelte";
+
+/** Whether the drum lane is shown without the keyboard: the window is then sized to the lane. */
+export function isDrumsOnly(): boolean {
+  return settings.drumsVisible && !settings.pianorollVisible;
+}
+
+/** Whether the roll area (the keyboard, the drum lane, or both) is shown at all; with neither the
+ * window collapses to the readouts. */
+export function isRollShown(): boolean {
+  return settings.pianorollVisible || settings.drumsVisible;
+}
 
 // The piano roll is the only reason this window needs to be wide or
 // tall -- the toolbar/key/chord rows above it are happy at their
@@ -20,7 +32,7 @@ let heightBeforeCollapse: number | null = null;
 let widthBeforeSettings: number | null = null;
 let heightBeforeSettings: number | null = null;
 
-// Shared by setPianorollVisible and the settings enter/leave pair below --
+// Shared by setRollPartVisible and the settings enter/leave pair below --
 // both need the window's current size in logical (not physical) pixels to
 // remember/compare against, and both go through the same
 // scaleFactor()+innerSize() dance to get it.
@@ -30,6 +42,11 @@ async function currentLogicalWindowSize(
   const scaleFactor = await win.scaleFactor();
   const size = await win.innerSize();
   return { width: size.width / scaleFactor, height: size.height / scaleFactor };
+}
+
+// A maximized window is left alone whatever is shown: setting a size on it would un-maximize it.
+async function isMaximized(win: ReturnType<typeof getCurrentWindow>): Promise<boolean> {
+  return win.isMaximized();
 }
 
 // Only the expanded main view (piano roll shown) is resizable, with the
@@ -43,7 +60,10 @@ async function setResizableMode(
 ): Promise<void> {
   if (resizable) {
     await win.setResizable(true);
-    await win.setMinSize(new LogicalSize(DEFAULT_EXPANDED_WIDTH, DEFAULT_EXPANDED_HEIGHT));
+    // Drums only needs far less height than the default minimum.
+    await win.setMinSize(
+      new LogicalSize(DEFAULT_EXPANDED_WIDTH, isDrumsOnly() ? 1 : DEFAULT_EXPANDED_HEIGHT),
+    );
   } else {
     await win.setMinSize(null);
     await win.setResizable(false);
@@ -78,7 +98,7 @@ export async function initWindowSize(): Promise<void> {
   if (saved) {
     widthBeforeCollapse = saved.width;
     heightBeforeCollapse = saved.height;
-    if (settings.pianorollVisible) {
+    if (isRollShown()) {
       try {
         await getCurrentWindow().setSize(new LogicalSize(saved.width, saved.height));
       } catch (err) {
@@ -92,7 +112,7 @@ export async function initWindowSize(): Promise<void> {
     clearTimeout(timer);
     timer = window.setTimeout(() => {
       // Collapsed and settings sizes are not the user's expanded size.
-      if (!settings.pianorollVisible || widthBeforeSettings !== null) return;
+      if (!isRollShown() || isDrumsOnly() || widthBeforeSettings !== null) return;
       if (
         window.innerWidth < DEFAULT_EXPANDED_WIDTH ||
         window.innerHeight < DEFAULT_EXPANDED_HEIGHT
@@ -126,18 +146,94 @@ function measureCollapsedSize(appShell: HTMLElement): { width: number; height: n
 // window at whatever size it had -- already collapsed, if the roll was
 // hidden -- and remembering that as the "expanded" size left "show"
 // restoring the window to a collapsed-height sliver.
-export async function setPianorollVisible(
+export async function setRollPartVisible(
+  part: "piano" | "drums",
   visible: boolean,
   appShell: HTMLElement,
   rememberSize = true,
 ): Promise<void> {
-  settings.pianorollVisible = visible;
-  savePianorollVisible();
+  const wasShown = isRollShown();
+  const wasDrumsOnly = isDrumsOnly();
+  if (part === "piano") {
+    settings.pianorollVisible = visible;
+    savePianorollVisible();
+  } else {
+    settings.drumsVisible = visible;
+    saveDrumsVisible();
+  }
+  // The drums-only height is not the size to come back to.
+  await resizeForRoll(wasShown, appShell, rememberSize && !wasDrumsOnly);
+  if (isDrumsOnly()) {
+    await fitDrumsOnly(!wasShown, rememberSize && wasShown);
+  } else if (wasDrumsOnly && isRollShown()) {
+    await restoreFullHeight();
+  }
+}
+
+/** Reproduces the saved state at startup (the window starts expanded): collapses it if nothing is
+ * shown, or fits it to the lane if only the drums are. */
+export async function applyStoredRollState(appShell: HTMLElement): Promise<void> {
+  if (!isRollShown()) await resizeForRoll(true, appShell, false);
+  else if (isDrumsOnly()) await fitDrumsOnly(false, false);
+}
+
+// Sizes the window so the roll area is just the chord lane plus the drum lane. `restored` is true
+// when the window was just brought back from the collapsed size, whose layout may not have caught
+// up yet.
+async function fitDrumsOnly(restored: boolean, rememberFullSize: boolean): Promise<void> {
+  await tick();
+  const container = document.getElementById("pianoroll-container");
+  if (!container) return;
+  try {
+    const win = getCurrentWindow();
+    if (await isMaximized(win)) return;
+    const current = await currentLogicalWindowSize(win);
+    if (rememberFullSize) {
+      widthBeforeCollapse = current.width;
+      heightBeforeCollapse = current.height;
+    }
+    await setResizableMode(win, true);
+    // Wait for the layout to catch up with the size the window is at (after the restore from the
+    // collapsed size, or after un-maximizing) before measuring the chrome around the roll.
+    const expected = restored ? (heightBeforeCollapse ?? DEFAULT_EXPANDED_HEIGHT) : current.height;
+    for (let i = 0; i < 40 && Math.abs(window.innerHeight - expected) > 2; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const height = window.innerHeight - container.clientHeight + DRUMS_ONLY_ROLL_HEIGHT;
+    await win.setSize(new LogicalSize(window.innerWidth, Math.ceil(height)));
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// Leaves the drums-only height for the size the window had with the keyboard shown.
+async function restoreFullHeight(): Promise<void> {
+  try {
+    const win = getCurrentWindow();
+    if (await isMaximized(win)) return;
+    await setResizableMode(win, true);
+    await win.setSize(
+      new LogicalSize(window.innerWidth, heightBeforeCollapse ?? DEFAULT_EXPANDED_HEIGHT),
+    );
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function resizeForRoll(
+  wasShown: boolean,
+  appShell: HTMLElement,
+  rememberSize: boolean,
+): Promise<void> {
   // Let Svelte apply the container's hidden class before measuring.
   await tick();
+  const visible = isRollShown();
+  // Switching one part while the other stays shown keeps the window as it is.
+  if (visible === wasShown) return;
 
   try {
     const win = getCurrentWindow();
+    if (await isMaximized(win)) return;
     const { width: currentLogicalWidth, height: currentLogicalHeight } =
       await currentLogicalWindowSize(win);
 
@@ -162,7 +258,7 @@ export async function setPianorollVisible(
 
 // The settings page shares this window with the main view; if the piano
 // roll was hidden when settings opened, the window would otherwise still
-// be sitting at the collapsed size from setPianorollVisible above, and
+// be sitting at the collapsed size from setRollPartVisible above, and
 // the settings page would render cramped into that sliver. Force the
 // window to the fixed expanded size while settings is open -- skipping
 // the resize when it's already there, which is the case whenever the
@@ -198,7 +294,7 @@ export async function leaveSettingsWindowSize(): Promise<void> {
   }
   try {
     const win = getCurrentWindow();
-    await setResizableMode(win, settings.pianorollVisible);
+    await setResizableMode(win, isRollShown());
     await win.setSize(new LogicalSize(width, height));
   } catch (err) {
     console.error(err);

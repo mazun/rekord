@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ChordLayerEvent, LaneUpdate } from "./chordlane";
-import type { BeatLines, ConfirmedNote, StartedNote } from "./pianoroll";
+import type { BeatLines, ConfirmedNote, DrumHitsEvent, StartedNote } from "./pianoroll";
 import { type DisplayState, type RecordingInfo, recording } from "./recording";
 import { type Accidental, settings } from "./settings.svelte";
 import type { ChordVocabulary } from "./tensions";
@@ -30,7 +30,8 @@ type PipelineEvent =
   | ({ type: "ChordLayer" } & ChordLayerEvent)
   | { type: "ActiveNotes"; changes: { t: number; pcs: number }[] }
   | { type: "KeyChange"; t: number; key_name: string; tonic_pc: number }
-  | ({ type: "BeatLines" } & BeatLines);
+  | ({ type: "BeatLines" } & BeatLines)
+  | ({ type: "DrumHits" } & DrumHitsEvent);
 
 // "loading" until the piano roll exists and the event listener is
 // registered -- Start stays disabled until then, since a "Started" event
@@ -111,6 +112,8 @@ export interface PipelineHandlers {
   onNoteStarted(note: StartedNote): void;
   onNote(note: ConfirmedNote): void;
   onBeatLines(lines: BeatLines): void;
+  /** A drum layer decided more hits (and everything before `decided_s`). */
+  onDrumHits(event: DrumHitsEvent): void;
   /** Capture was stopped; the piano roll should freeze. `info` is the audio now available to
    * play back (null if none). */
   onStopped(info: RecordingInfo | null): void;
@@ -160,6 +163,8 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
       if (update) handlers.onChordLane(update);
     } else if (payload.type === "BeatLines") {
       handlers.onBeatLines(payload);
+    } else if (payload.type === "DrumHits") {
+      handlers.onDrumHits(payload);
     }
     // The chord, key, tension and tempo readouts (all but the notes): show the latest. The beat
     // lines (about 15 a second) can only move the tempo.
@@ -168,6 +173,7 @@ export async function connectPipeline(handlers: PipelineHandlers): Promise<Unlis
       if (pipeline.bpm !== bpm) pipeline.bpm = bpm;
     } else if (
       payload.type !== "Started" &&
+      payload.type !== "DrumHits" &&
       payload.type !== "NoteStarted" &&
       payload.type !== "NoteConfirmed"
     ) {

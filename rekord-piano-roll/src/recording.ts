@@ -6,7 +6,7 @@ import {
   LAYER_ORDER,
   type LayerChord,
 } from "./chordlane";
-import type { BeatLines, ConfirmedNote, NotePart, StartedNote } from "./pianoroll";
+import type { BeatLines, ConfirmedNote, DrumHitsEvent, NotePart, StartedNote } from "./pianoroll";
 import { type ChordVocabulary, tensionsFor } from "./tensions";
 
 // How much of the past is kept (notes, chords, beat lines, and on the backend the audio itself:
@@ -64,7 +64,9 @@ export type RecordableEvent =
   | ({ type: "ChordLayer" } & ChordLayerEvent)
   | { type: "ActiveNotes"; changes: { t: number; pcs: number }[] }
   | { type: "KeyChange"; t: number; key_name: string; tonic_pc: number }
-  | ({ type: "BeatLines" } & BeatLines);
+  | ({ type: "BeatLines" } & BeatLines)
+  // Drawn by the roll only (not replayed or exported).
+  | ({ type: "DrumHits" } & DrumHitsEvent);
 
 /** What the span of the audio recorded on the backend covers (`RecordingInfo` in audio_ring.rs). */
 export interface RecordingInfo {

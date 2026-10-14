@@ -1,5 +1,6 @@
 <script lang="ts">
   import ChordDisplay from "./components/ChordDisplay.svelte";
+  import DrumToggle from "./components/DrumToggle.svelte";
   import KeyPicker from "./components/KeyPicker.svelte";
   import PianoRollView from "./components/PianoRollView.svelte";
   import PianorollToggle from "./components/PianorollToggle.svelte";
@@ -58,6 +59,7 @@
       </div>
       <TensionGrid />
       <PianorollToggle />
+      <DrumToggle />
     </div>
     <PianoRollView />
   </div>
@@ -92,6 +94,6 @@
     align-items: center;
     justify-content: center;
     gap: 2.2rem;
-    padding: 1rem 2.8rem;
+    padding: 1rem 4.8rem; /* room for the two toggles */
   }
 </style>
