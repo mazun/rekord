@@ -144,7 +144,7 @@ const ja: Record<MessageKey, string> = {
   "drumToggle.toggle": "ドラムレーンの表示切替",
   "pianoRollView.bass": "ベース",
   "pianoRollView.partToggle": "クリックでこのパートの音符を表示/非表示",
-  "pianoRollView.vocal": "歌",
+  "pianoRollView.vocal": "ボーカル",
   "pianoRollView.other": "その他",
   "notice.modelsDownloading": "認識モデルをダウンロード中(初回のみ)...",
   "notice.modelsFailed": "認識モデルをダウンロードできませんでした。",
