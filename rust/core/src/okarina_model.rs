@@ -472,8 +472,9 @@ impl OkarinaModel {
 
     /// (th_on, th_sus) per part, parallel to `parts()`, for a session with
     /// `future_frames` of look-ahead. The metadata carries one set per
-    /// look-ahead, and they can differ (M: the vocal th_sus is .45 at f8, .40
-    /// at f16; S and L have the same sets for both): 16 or more uses the f16 set.
+    /// look-ahead, and they can differ (the current S, M and L happen to have
+    /// the same sets for both; M's v3 had a vocal th_sus of .45 at f8, .40 at
+    /// f16): 16 or more uses the f16 set.
     pub fn part_thresholds(&self, future_frames: usize) -> &[(f32, f32)] {
         if future_frames >= 16 {
             &self.thresholds_f16

@@ -41,8 +41,8 @@ hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_strea
 - All three output `[1, 3, T, 88]` per head, parts vocal/bass/other. `parts`
   and `thresholds_f8`/`thresholds_f16` (per part `[th_on, th_sus]`) come from
   the ONNX metadata, not constants here (they differ per size; the vocal th_sus
-  differs between f8 and f16 for M only (.45 / .40); S is .20/.35 and L .25/.40
-  at both); the part order is checked at load
+  is the same at f8 and f16 for all of v4: S .20/.35, M .25/.45, L .25/.40;
+  v3's M had .45 / .40); the part order is checked at load
   (`part_thresholds` picks by `future_frames`). `NoteTranscriber` runs one
   `StreamingDecoder` per part; every `ConfirmedNote`/`NoteEvent`/
   `NoteConfirmed` carries its `Part`.
@@ -55,12 +55,21 @@ hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_strea
   speed and I/O). RWC-Pop vocal COnP50 / COnPOff: S .382/.174 → .531/.258,
   M .406/.188 → .575/.304, L .422/.193 → .602/.331; bass/other within ±0.003
   (S/M bass COnPOff −.005/−.008). Vocal th_sus: S .30/.35 → .35 (f8/f16),
-  M .35 → .45/.40, L .35/.30 → .40. The previous files are kept locally as
-  `okarina_{s,m,l}_prev.onnx` (byte-identical to the old v2 exports) for A/B
-  listening; build.rs ignores them. Golden data: `runs/okarina_deploy_g/{small,
-  medium}`, `runs/s2g_deploy`. GAME licensing: code MIT, model files CC BY-NC-SA
-  4.0 (v1.0.0 release notes); compatible with our weights' license, noted in the
-  model card. HF revision: see `HF_REVISION`.
+  M .35 → .45/.40, L .35/.30 → .40. GAME licensing: code MIT, model files
+  CC BY-NC-SA 4.0 (v1.0.0 release notes); compatible with our weights' license,
+  noted in the model card.
+  2026-10-21: now `mix_{small,medium,large}_v4.onnx` (runs `s2m_a_*`, notes
+  version v2s7: the bass teacher is MuScriptor medium on the htdemucs_ft bass
+  stem, bass-instrument notes only, instead of pYIN; same structure, speed, I/O
+  and metadata keys). RWC-Pop bass COnP50 / COnPOff (f8): S .594/.354 →
+  .710/.402, M .601/.374 → .742/.444, L .602/.385 → .758/.471; bass pitch-class
+  F +3–5 points; vocal/other within ±0.005. More bass notes, earlier onsets
+  (L bass COn50 .69 → .86). Thresholds unchanged except M's f16 vocal th_sus
+  (.40 → .45); bass th_sus still hand-set to .50. MuScriptor weights are
+  CC BY-NC 4.0 (like GOAT), noted in the model card. The previous (v3) files are
+  kept locally as `okarina_{s,m,l}_prev.onnx` for A/B listening; build.rs
+  ignores them. Golden data: `runs/okarina_deploy_m/{small,medium,large}`.
+  HF revision: see `HF_REVISION`.
   Known behavior, not a bug: low notes of solo instruments are split between bass
   and other, so a pitch can appear in both; bass-part notes can be short
   fragments. `velocity` is not on a common scale across parts, which skews the
@@ -83,8 +92,8 @@ hand-over) in harmonica-repro (reference `harmonica/infer.py::predict_song_strea
   matching; this only bounds `note_events()`.
 - Tests: `cargo test -p rekord_core --release okarina_ -- --test-threads=1`
   (`tests/okarina_golden.rs`, 10 tests, ~2.5 min). Per size two datasets from
-  harmonica-repro (`HARMONICA_REPRO_DIR` overrides the checkout path): S/M in
-  `runs/okarina_deploy_g/{small,medium}/`, L in `runs/s2g_deploy/`, each with
+  harmonica-repro (`HARMONICA_REPRO_DIR` overrides the checkout path):
+  `runs/okarina_deploy_m/{small,medium,large}/`, each with
   `golden` (GuitarSet, notes only in `other`) and `golden_rwc001` (20 s of
   RWC-Pop 001, all parts; RWC is not redistributable, only ever read from
   harmonica-repro). The files there keep the internal names (`mix_small_*`

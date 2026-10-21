@@ -1,7 +1,7 @@
 //! Golden-vector tests for the Okarina S/M/L models (three parts: vocal, bass,
 //! other) against harmonica-repro's `tools/make_golden.py --mix` output
 //! (ONNX Runtime 1.24.4 CPU, Python), see that repo's
-//! `docs/okarina-sm-report.md` and `docs/mix-s2-report.md`. Per size, two
+//! `docs/muscriptor-teacher-report.md` and `docs/mix-s2-report.md`. Per size, two
 //! datasets:
 //!
 //! - `golden`: GuitarSet, notes only in the `other` part (vocal and bass
@@ -15,9 +15,7 @@
 //! live (relative to the harmonica-repro checkout, default
 //! `../../../harmonica-repro`, override with HARMONICA_REPRO_DIR):
 //!
-//! - S: `runs/okarina_deploy_g/small/{golden,golden_rwc001}`
-//! - M: `runs/okarina_deploy_g/medium/{golden,golden_rwc001}`
-//! - L: `runs/s2g_deploy/{golden,golden_rwc001}`
+//! - S / M / L: `runs/okarina_deploy_m/{small,medium,large}/{golden,golden_rwc001}`
 //!
 //! Tolerances are 1e-4 on CPU and 1e-3 on DirectML. Tests skip (not fail)
 //! for a size whose golden directory or `models/okarina_*.onnx` is absent;
@@ -107,13 +105,13 @@ fn goldens() -> Vec<Golden> {
     let repro = repro_dir();
     let mut out = Vec::new();
     for (size, base, key) in [
-        (ModelSize::Small, "runs/okarina_deploy_g/small", "mix_small"),
+        (ModelSize::Small, "runs/okarina_deploy_m/small", "mix_small"),
         (
             ModelSize::Medium,
-            "runs/okarina_deploy_g/medium",
+            "runs/okarina_deploy_m/medium",
             "mix_medium",
         ),
-        (ModelSize::Large, "runs/s2g_deploy", "mix_large"),
+        (ModelSize::Large, "runs/okarina_deploy_m/large", "mix_large"),
     ] {
         let model = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("models")

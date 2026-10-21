@@ -5,7 +5,7 @@
 //!   note models with three vocal/bass/other parts): Okarina, an unofficial
 //!   derivative of Harmonica (instrument-agnostic note transcription),
 //!   trained and exported to ONNX in the separate harmonica-repro project
-//!   (its internal file names are mix_{small,medium,large}_v3.onnx).
+//!   (its internal file names are mix_{small,medium,large}_v4.onnx).
 //!   Downloaded from the Hugging Face
 //!   model repo mazun/rekord at a pinned revision and checked against
 //!   pinned SHA-256s (`fetch_okarina_models`). That repo is private for
@@ -37,7 +37,7 @@ const HF_REPO: &str = "mazun/rekord";
 /// A commit hash, not a branch, so an old checkout keeps building the weights
 /// it was tested against. New weights: upload them first, then update this
 /// and the hashes below.
-const HF_REVISION: &str = "5bd2c2b6e23ca23be3510ec5ad6504a47cc4347d";
+const HF_REVISION: &str = "a4d070da5e208b4677070d92a9027cf6e139c0b8";
 
 /// (file name, lowercase hex SHA-256).
 const OKARINA_MODELS: [(&str, &str); 4] = [
@@ -47,15 +47,15 @@ const OKARINA_MODELS: [(&str, &str); 4] = [
     ),
     (
         "okarina_s.onnx",
-        "eae85bc700d12caa9a4d8c1309eb99de3ec9f966d28d5a8b0df787c3c5c5c89a",
+        "44ec3f8331b0f899b17437c37c4d4a0159fb46cc18f2c58bbdbcfb4bd195c00f",
     ),
     (
         "okarina_m.onnx",
-        "0a9437ef6eb6b9419b25715dcadadb64c06c54b5027826fed12273d6c8a9c1e8",
+        "c014fa25e9027e049c96734d36b589a66940d3b7f194f5020c5ae950e6a9319c",
     ),
     (
         "okarina_l.onnx",
-        "44b0a11c12d0f46db8a56ed22964eaa647eebb923aada0a9f9a2ba6512f93e4e",
+        "7d35fdfc82980ade2359769bd09d10f4b3e74b529f8468a9c0c7ca39ff6f2916",
     ),
 ];
 
