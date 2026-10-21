@@ -41,11 +41,11 @@
 <button
   id="pianoroll-toggle-btn"
   class="icon-btn pianoroll-toggle-btn"
-  class:active={!settings.pianorollVisible}
+  class:active={settings.pianorollVisible}
   type="button"
   title={t("pianorollToggle.toggle")}
   aria-label={t("pianorollToggle.toggle")}
-  aria-pressed={!settings.pianorollVisible}
+  aria-pressed={settings.pianorollVisible}
   bind:this={button}
   onclick={() => toggle(!settings.pianorollVisible)}
 >
@@ -76,11 +76,8 @@
     border: none;
     background: none;
     color: var(--text);
-    /* Piano roll shown -- dimmed (same opacity as .roles-toggle.off
-       elsewhere) so the icon reads as "more to reveal here" rather than
-       drawing attention while the roll itself is already visible; full
-       brightness (below, .active) then reads as "this is the only way back
-       to the roll" once it's hidden. */
+    /* Piano roll hidden -- dimmed (same opacity as .roles-toggle.off
+       elsewhere); full brightness (below, .active) while it's shown. */
     opacity: 0.35;
   }
 

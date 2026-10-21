@@ -16,11 +16,11 @@
 <button
   id="drum-toggle-btn"
   class="icon-btn drum-toggle-btn"
-  class:active={!settings.drumsVisible}
+  class:active={settings.drumsVisible}
   type="button"
   title={t("drumToggle.toggle")}
   aria-label={t("drumToggle.toggle")}
-  aria-pressed={!settings.drumsVisible}
+  aria-pressed={settings.drumsVisible}
   bind:this={button}
   onclick={() => toggle(!settings.drumsVisible)}
 >
