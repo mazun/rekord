@@ -43,9 +43,17 @@ jobs:
       - run: npm ci
         working-directory: rekord-piano-roll
 
-      # ort puts DirectML.dll into target/release while building, and the bundle config
-      # (tauri.release.conf.json) ships it next to the exe; build once first so it exists.
+      # ort puts DirectML.dll into target/release while building; the bundle config
+      # (tauri.release.conf.json) ships it next to the exe from src-tauri/redist/. Not straight
+      # from target/release: tauri-build copies resources into target/release, and copying the
+      # file onto itself fails (os error 32).
       - run: cargo build --release --manifest-path rekord-piano-roll/src-tauri/Cargo.toml
+
+      - name: Stage DirectML.dll
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force rekord-piano-roll/src-tauri/redist | Out-Null
+          Copy-Item rekord-piano-roll/src-tauri/target/release/DirectML.dll rekord-piano-roll/src-tauri/redist/
 
       - uses: tauri-apps/tauri-action@v0
         env:
