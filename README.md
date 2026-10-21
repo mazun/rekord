@@ -125,9 +125,6 @@ sample_audio/          Piano recordings used for validation
 
 - Key estimation runs over a window of the last few to ten-odd seconds, so
   it can be wrong in sections where the tonic chord hasn't sounded yet.
-- Sources with a lot of non-piano sound (e.g. drums) will see more false
-  detections.
-- Planned future work is tracked in [TODO.md](TODO.md).
 
 ## Third party
 
