@@ -3,7 +3,30 @@
 A tool for real-time chord and note recognition from audio playing on your
 PC (via WASAPI loopback). Recognition results are shown as a piano roll and
 chord names, and the tool also estimates the key and shows Roman-numeral
-labels.
+labels, tracks the beat and transcribes the drums.
+
+## Download
+
+Windows builds are on the [Releases](https://github.com/mazun/rekord/releases/latest)
+page, in two forms:
+
+- **Installer** (`ReKord_X.Y.Z_x64-setup.exe`) — installs per user (no admin
+  rights needed). The app checks for a new release on launch and can update
+  itself in place ("Update and restart").
+- **Portable** (`ReKord_X.Y.Z_x64_portable.zip`) — no installation: unzip the
+  `ReKord` folder somewhere you can write to (not Program Files) and run
+  `ReKord.exe`. While `portable.txt` sits next to the exe, everything the app
+  saves (the recognition models and your settings) goes into a `data` folder
+  beside it, so the whole folder can be moved or deleted as is. The app tells
+  you when a new release is out and opens its page; to update, unzip the new
+  version over the old one, keeping `data`.
+
+Either way, the first launch downloads the recognition models (about 51 MB)
+from Hugging Face; later launches and updates reuse them.
+
+The builds aren't code-signed yet, so on first launch Windows SmartScreen may
+say "Windows protected your PC". Click **More info** → **Run anyway** to
+start it.
 
 ## How it works
 
@@ -22,18 +45,24 @@ labels.
 3. **Key estimation** — the key is estimated via Krumhansl-Schmuckler-style
    pitch-class correlation (Bellman-Budge profiles), and chords are shown as
    Roman numerals.
+4. **Beat tracking** — Beat This! (small0) estimates beats and downbeats,
+   decoded by a DBN; they are drawn as beat lines on the roll.
+5. **Drum transcription** — ADTOF Frame_RNN transcribes kick, snare, hi-hat,
+   tom and cymbal hits into the drum lane (on the CPU).
 
 No machine learning model is used for chord names or key estimation. The
-reasoning behind these design decisions is in [CLAUDE.md](CLAUDE.md).
+design notes and decision history are in [docs/notes/](docs/notes/).
 
 ## Requirements
 
-- Windows 11 (Windows-only, since audio capture uses WASAPI loopback)
-- A GPU that supports ONNX Runtime's DirectML execution provider (verified
-  working on an RTX 5070 Ti)
-- [Rust](https://rustup.rs/) and [Node.js](https://nodejs.org/)
+- Windows 11, x64 (Windows-only, since audio capture uses WASAPI loopback)
+- A GPU that supports DirectML is recommended (verified on an RTX 5070 Ti);
+  without one the models run on the CPU with a smaller note model
 
-## Usage
+To build from source you also need [Rust](https://rustup.rs/),
+[Node.js](https://nodejs.org/) and Python 3.10 or later (see below).
+
+## Building from source
 
 ### Desktop app (piano-roll UI)
 
@@ -65,20 +94,30 @@ cargo build --release
 | `--cpu` | Disables DirectML and runs on the CPU (size M with 8+ threads, otherwise S) |
 | `--hop <seconds>` | Interval between chunks of captured (or, in file mode, simulated) audio handed off for processing (default: 0.064s) |
 
-`cargo build` downloads the Okarina ONNX model files into
-`rust/core/models/` from the Hugging Face model repo
-[mazun/rekord](https://huggingface.co/mazun/rekord), at a pinned revision
-and checked against pinned SHA-256s. That repo is private for now, so the
-build needs `HF_TOKEN` set to a read-access token (or Hugging Face's token
-file, `~/.cache/huggingface/token`).
+The first `cargo build` puts the ONNX models into `rust/core/models/`, each
+at a pinned revision and checked against a pinned SHA-256:
+
+- Okarina and its CQT front end come from the Hugging Face model repo
+  [mazun/rekord](https://huggingface.co/mazun/rekord), and the drum model
+  from [thebluescreen/adtof-drums-onnx](https://huggingface.co/thebluescreen/adtof-drums-onnx).
+  Both are public; no token is needed.
+- Beat This! is only published as a PyTorch checkpoint, so the build exports
+  it with `rust/core/export_beat_models.py`, in a throwaway virtual
+  environment (about 1 GB of CPU-only packages, deleted afterwards). This is
+  what needs Python; set `REKORD_PYTHON` to pick the interpreter.
+
+Releases are built by GitHub Actions when a `vX.Y.Z` tag is pushed (see
+[CLAUDE.md](CLAUDE.md#release)).
 
 ## Layout
 
 ```
 rust/
-  core/                rekord_core (inference, note extraction, chord/key detection, capture)
+  core/                rekord_core (inference, note/drum/beat extraction, chord/key detection, capture, playback)
   cli/                 rekord_engine (CLI)
+  beat_dbn/            rekord_beat_dbn (DBN beat decoder)
 rekord-piano-roll/     Tauri + Svelte 5 + Pixi.js piano-roll UI
+docs/                  Design notes
 sample_audio/          Piano recordings used for validation
 ```
 
@@ -101,8 +140,13 @@ sample_audio/          Piano recordings used for validation
   the rest of this repository, they're for non-commercial use only and aren't
   covered by the MIT license below. See the
   [model card](https://huggingface.co/mazun/rekord) for the full breakdown.
-  They aren't in this repository; `cargo build` downloads them (see the CLI
-  section above).
+  They aren't in this repository or the installer; the app downloads them on
+  first launch, and `cargo build` downloads them for a checkout.
+- The drum model is ADTOF Frame_RNN (Zehren et al.), CC BY-NC-SA 4.0 —
+  likewise non-commercial only — used through a community ONNX conversion
+  ([thebluescreen/adtof-drums-onnx](https://huggingface.co/thebluescreen/adtof-drums-onnx)).
+- The beat model is Beat This! small0 (Foscarin, Schlüter, Widmer, CPJKU),
+  MIT.
 - Main dependencies: [ort](https://github.com/pykeio/ort),
   [cpal](https://github.com/RustAudio/cpal), [Tauri](https://tauri.app/),
   [Svelte](https://svelte.dev/), [Bits UI](https://bits-ui.com/),

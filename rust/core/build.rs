@@ -8,10 +8,10 @@
 //!   (its internal file names are mix_{small,medium,large}_v4.onnx).
 //!   Downloaded from the Hugging Face
 //!   model repo mazun/rekord at a pinned revision and checked against
-//!   pinned SHA-256s (`fetch_okarina_models`). That repo is private for
-//!   now, so a read-access token is needed (HF_TOKEN, or huggingface's own
-//!   token file). The weights are for non-commercial use only, see the
-//!   model card at https://huggingface.co/mazun/rekord.
+//!   pinned SHA-256s (`fetch_okarina_models`). That repo is public; a token
+//!   (HF_TOKEN, or huggingface's own token file) is still sent if there is
+//!   one. The weights are for non-commercial use only, see the model card at
+//!   https://huggingface.co/mazun/rekord.
 //! - adtof_frame_rnn.onnx: ADTOF Frame_RNN (Zehren et al., CC BY-NC-SA 4.0) for
 //!   drum transcription. The authors only publish a TensorFlow checkpoint; this
 //!   is a community conversion (thebluescreen/adtof-drums-onnx on Hugging
@@ -83,7 +83,7 @@ fn fetch_drum_model(models_dir: &Path) {
     fetch_model(models_dir, &DRUM_FILE, None);
 }
 
-/// Downloads `file` unless models/ already has it. `token` is only for the private repo.
+/// Downloads `file` unless models/ already has it. `token` is only sent to `HF_REPO`.
 fn fetch_model(models_dir: &Path, file: &ModelFile, token: Option<&str>) {
     let path = models_dir.join(file.name);
     println!("cargo:rerun-if-changed={}", path.display());
@@ -130,10 +130,9 @@ fn download_model(models_dir: &Path, file: &ModelFile, token: Option<&str>) {
         .unwrap_or_else(|e| {
             panic!(
                 "downloading {name} from {url}: {e}\n\
-                 {HF_REPO} is private for now: set HF_TOKEN to a read-access token for it \
-                 (or have huggingface's token file), or copy the file from \
-                 harmonica-repro's runs/p5/onnx/ into models/ (it's then checked against \
-                 the pinned SHA-256). {DRUM_REPO} is public and needs no token."
+                 Check the network, or copy the file into models/ by hand (it's then \
+                 checked against the pinned SHA-256): {HF_REPO}'s files are also in \
+                 harmonica-repro's runs/p5/onnx/."
             )
         });
 
