@@ -46,6 +46,12 @@ also attaches a portable zip (exe + DirectML.dll + `portable.txt`); with the
 marker beside the exe, `portable.rs` keeps models and webview data in `data\`
 next to it, and the update notice opens the release page instead of installing.
 
+- Bump the version in all three of `package.json`, `src-tauri/Cargo.toml` and
+  `tauri.conf.json` (then refresh both lock files); CI checks only the last.
+- To try an update locally, build an "older" exe without touching the files:
+  `npm run tauri build -- --no-bundle --config <json with {"version": "…"}>`
+  (add `portable.txt` beside it for the portable flow).
+
 ## Testing
 
 - Golden-vector tests (vs `harmonica-repro`) cover notes and beats; they skip
