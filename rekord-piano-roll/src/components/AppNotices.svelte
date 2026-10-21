@@ -28,7 +28,9 @@
 {:else if updater.status === "available"}
   <div class="notice" role="status">
     <span>{t("notice.updateAvailable").replace("{version}", updater.version)}</span>
-    <button type="button" class="primary" onclick={installUpdate}>{t("notice.updateInstall")}</button>
+    <button type="button" class="primary" onclick={installUpdate}>
+      {t(updater.portable ? "notice.updateOpenPage" : "notice.updateInstall")}
+    </button>
     <button type="button" onclick={dismissUpdate}>{t("notice.later")}</button>
   </div>
 {:else if updater.status === "installing"}

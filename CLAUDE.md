@@ -41,7 +41,10 @@ Push a tag `vX.Y.Z` matching `version` in `src-tauri/tauri.conf.json`;
 `tauri.release.conf.json`: DirectML.dll, updater artifacts) into a draft
 release. Publishing the draft is what the in-app updater picks up
 (`latest.json`, signed with the `TAURI_SIGNING_PRIVATE_KEY` secret). Release
-builds download the models on first launch (`model_download.rs`).
+builds download the models on first launch (`model_download.rs`). The workflow
+also attaches a portable zip (exe + DirectML.dll + `portable.txt`); with the
+marker beside the exe, `portable.rs` keeps models and webview data in `data\`
+next to it, and the update notice opens the release page instead of installing.
 
 ## Testing
 

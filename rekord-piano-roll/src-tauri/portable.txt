@@ -1,0 +1,11 @@
+Re:Kord portable
+
+While this file is next to ReKord.exe, Re:Kord keeps everything it saves (the recognition
+models it downloads on first launch, and its settings) in the "data" folder beside it, so the
+whole folder can be moved or deleted as is. Put the folder somewhere you can write to (not
+Program Files). To update, download the new zip and replace the files, keeping "data".
+
+このファイルが ReKord.exe と同じフォルダにある間、Re:Kord は保存するもの(初回起動時に
+ダウンロードする認識モデルと設定)をすべて隣の "data" フォルダに置きます。フォルダごと移動・
+削除できます。書き込みできる場所(Program Files 以外)に置いてください。更新するときは新しい
+zip をダウンロードし、"data" を残したままファイルを置き換えてください。

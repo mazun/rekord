@@ -1,5 +1,5 @@
 // Release builds don't ship the ONNX models (~51 MB) in the installer: they download them into
-// the app's local data directory on first launch, from the pinned commits and checked against
+// the app's local data directory (a portable copy's `data` folder, see `portable`) on first launch, from the pinned commits and checked against
 // the pinned hashes in `rekord_core::model_files`, so an app update doesn't download unchanged
 // weights again. Debug builds read the checkout's core/models/ (where build.rs put them).
 
@@ -32,11 +32,11 @@ pub fn ensure(app: &AppHandle) -> Result<(), String> {
     static BUSY: Mutex<()> = Mutex::new(());
     let _busy = BUSY.lock().map_err(|e| e.to_string())?;
 
-    let dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("models");
+    let dir = match crate::portable::data_dir() {
+        Some(dir) => dir.clone(),
+        None => app.path().app_local_data_dir().map_err(|e| e.to_string())?,
+    }
+    .join("models");
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
 
     let missing: Vec<&ModelFile> = model_files::all()

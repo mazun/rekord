@@ -4,6 +4,7 @@ mod midi_copy;
 mod model_download;
 #[cfg(windows)]
 mod os_drag;
+mod portable;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -19,7 +20,7 @@ use rekord_core::pipeline::{
 };
 use rekord_core::playback::{self, PlaybackParams, PlaybackSession, SynthDrumHit, SynthNote};
 use rekord_core::spelling::Accidental;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindowBuilder};
 
 #[derive(Default)]
 struct CaptureState {
@@ -72,6 +73,12 @@ async fn ensure_models(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || model_download::ensure(&app))
         .await
         .map_err(|e| e.to_string())?
+}
+
+// Whether this is the portable (zip) copy, whose updates the user downloads themselves.
+#[tauri::command]
+fn is_portable() -> bool {
+    portable::data_dir().is_some()
 }
 
 #[tauri::command]
@@ -314,8 +321,20 @@ pub fn run() {
         .manage(Mutex::new(CaptureState::default()))
         .manage(Mutex::new(PlaybackState::default()))
         .manage::<SharedRing>(Arc::new(Mutex::new(None)))
+        // The window is made here rather than from the config (`create: false`) so a portable copy
+        // can keep the webview's data beside the exe.
+        .setup(|app| {
+            let mut window =
+                WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[0])?;
+            if let Some(dir) = portable::data_dir() {
+                window = window.data_directory(dir.join("webview"));
+            }
+            window.build()?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             ensure_models,
+            is_portable,
             start_capture,
             stop_capture,
             set_key_mode,

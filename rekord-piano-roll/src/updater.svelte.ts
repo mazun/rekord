@@ -1,13 +1,19 @@
+import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
-// Checks GitHub Releases for a newer version once per launch (release builds only); the banner
-// (UpdateBanner.svelte) offers it, and installing restarts the app.
+// Checks GitHub Releases for a newer version once per launch (release builds only); the notice
+// (AppNotices.svelte) offers it, and installing restarts the app. The portable (zip) copy can't
+// install updates (the updater runs the installer), so its notice opens the release page instead.
 export type UpdaterStatus = "none" | "available" | "installing" | "error";
+
+const RELEASE_PAGE = "https://github.com/mazun/rekord/releases/latest";
 
 export const updater = $state({
   status: "none" as UpdaterStatus,
   version: "",
+  portable: false,
   doneBytes: 0,
   totalBytes: 0,
 });
@@ -17,6 +23,7 @@ let pending: Update | null = null;
 export async function checkForUpdate(): Promise<void> {
   if (!import.meta.env.PROD) return;
   try {
+    updater.portable = await invoke<boolean>("is_portable");
     pending = await check();
   } catch (err) {
     // Offline, or no release yet: try again next launch.
@@ -31,6 +38,11 @@ export async function checkForUpdate(): Promise<void> {
 
 export async function installUpdate(): Promise<void> {
   if (!pending) return;
+  if (updater.portable) {
+    await openUrl(RELEASE_PAGE);
+    updater.status = "none";
+    return;
+  }
   updater.status = "installing";
   updater.doneBytes = 0;
   updater.totalBytes = 0;

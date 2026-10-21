@@ -13,6 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "create": false,
         "title": "Re:Kord",
         "width": 800,
         "height": 600,

@@ -68,3 +68,19 @@ jobs:
           releaseBody: See the assets below to download and install this version.
           releaseDraft: true
           includeUpdaterJson: true
+
+      # The portable copy: the exe tauri-action just built, DirectML.dll and the portable.txt that
+      # switches it to keeping its data beside the exe (src-tauri/src/portable.rs).
+      - name: Add the portable zip
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $dir = "ReKord_${version}_x64_portable"
+          New-Item -ItemType Directory $dir/ReKord | Out-Null
+          Copy-Item rekord-piano-roll/src-tauri/target/release/rekord-piano-roll.exe $dir/ReKord/ReKord.exe
+          Copy-Item rekord-piano-roll/src-tauri/target/release/DirectML.dll $dir/ReKord/
+          Copy-Item rekord-piano-roll/src-tauri/portable.txt $dir/ReKord/
+          Compress-Archive $dir/ReKord "$dir.zip"
+          gh release upload "${{ github.ref_name }}" "$dir.zip" --clobber
