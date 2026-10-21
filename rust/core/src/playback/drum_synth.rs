@@ -176,7 +176,10 @@ mod tests {
     #[test]
     fn a_hit_decays_and_a_weak_one_is_quieter() {
         let loud = render(&[hit(0.0, Drum::Snare)], 0.0, 14_400);
-        assert!(rms(&loud[..480]) > rms(&loud[12_000..12_480]) * 3.0, "decays");
+        assert!(
+            rms(&loud[..480]) > rms(&loud[12_000..12_480]) * 3.0,
+            "decays"
+        );
         let mut weak = hit(0.0, Drum::Snare);
         weak.strength = 0.1;
         let quiet = render(&[weak], 0.0, 14_400);

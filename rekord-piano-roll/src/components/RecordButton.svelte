@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t } from "../i18n.svelte";
+  import { models } from "../models.svelte";
   import { pipeline, startCapture, stopCapture } from "../pipeline.svelte";
 
   // One toggle instead of separate Start/Stop buttons: the icon shows what
@@ -21,7 +22,7 @@
   type="button"
   title={label}
   aria-label={label}
-  disabled={pipeline.status === "loading" || pipeline.status === "stopping"}
+  disabled={pipeline.status === "loading" || pipeline.status === "stopping" || models.status !== "ready"}
   onclick={toggleCapture}
 >
   <svg viewBox="0 0 16 16" aria-hidden="true">

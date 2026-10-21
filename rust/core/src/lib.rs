@@ -9,6 +9,7 @@ pub mod drum_stream;
 pub mod gpu_class;
 pub mod key_estimator;
 pub mod live_capture;
+pub mod model_files;
 pub mod okarina_decode;
 pub mod okarina_model;
 pub mod okarina_stream;

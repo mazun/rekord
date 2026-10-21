@@ -1,6 +1,5 @@
 //! Beat This! small0 (MIT, CPJKU) and its log-mel frontend as ONNX, CPU only.
-//! Exported by harmonica-repro/beattrack/export_onnx.py; copy the two files into
-//! core/models/ (not downloaded by build.rs, and core/models is gitignored).
+//! Exported by build.rs (export_beat_models.py) into core/models/, which is gitignored.
 
 use anyhow::{anyhow, Result};
 use ndarray::{Array2, Array3, ArrayView2};
@@ -8,8 +7,10 @@ use ort::ep::cpu::CPU;
 use ort::session::{builder::GraphOptimizationLevel, Session};
 use ort::value::Tensor;
 
-const MEL_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/models/logmel.onnx");
-const NET_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/models/beatthis_small0.onnx");
+use crate::model_files;
+
+const MEL_FILE: &str = "logmel.onnx";
+const NET_FILE: &str = "beatthis_small0.onnx";
 
 pub const SAMPLE_RATE: usize = 22050;
 pub const N_FFT: usize = 1024;
@@ -21,7 +22,8 @@ pub struct BeatModel {
     net: Session,
 }
 
-pub(crate) fn session(path: &str, threads: usize) -> Result<Session> {
+/// `file`: the model's file name (see `model_files`).
+pub(crate) fn session(file: &str, threads: usize) -> Result<Session> {
     Session::builder()
         .map_err(|e| anyhow!("{e}"))?
         .with_optimization_level(GraphOptimizationLevel::Level3)
@@ -32,15 +34,15 @@ pub(crate) fn session(path: &str, threads: usize) -> Result<Session> {
         .map_err(|e| anyhow!("{e}"))?
         .with_execution_providers([CPU::default().build()])
         .map_err(|e| anyhow!("{e}"))?
-        .commit_from_file(path)
-        .map_err(|e| anyhow!("{e}"))
+        .commit_from_file(model_files::path(file))
+        .map_err(|e| anyhow!("{file}: {e}"))
 }
 
 impl BeatModel {
     pub fn load(threads: usize) -> Result<Self> {
         Ok(Self {
-            mel: session(MEL_PATH, threads)?,
-            net: session(NET_PATH, threads)?,
+            mel: session(MEL_FILE, threads)?,
+            net: session(NET_FILE, threads)?,
         })
     }
 

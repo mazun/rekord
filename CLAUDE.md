@@ -34,6 +34,15 @@ cd rust && cargo build --release
 Set-Location rekord-piano-roll; npm run tauri dev
 ```
 
+## Release
+
+Push a tag `vX.Y.Z` matching `version` in `src-tauri/tauri.conf.json`;
+`.github/workflows/release.yml` builds the NSIS installer (merging
+`tauri.release.conf.json`: DirectML.dll, updater artifacts) into a draft
+release. Publishing the draft is what the in-app updater picks up
+(`latest.json`, signed with the `TAURI_SIGNING_PRIVATE_KEY` secret). Release
+builds download the models on first launch (`model_download.rs`).
+
 ## Testing
 
 - Golden-vector tests (vs `harmonica-repro`) cover notes and beats; they skip

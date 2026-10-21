@@ -1,6 +1,7 @@
 #[cfg(debug_assertions)]
 mod debug_export;
 mod midi_copy;
+mod model_download;
 #[cfg(windows)]
 mod os_drag;
 
@@ -62,6 +63,15 @@ fn with_playback<T>(
         Some(session) if !session.is_finished() => f(session),
         _ => Err("no playback".into()),
     }
+}
+
+// Downloads whatever ONNX models aren't in place yet (release builds, first launch); capture can
+// start once this returns. Progress arrives as `model-download` events.
+#[tauri::command]
+async fn ensure_models(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || model_download::ensure(&app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -299,10 +309,13 @@ async fn debug_export_range(_range: serde_json::Value) -> Result<String, String>
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(Mutex::new(CaptureState::default()))
         .manage(Mutex::new(PlaybackState::default()))
         .manage::<SharedRing>(Arc::new(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
+            ensure_models,
             start_capture,
             stop_capture,
             set_key_mode,

@@ -1,0 +1,62 @@
+# Builds the Windows installer and publishes it as a draft GitHub release when a version tag
+# (v0.2.0, ...) is pushed. Publishing the draft makes it `latest`, which is where the app's
+# updater looks (latest.json, signed with TAURI_SIGNING_PRIVATE_KEY).
+#
+# The tag must match `version` in rekord-piano-roll/src-tauri/tauri.conf.json.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      # The app downloads the models at run time; the build needs none of them.
+      REKORD_SKIP_MODELS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the app version
+        shell: pwsh
+        run: |
+          $version = (Get-Content rekord-piano-roll/src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "tag ${{ github.ref_name }} does not match tauri.conf.json version $version"
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: rekord-piano-roll/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: rekord-piano-roll/src-tauri
+
+      - run: npm ci
+        working-directory: rekord-piano-roll
+
+      # ort puts DirectML.dll into target/release while building, and the bundle config
+      # (tauri.release.conf.json) ships it next to the exe; build once first so it exists.
+      - run: cargo build --release --manifest-path rekord-piano-roll/src-tauri/Cargo.toml
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: rekord-piano-roll
+          args: --config src-tauri/tauri.release.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: Re:Kord ${{ github.ref_name }}
+          releaseBody: See the assets below to download and install this version.
+          releaseDraft: true
+          includeUpdaterJson: true

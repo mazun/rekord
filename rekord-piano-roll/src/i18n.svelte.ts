@@ -70,6 +70,16 @@ const en = {
   "pianoRollView.partToggle": "Click to show or hide this part's notes",
   "pianoRollView.vocal": "Vocal",
   "pianoRollView.other": "Other",
+  "notice.modelsDownloading": "Downloading the recognition models (first launch only)...",
+  "notice.modelsFailed": "Couldn't download the recognition models.",
+  "notice.retry": "Retry",
+  "notice.updateAvailable": "Version {version} is available.",
+  "notice.updateInstall": "Update and restart",
+  "notice.later": "Later",
+  "notice.updateDownloading": "Downloading the update...",
+  "notice.updateFailed": "The update failed.",
+  "notice.close": "Close",
+  "settings.version": "Version",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -135,6 +145,16 @@ const ja: Record<MessageKey, string> = {
   "pianoRollView.partToggle": "クリックでこのパートの音符を表示/非表示",
   "pianoRollView.vocal": "歌",
   "pianoRollView.other": "その他",
+  "notice.modelsDownloading": "認識モデルをダウンロード中(初回のみ)...",
+  "notice.modelsFailed": "認識モデルをダウンロードできませんでした。",
+  "notice.retry": "再試行",
+  "notice.updateAvailable": "バージョン {version} が利用できます。",
+  "notice.updateInstall": "更新して再起動",
+  "notice.later": "後で",
+  "notice.updateDownloading": "更新をダウンロード中...",
+  "notice.updateFailed": "更新に失敗しました。",
+  "notice.close": "閉じる",
+  "settings.version": "バージョン",
 };
 
 const messages: Record<Locale, Record<MessageKey, string>> = { en, ja };

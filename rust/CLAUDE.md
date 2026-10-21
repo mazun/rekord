@@ -18,9 +18,12 @@ design and measurements: [docs/chord-layers.md](../docs/chord-layers.md).
 - Key estimator: only the scoring is textbook; the window/switching rule is a
   streaming adaptation. The user declined a wider window; key misdetection is
   mitigated by a manual override (`TODO.md`), not more tuning.
-- **Weights are non-commercial only.** Hosted in private HF repo
-  `mazun/rekord`; `build.rs` downloads at pinned `HF_REVISION` + SHA-256.
-  New weights: upload to HF first, then update revision and hashes.
+- **Weights are non-commercial only.** Hosted in HF repo `mazun/rekord`
+  (Okarina + CQT, and the Beat This! exports); pinned revision, SHA-256s and
+  sizes are in `core/src/model_manifest.rs`, shared by `build.rs` (into
+  `core/models/`) and the app's release builds, which download them at run
+  time (`model_files::set_dir`). New weights: upload to HF first, then update
+  revision, hashes and sizes. Load models only through `model_files::path`.
 - `build.rs` runs `core/export_beat_models.py` (throwaway venv) when the beat
   ONNX files are missing — a deliberate exception to "everything is Rust".
 - **DirectML, not CUDA** (RTX 5070 Ti too new). `cpal` for WASAPI loopback.

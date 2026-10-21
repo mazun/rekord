@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AppNotices from "./components/AppNotices.svelte";
   import ChordDisplay from "./components/ChordDisplay.svelte";
   import DrumToggle from "./components/DrumToggle.svelte";
   import KeyPicker from "./components/KeyPicker.svelte";
@@ -64,6 +65,7 @@
     <PianoRollView />
   </div>
   <SettingsView hidden={view !== "settings"} onClose={closeSettings} />
+  <AppNotices />
 </main>
 
 <style>

@@ -8,6 +8,7 @@
   } from "../debugExport.svelte";
   import { t } from "../i18n.svelte";
   import { dragSelectionAsMidi } from "../midiCopy.svelte";
+  import { ensureModels } from "../models.svelte";
   import { type NotePart, PianoRoll } from "../pianoroll";
   import {
     connectPipeline,
@@ -153,9 +154,13 @@
       // Capture starts on launch rather than waiting for a click. Stop
       // first: if the webview reloaded while capture kept running on the
       // backend, start_capture alone is a no-op there and would never emit
-      // a fresh Started event to anchor this new roll's clock.
+      // a fresh Started event to anchor this new roll's clock. A release
+      // build's first launch downloads the models first (AppNotices retries
+      // and starts capture if that fails).
+      const modelsReady = await ensureModels();
+      if (disposed) return;
       await stopCapture();
-      if (!disposed) await startCapture();
+      if (!disposed && modelsReady) await startCapture();
     })();
 
     return () => {

@@ -18,6 +18,7 @@ use ort::session::{builder::GraphOptimizationLevel, Session, SessionOutputs};
 use ort::value::Tensor;
 
 use crate::gpu_class::{self, GpuClass};
+use crate::model_files;
 
 /// 16 kHz mono input -- fixed by how Harmonica was trained and baked into
 /// the exported ONNX models' shapes below.
@@ -45,7 +46,7 @@ pub const WINDOW_SAMPLES: usize = (CHUNK - 1) * HOP + 2 * MARGIN + 1;
 /// except the trailing MARGIN zeros standing in for unavailable future audio.
 pub const HISTORY: usize = (CHUNK - 1) * HOP + MARGIN + 1;
 
-const CQT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/models/cqt156.onnx");
+const CQT_FILE: &str = "cqt156.onnx";
 
 /// A note-transcription output part. The model separates `Vocal`, `Bass` and
 /// `Other` (everything else, drums excluded -- they aren't pitched notes).
@@ -95,14 +96,6 @@ impl ModelSize {
             ModelSize::Small => "okarina_s.onnx",
             ModelSize::Medium => "okarina_m.onnx",
             ModelSize::Large => "okarina_l.onnx",
-        }
-    }
-
-    fn onnx_path(self) -> &'static str {
-        match self {
-            ModelSize::Small => concat!(env!("CARGO_MANIFEST_DIR"), "/models/okarina_s.onnx"),
-            ModelSize::Medium => concat!(env!("CARGO_MANIFEST_DIR"), "/models/okarina_m.onnx"),
-            ModelSize::Large => concat!(env!("CARGO_MANIFEST_DIR"), "/models/okarina_l.onnx"),
         }
     }
 
@@ -262,7 +255,8 @@ fn cpu_size() -> ModelSize {
     }
 }
 
-fn build_session(path: &str, device: Device) -> Result<Session> {
+/// `file`: the model's file name (see `model_files`).
+fn build_session(file: &str, device: Device) -> Result<Session> {
     let builder = Session::builder()
         .map_err(|e| anyhow!("{e}"))?
         .with_optimization_level(GraphOptimizationLevel::Level3)
@@ -290,7 +284,9 @@ fn build_session(path: &str, device: Device) -> Result<Session> {
             .with_execution_providers([CPU::default().build()])
             .map_err(|e| anyhow!("{e}"))?,
     };
-    builder.commit_from_file(path).map_err(|e| anyhow!("{e}"))
+    builder
+        .commit_from_file(model_files::path(file))
+        .map_err(|e| anyhow!("{file}: {e}"))
 }
 
 /// Reads output `name` as one `[T, features]` array per part. Shape is
@@ -324,7 +320,7 @@ impl OkarinaModel {
     /// Loads exactly `size` on exactly `device`, no fallback -- callers that
     /// want the hardware-dependent policy should use `load`.
     pub fn load_on(size: ModelSize, device: Device) -> Result<Self> {
-        let cqt = build_session(CQT_PATH, device)?;
+        let cqt = build_session(CQT_FILE, device)?;
         check_metadata(
             &cqt,
             &[
@@ -338,7 +334,7 @@ impl OkarinaModel {
             "cqt156.onnx",
         )?;
 
-        let net = build_session(size.onnx_path(), device)?;
+        let net = build_session(size.file_name(), device)?;
         check_metadata(
             &net,
             &[

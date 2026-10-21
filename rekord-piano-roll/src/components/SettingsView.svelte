@@ -1,10 +1,17 @@
 <script lang="ts">
+  import { getVersion } from "@tauri-apps/api/app";
   import { i18n, type Locale, setLocale, t } from "../i18n.svelte";
   import { pipeline, setAccidental } from "../pipeline.svelte";
   import { type Accidental, type ModelSize, saveAccidental, saveFutureFrames, saveModelSize, settings } from "../settings.svelte";
   import Segmented from "./Segmented.svelte";
 
   let { hidden, onClose }: { hidden: boolean; onClose: () => void } = $props();
+
+  let version = $state("");
+  getVersion().then(
+    (v) => (version = v ?? ""),
+    () => {},
+  );
 
   // Description of the currently selected option, shown under each select.
   const modelDesc = $derived(
@@ -118,6 +125,9 @@
       <option value="ja">日本語</option>
     </select>
   </div>
+  {#if version}
+    <p class="settings-row settings-note">{t("settings.version")} {version}</p>
+  {/if}
 </div>
 
 <style>

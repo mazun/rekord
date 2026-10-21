@@ -25,6 +25,11 @@
 //!   models/ gets the pinned CPU-only packages below (~1 GB download on the
 //!   first build) and is deleted afterwards. Set REKORD_PYTHON to pick the
 //!   interpreter.
+//!
+//! The pinned repos, commits and hashes are in src/model_manifest.rs, which
+//! the app's release builds also use to download the models on first launch.
+//! Those builds don't read core/models/, so the release CI sets
+//! REKORD_SKIP_MODELS=1 to skip all of this (and the token and Python it needs).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -33,44 +38,11 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 use ureq::config::RedirectAuthHeaders;
 
-const HF_REPO: &str = "mazun/rekord";
-/// A commit hash, not a branch, so an old checkout keeps building the weights
-/// it was tested against. New weights: upload them first, then update this
-/// and the hashes below.
-const HF_REVISION: &str = "a4d070da5e208b4677070d92a9027cf6e139c0b8";
-
-/// (file name, lowercase hex SHA-256).
-const OKARINA_MODELS: [(&str, &str); 4] = [
-    (
-        "cqt156.onnx",
-        "ff88505975e9d6c3e3c413aff5748abe711dfe3e9aee1bdf57bb637e28cf1c6f",
-    ),
-    (
-        "okarina_s.onnx",
-        "44ec3f8331b0f899b17437c37c4d4a0159fb46cc18f2c58bbdbcfb4bd195c00f",
-    ),
-    (
-        "okarina_m.onnx",
-        "c014fa25e9027e049c96734d36b589a66940d3b7f194f5020c5ae950e6a9319c",
-    ),
-    (
-        "okarina_l.onnx",
-        "7d35fdfc82980ade2359769bd09d10f4b3e74b529f8468a9c0c7ca39ff6f2916",
-    ),
-];
-
-/// The community ONNX conversion of ADTOF Frame_RNN (public repo, pinned like `HF_REVISION`).
-const DRUM_REPO: &str = "thebluescreen/adtof-drums-onnx";
-const DRUM_REVISION: &str = "d0e809bb1c1b6fe8a4a00c576852117a0636ab5a";
-const DRUM_MODEL: (&str, &str) = (
-    "adtof_frame_rnn.onnx",
-    "189ca3c2bc7339a5f0fdc0bb11069d4bcc4fafabd142e945228c368c379b6227",
-);
+include!("src/model_manifest.rs");
 
 // ureq's read_to_vec() defaults to a 10MB cap; cqt156.onnx alone is ~17MB.
 const MAX_MODEL_BYTES: u64 = 64 * 1024 * 1024;
 
-const BEAT_MODELS: [&str; 2] = ["beatthis_small0.onnx", "logmel.onnx"];
 const TORCH_INDEX: &str = "https://download.pytorch.org/whl/cpu";
 const TORCH_REQS: [&str; 2] = ["torch==2.14.0", "torchaudio==2.11.0"];
 const OTHER_REQS: [&str; 6] = [
@@ -83,6 +55,11 @@ const OTHER_REQS: [&str; 6] = [
 ];
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=REKORD_SKIP_MODELS");
+    if std::env::var_os("REKORD_SKIP_MODELS").is_some() {
+        return;
+    }
+
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let models_dir = manifest_dir.join("models");
     std::fs::create_dir_all(&models_dir).expect("creating models/ directory");
@@ -97,52 +74,36 @@ fn fetch_okarina_models(models_dir: &Path) {
     println!("cargo:rerun-if-env-changed=HF_HOME");
     let token = hf_token();
 
-    for (name, sha256) in OKARINA_MODELS {
-        let path = models_dir.join(name);
-        println!("cargo:rerun-if-changed={}", path.display());
-
-        if let Ok(bytes) = std::fs::read(&path) {
-            if sha256_hex(&bytes) == sha256 {
-                continue;
-            }
-            println!("cargo:warning={name} does not match the pinned model; re-downloading");
-        }
-
-        download_model(
-            models_dir,
-            (HF_REPO, HF_REVISION),
-            name,
-            sha256,
-            token.as_deref(),
-        );
+    for file in &OKARINA_FILES {
+        fetch_model(models_dir, file, token.as_deref());
     }
 }
 
 fn fetch_drum_model(models_dir: &Path) {
-    let (name, sha256) = DRUM_MODEL;
-    let path = models_dir.join(name);
+    fetch_model(models_dir, &DRUM_FILE, None);
+}
+
+/// Downloads `file` unless models/ already has it. `token` is only for the private repo.
+fn fetch_model(models_dir: &Path, file: &ModelFile, token: Option<&str>) {
+    let path = models_dir.join(file.name);
     println!("cargo:rerun-if-changed={}", path.display());
 
     if let Ok(bytes) = std::fs::read(&path) {
-        if sha256_hex(&bytes) == sha256 {
+        if sha256_hex(&bytes) == file.sha256 {
             return;
         }
-        println!("cargo:warning={name} does not match the pinned model; re-downloading");
+        println!(
+            "cargo:warning={} does not match the pinned model; re-downloading",
+            file.name
+        );
     }
 
-    download_model(models_dir, (DRUM_REPO, DRUM_REVISION), name, sha256, None);
+    download_model(models_dir, file, token);
 }
 
-/// `source` is (Hugging Face repo, commit). `token` is only for the private repo.
-fn download_model(
-    models_dir: &Path,
-    source: (&str, &str),
-    name: &str,
-    sha256: &str,
-    token: Option<&str>,
-) {
-    let (repo, revision) = source;
-    let url = format!("https://huggingface.co/{repo}/resolve/{revision}/{name}");
+fn download_model(models_dir: &Path, file: &ModelFile, token: Option<&str>) {
+    let (name, sha256) = (file.name, file.sha256);
+    let url = file.url();
     eprintln!("Downloading {name} from {url} ...");
 
     let mut req = ureq::get(&url);
@@ -176,6 +137,11 @@ fn download_model(
             )
         });
 
+    assert_eq!(
+        bytes.len() as u64,
+        file.size,
+        "downloaded {name} does not have its pinned size; not writing it"
+    );
     let actual = sha256_hex(&bytes);
     assert_eq!(
         actual, sha256,
@@ -233,10 +199,11 @@ fn export_beat_models(manifest_dir: &Path, models_dir: &Path) {
     let script = manifest_dir.join("export_beat_models.py");
     println!("cargo:rerun-if-changed={}", script.display());
     println!("cargo:rerun-if-env-changed=REKORD_PYTHON");
-    for name in BEAT_MODELS {
+    let beat_models = BEAT_FILES.map(|f| f.name);
+    for name in beat_models {
         println!("cargo:rerun-if-changed={}", models_dir.join(name).display());
     }
-    if BEAT_MODELS.iter().all(|n| models_dir.join(n).exists()) {
+    if beat_models.iter().all(|n| models_dir.join(n).exists()) {
         return;
     }
 
@@ -245,7 +212,7 @@ fn export_beat_models(manifest_dir: &Path, models_dir: &Path) {
             "Building the beat-tracking models needs Python >= 3.10 (not found as `py -3`, \
              `python3` or `python`; set REKORD_PYTHON to its path). Alternatively copy \
              {:?} into {} by hand.",
-            BEAT_MODELS,
+            beat_models,
             models_dir.display()
         )
     });
@@ -294,7 +261,7 @@ fn export_beat_models(manifest_dir: &Path, models_dir: &Path) {
     );
 
     let _ = std::fs::remove_dir_all(&venv);
-    for name in BEAT_MODELS {
+    for name in beat_models {
         assert!(
             models_dir.join(name).exists(),
             "export_beat_models.py did not write {name}"

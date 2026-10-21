@@ -10,7 +10,7 @@ use ort::value::Tensor;
 
 use crate::beat_model;
 
-const MODEL_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/models/adtof_frame_rnn.onnx");
+const MODEL_FILE: &str = "adtof_frame_rnn.onnx";
 
 pub const SAMPLE_RATE: usize = 44100;
 /// Samples per activation frame (100 frames per second).
@@ -25,7 +25,7 @@ pub struct DrumModel {
 impl DrumModel {
     pub fn load(threads: usize) -> Result<Self> {
         Ok(Self {
-            session: beat_model::session(MODEL_PATH, threads)?,
+            session: beat_model::session(MODEL_FILE, threads)?,
         })
     }
 
