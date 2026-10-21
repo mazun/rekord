@@ -2,9 +2,9 @@
   import { pipeline } from "../pipeline.svelte";
 
   const TENSION_GROUPS = [
-    { tensions: ["b9", "9", "#9"], alignRight: false },
-    { tensions: ["11", "#11"], alignRight: true },
     { tensions: ["b13", "13"], alignRight: false },
+    { tensions: ["11", "#11"], alignRight: true },
+    { tensions: ["b9", "9", "#9"], alignRight: false },
   ];
 </script>
 
