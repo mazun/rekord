@@ -11,6 +11,7 @@
   import { ensureModels } from "../models.svelte";
   import { type NotePart, PianoRoll } from "../pianoroll";
   import {
+    chordText,
     connectPipeline,
     startCapture,
     stopCapture,
@@ -44,6 +45,15 @@
   }
 
   $effect(applyVisibility);
+
+  // Redraw the chord lane when the notation changes.
+  function applyNotation() {
+    // Read the whole setting first, for the same reason as applyVisibility.
+    void JSON.stringify(settings.notation);
+    roll?.setChordText(chordText);
+  }
+
+  $effect(applyNotation);
 
   const ZOOM_STEP = 0.2;
   const ZOOM_SNAP = 0.08; // the slider sticks to the centre (1x) within this distance
@@ -112,6 +122,7 @@
       roll = created;
       applyZoom();
       applyVisibility();
+      applyNotation();
       roll.onSelectionChange = (range) => {
         menu = null;
         setExportRange(range);

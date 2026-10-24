@@ -3,6 +3,8 @@
 // settings regardless -- see start_capture in lib.rs), so a missing or
 // garbled stored value just falls back to the shipped default.
 
+import { isNotationChoice, NOTATION_QUALITIES, type Notation } from "./chordnotation";
+
 // A new key: the old "chord.modelSize" held the Harmonica sizes ("mix", "large", ...), whose names
 // now mean something else (Okarina L is not Harmonica large).
 const MODEL_SIZE_STORAGE_KEY = "chord.noteModel";
@@ -33,6 +35,24 @@ function loadModelSize(): ModelSize {
 function loadAccidental(): Accidental {
   const stored = localStorage.getItem(ACCIDENTAL_STORAGE_KEY);
   return stored === "sharp" || stored === "flat" ? stored : "auto";
+}
+
+// How chord qualities are written (src/chordnotation.ts): the default, or the user's pick per quality.
+const NOTATION_STORAGE_KEY = "chord.notation";
+
+function loadNotation(): Notation {
+  const notation: Notation = { custom: false, choices: {} };
+  try {
+    const stored = JSON.parse(localStorage.getItem(NOTATION_STORAGE_KEY) ?? "{}");
+    notation.custom = stored?.custom === true;
+    for (const quality of NOTATION_QUALITIES) {
+      const suffix = stored?.choices?.[quality];
+      if (isNotationChoice(quality, suffix)) notation.choices[quality] = suffix;
+    }
+  } catch {
+    // garbled: defaults
+  }
+  return notation;
 }
 
 // Playback mix (volumes are 0..1 slider positions; the backend squares them): the recorded audio,
@@ -121,6 +141,7 @@ export const settings = $state({
   pianorollVisible: localStorage.getItem(PIANOROLL_VISIBLE_STORAGE_KEY) !== "false",
   drumsVisible: localStorage.getItem(DRUMS_VISIBLE_STORAGE_KEY) !== "false",
   accidental: loadAccidental(),
+  notation: loadNotation(),
   volumeOriginal: loadVolume(VOLUME_ORIGINAL_STORAGE_KEY, DEFAULT_VOLUME_ORIGINAL),
   volumeNotes: loadVolume(VOLUME_NOTES_STORAGE_KEY, DEFAULT_VOLUME_NOTES),
   volumeDrums: loadVolume(VOLUME_DRUMS_STORAGE_KEY, DEFAULT_VOLUME_DRUMS),
@@ -150,6 +171,10 @@ export function saveFutureFrames(): void {
 
 export function saveAccidental(): void {
   localStorage.setItem(ACCIDENTAL_STORAGE_KEY, settings.accidental);
+}
+
+export function saveNotation(): void {
+  localStorage.setItem(NOTATION_STORAGE_KEY, JSON.stringify($state.snapshot(settings.notation)));
 }
 
 export function savePianorollVisible(): void {

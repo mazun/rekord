@@ -1,5 +1,5 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
-import { type LaneSegment, type LaneUpdate, planChordUpdate } from "./chordlane";
+import { type LaneSegment, type LaneUpdate, type LayerChord, planChordUpdate } from "./chordlane";
 import { HeldClock, LiveClock, PlaybackClock, type RollClock } from "./clock";
 import { HISTORY_S } from "./recording";
 import type { NotePart } from "./settings.svelte";
@@ -278,7 +278,10 @@ interface BeatSprite {
 // edge is computed fresh from the playhead each tick instead, see tickChordSegments); shownStartS/
 // shownEndS ease towards them, alpha towards targetAlpha, tint towards targetTint.
 interface ChordSprite {
+  /** The backend's name for the chord (what segments are matched by); the text shown is
+   * `chordText(chord)`. */
   label: string;
+  chord: LayerChord;
   startS: number;
   endS: number | null;
   shownStartS: number;
@@ -335,6 +338,11 @@ export class PianoRoll {
   // Chords fading out, under the ones that replace them.
   private chordGhostLayer = new Container();
   private chordSegments: ChordSprite[] = [];
+  // The text a chord is drawn with (the user's notation); the backend's names when unset.
+  private chordText: (chord: LayerChord) => { label: string; roman: string } = (c) => ({
+    label: c.label,
+    roman: c.roman_numeral ?? "",
+  });
   // The newest time the lane knew of at the previous update (a new chord starting near it is the
   // progression moving on, see planChordUpdate).
   private chordPrevHeadS = -Infinity;
@@ -1319,8 +1327,9 @@ export class PianoRoll {
     const boundary = new Graphics().rect(0, 0, 1, 1).fill({ color: CHORD_BOUNDARY_COLOR });
     const label = seg.chord.label;
     const isSilence = label === SILENCE_LABEL;
+    const shown = this.chordText(seg.chord);
     const labelText = new Text({
-      text: label,
+      text: shown.label,
       style: {
         fontFamily: CHORD_FONT_FAMILY,
         fontSize: CHORD_LABEL_FONT_SIZE,
@@ -1329,7 +1338,7 @@ export class PianoRoll {
       },
     });
     const romanText = new Text({
-      text: seg.chord.roman_numeral ?? "",
+      text: shown.roman,
       style: {
         fontFamily: CHORD_FONT_FAMILY,
         fontSize: CHORD_ROMAN_FONT_SIZE,
@@ -1339,6 +1348,7 @@ export class PianoRoll {
     this.chordLayer.addChild(band, boundary, labelText, romanText);
     return {
       label,
+      chord: seg.chord,
       startS: seg.startS,
       endS: seg.endS,
       shownStartS: seg.startS,
@@ -1355,6 +1365,16 @@ export class PianoRoll {
       labelText,
       romanText,
     };
+  }
+
+  /** Sets how chords are written (the user's notation) and redraws the ones on the roll. */
+  setChordText(chordText: (chord: LayerChord) => { label: string; roman: string }): void {
+    this.chordText = chordText;
+    for (const sprite of this.chordSegments) {
+      const shown = chordText(sprite.chord);
+      sprite.labelText.text = shown.label;
+      sprite.romanText.text = shown.roman;
+    }
   }
 
   /** Applies a lane update (chordlane.ts): from `update.fromS` on, the chord lane is
@@ -1375,7 +1395,8 @@ export class PianoRoll {
       // a chord that was open (running to the playhead) and now has an end slides there from the playhead
       if (seg.endS === null) sprite.shownEndS = null;
       else if (sprite.shownEndS === null) sprite.shownEndS = openEdgeS;
-      sprite.romanText.text = seg.chord.roman_numeral ?? "";
+      sprite.chord = seg.chord;
+      sprite.romanText.text = this.chordText(seg.chord).roman;
     }
     for (const o of plan.removed) {
       const sprite = this.chordSegments[o];

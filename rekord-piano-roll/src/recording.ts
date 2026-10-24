@@ -90,6 +90,8 @@ export interface RecordingInfo {
 /** The chord/key/tension/tempo readouts at one moment; null where nothing had been reported yet. */
 export interface DisplayState {
   chord: string | null;
+  /** The quality of `chord` (as the backend names it), to write it in the user's notation. */
+  chordQuality: string | null;
   roman: string | null;
   keyName: string | null;
   /** The relative-major pitch class of the key. */
@@ -259,6 +261,7 @@ export class Recording {
     const key = this.keys.at(t);
     return {
       chord: chord?.label ?? null,
+      chordQuality: chord?.quality ?? null,
       roman: chord?.roman_numeral ?? null,
       keyName: key?.name ?? null,
       keyPc: key?.pc ?? null,

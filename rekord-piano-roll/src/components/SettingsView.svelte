@@ -1,8 +1,17 @@
 <script lang="ts">
   import { getVersion } from "@tauri-apps/api/app";
+  import { NOTATION_OPTIONS, NOTATION_QUALITIES } from "../chordnotation";
   import { i18n, type Locale, setLocale, t } from "../i18n.svelte";
-  import { pipeline, setAccidental } from "../pipeline.svelte";
-  import { type Accidental, type ModelSize, saveAccidental, saveFutureFrames, saveModelSize, settings } from "../settings.svelte";
+  import { pipeline, refreshDisplay, setAccidental } from "../pipeline.svelte";
+  import {
+    type Accidental,
+    type ModelSize,
+    saveAccidental,
+    saveFutureFrames,
+    saveModelSize,
+    saveNotation,
+    settings,
+  } from "../settings.svelte";
   import Segmented from "./Segmented.svelte";
 
   let { hidden, onClose }: { hidden: boolean; onClose: () => void } = $props();
@@ -32,6 +41,13 @@
       flat: t("settings.accidentalFlatDesc"),
     }[settings.accidental],
   );
+  let tab = $state<"general" | "notation">("general");
+
+  // The piano roll redraws itself on the setting (PianoRollView); the readout is told here.
+  function changedNotation() {
+    saveNotation();
+    refreshDisplay();
+  }
 </script>
 
 <div id="settings-view" class:hidden>
@@ -46,6 +62,20 @@
     ></button>
     <h2>{t("settings.title")}</h2>
   </div>
+  <div class="settings-tabs" role="tablist">
+    {#each ["general", "notation"] as const as id (id)}
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === id}
+        class:selected={tab === id}
+        onclick={() => (tab = id)}
+      >
+        {t(id === "general" ? "settings.tabGeneral" : "settings.tabNotation")}
+      </button>
+    {/each}
+  </div>
+  {#if tab === "general"}
   <div class="settings-row">
     <span class="settings-label" id="model-size-label">{t("settings.noteModel")}</span>
     <Segmented
@@ -127,6 +157,51 @@
   </div>
   {#if version}
     <p class="settings-row settings-note">{t("settings.version")} {version}</p>
+  {/if}
+  {:else}
+  <div class="settings-row">
+    <span class="settings-label" id="notation-label">{t("settings.notation")}</span>
+    <Segmented
+      name="notation"
+      labelledby="notation-label"
+      options={[
+        { value: "default", label: t("settings.notationDefault") },
+        { value: "custom", label: t("settings.notationCustom") },
+      ]}
+      value={settings.notation.custom ? "custom" : "default"}
+      onchange={(v) => {
+        settings.notation.custom = v === "custom";
+        changedNotation();
+      }}
+    />
+    <p class="settings-note">
+      {settings.notation.custom ? t("settings.notationCustomDesc") : t("settings.notationDefaultDesc")}
+    </p>
+  </div>
+  {#if settings.notation.custom}
+    <div class="notation-grid">
+    {#each NOTATION_QUALITIES as quality (quality)}
+      <div class="notation-row">
+        <span class="settings-label" id="notation-{quality}-label">
+          C{NOTATION_OPTIONS[quality][0]}
+        </span>
+        <Segmented
+          name="notation-{quality}"
+          labelledby="notation-{quality}-label"
+          options={NOTATION_OPTIONS[quality].map((suffix) => ({
+            value: suffix as string,
+            label: `C${suffix}`,
+          }))}
+          value={settings.notation.choices[quality] ?? NOTATION_OPTIONS[quality][0]}
+          onchange={(v) => {
+            settings.notation.choices[quality] = v;
+            changedNotation();
+          }}
+        />
+      </div>
+    {/each}
+    </div>
+  {/if}
   {/if}
 </div>
 
@@ -221,5 +296,57 @@
     margin: 0;
     color: var(--text-dim);
     font-size: 0.85rem;
+  }
+
+  .settings-tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0 1.2rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-tabs button {
+    font: inherit;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  .settings-tabs button.selected {
+    border-bottom-color: var(--text);
+    color: var(--text);
+  }
+
+  /* The chord types in two columns of half the page each, the name beside its choices. */
+  .notation-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem 1rem;
+    padding: 0 1.2rem 1.2rem;
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+
+  .notation-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  /* Every choice the same width, so the columns of choices line up between rows. */
+  .notation-row :global(.segmented label) {
+    box-sizing: border-box;
+    width: 5rem;
+    padding-inline: 0.3rem;
+    text-align: center;
+  }
+
+  .notation-row .settings-label {
+    flex: none;
+    width: 5.5rem;
   }
 </style>

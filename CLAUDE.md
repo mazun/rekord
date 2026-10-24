@@ -57,7 +57,8 @@ next to it, and the update notice opens the release page instead of installing.
 - Golden-vector tests (vs `harmonica-repro`) cover notes and beats; they skip
   without the golden data. Pure-function tests: `cargo test -p rekord_core
   --release --lib`, `node rekord-piano-roll/dev/chordlane.test.ts`,
-  `node rekord-piano-roll/dev/snap.test.ts`.
+  `node rekord-piano-roll/dev/snap.test.ts`,
+  `node rekord-piano-roll/dev/chordnotation.test.ts`.
 - Everything else is validated empirically on `sample_audio/`. **Never validate
   with synthetic sine-wave audio** (harmonics cause false tensions). After
   changing note streaming/decode/clock logic, re-run all three files; for UI

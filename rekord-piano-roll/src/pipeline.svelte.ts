@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ChordLayerEvent, LaneUpdate } from "./chordlane";
+import type { ChordLayerEvent, LaneUpdate, LayerChord } from "./chordlane";
+import { formatChord, formatRoman } from "./chordnotation";
 import type { BeatLines, ConfirmedNote, DrumHitsEvent, StartedNote } from "./pianoroll";
 import { type DisplayState, type RecordingInfo, recording } from "./recording";
 import { type Accidental, settings } from "./settings.svelte";
@@ -68,12 +69,31 @@ export const pipeline = $state({
   noteModel: null as NoteModel | null,
 });
 
+// The readouts last shown, to write the chord again when the notation setting changes.
+let shown: DisplayState | null = null;
+
+/** Writes the chord readout in the notation now chosen. */
+export function refreshDisplay(): void {
+  if (shown) showDisplay(shown);
+}
+
+/** A chord as the piano roll draws it: the name and the Roman numeral in the user's notation. */
+export function chordText(chord: LayerChord): { label: string; roman: string } {
+  const { notation } = settings;
+  return {
+    label: formatChord(chord.label, chord.quality, notation),
+    roman: formatRoman(chord.roman_numeral ?? "", chord.quality, notation),
+  };
+}
+
 /** Shows the chord/key/tension/tempo readouts as they were at one moment of the recording (live:
  * the latest, i.e. `recording.stateAt(Infinity)`; replaying: at the playhead). Only what changed
  * is assigned, so calling it every frame costs nothing downstream. */
 export function showDisplay(state: DisplayState): void {
-  const chord = state.chord ?? "--";
-  const roman = state.roman ?? EMPTY_ROMAN;
+  shown = state;
+  const { notation } = settings;
+  const chord = formatChord(state.chord ?? "--", state.chordQuality, notation);
+  const roman = state.roman ? formatRoman(state.roman, state.chordQuality, notation) : EMPTY_ROMAN;
   const keyName = state.keyName ?? "--";
   if (pipeline.chord !== chord) pipeline.chord = chord;
   if (pipeline.roman !== roman) pipeline.roman = roman;
@@ -194,6 +214,7 @@ export async function startCapture(): Promise<void> {
   // Playback has to be stopped first: its output would be captured, and the recording it plays
   // is about to be replaced.
   await stopPlayback();
+  shown = null;
   pipeline.chord = "--";
   pipeline.keyName = "--";
   pipeline.keyPc = null;
