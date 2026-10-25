@@ -77,7 +77,19 @@
       </button>
     {/each}
   </div>
+  <div class="settings-body">
   {#if tab === "general"}
+  <div class="settings-row">
+    <label for="language-select">{t("settings.language")}</label>
+    <select
+      id="language-select"
+      value={i18n.locale}
+      onchange={(e) => setLocale(e.currentTarget.value as Locale)}
+    >
+      <option value="en">English</option>
+      <option value="ja">日本語</option>
+    </select>
+  </div>
   <div class="settings-row">
     <span class="settings-label" id="model-size-label">{t("settings.noteModel")}</span>
     <Segmented
@@ -162,17 +174,6 @@
       }}
     />
   </div>
-  <div class="settings-row">
-    <label for="language-select">{t("settings.language")}</label>
-    <select
-      id="language-select"
-      value={i18n.locale}
-      onchange={(e) => setLocale(e.currentTarget.value as Locale)}
-    >
-      <option value="en">English</option>
-      <option value="ja">日本語</option>
-    </select>
-  </div>
   {#if version}
     <p class="settings-row settings-note">{t("settings.version")} {version}</p>
   {/if}
@@ -221,9 +222,17 @@
     </div>
   {/if}
   {/if}
+  </div>
 </div>
 
 <style>
+  /* The page is one screen tall; what doesn't fit scrolls under the header and tabs. */
+  .settings-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
   .settings-page-header {
     display: flex;
     align-items: center;
