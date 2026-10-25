@@ -96,8 +96,8 @@
   }
 
   .auto-btn.active {
-    color: #e4e7ef;
-    background: #262a36;
+    color: var(--text);
+    background: var(--surface-raised);
   }
 
   /* The steppers and the tempo, side by side to the key label's right. */

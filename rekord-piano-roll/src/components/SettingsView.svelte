@@ -10,8 +10,10 @@
     saveFutureFrames,
     saveModelSize,
     saveNotation,
+    saveTheme,
     settings,
   } from "../settings.svelte";
+  import type { ThemeId } from "../theme";
   import Segmented from "./Segmented.svelte";
 
   let { hidden, onClose }: { hidden: boolean; onClose: () => void } = $props();
@@ -143,6 +145,22 @@
       }}
     />
     <p class="settings-note">{accidentalDesc}</p>
+  </div>
+  <div class="settings-row">
+    <span class="settings-label" id="theme-label">{t("settings.theme")}</span>
+    <Segmented
+      name="theme"
+      labelledby="theme-label"
+      options={[
+        { value: "dark", label: t("settings.themeDark") },
+        { value: "light", label: t("settings.themeLight") },
+      ] as { value: ThemeId; label: string }[]}
+      value={settings.theme}
+      onchange={(v) => {
+        settings.theme = v;
+        saveTheme();
+      }}
+    />
   </div>
   <div class="settings-row">
     <label for="language-select">{t("settings.language")}</label>
@@ -287,7 +305,7 @@
     font: inherit;
     padding: 0.3rem 0.5rem;
     border-radius: 4px;
-    border: 1px solid #3a3f4d;
+    border: 1px solid var(--border-strong);
     background: var(--surface-raised);
     color: var(--text);
   }

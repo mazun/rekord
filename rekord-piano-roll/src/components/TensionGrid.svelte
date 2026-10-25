@@ -50,14 +50,14 @@
     text-align: center;
     background: var(--surface-raised);
     border: 1px solid var(--border);
-    color: #565d6f;
+    color: var(--text-faint);
     transition: background 220ms ease, border-color 220ms ease, color 220ms ease, box-shadow 220ms ease;
   }
 
   .chip.lit {
-    background: rgba(227, 171, 79, 0.16);
-    border-color: #e3ab4f;
+    background: color-mix(in srgb, var(--tension) 16%, transparent);
+    border-color: var(--tension);
     color: var(--text);
-    box-shadow: 0 0 14px rgba(227, 171, 79, 0.55);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--tension) 55%, transparent);
   }
 </style>

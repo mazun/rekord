@@ -1,4 +1,4 @@
-/* Global styles only: color tokens, the one-screen app shell, and the
+/* Global styles only: derived color tokens, the one-screen app shell, and the
    .icon-btn base shared across several components. Everything else lives
    in its component's own scoped <style>. */
 
@@ -11,15 +11,13 @@
 }
 
 :root {
-  color-scheme: dark;
   font-family: "Accidentals", "Segoe UI", sans-serif;
 
-  --bg: #14161c;
-  --surface: #1b1e27;
-  --surface-raised: #262b36;
-  --border: #2a2e3a;
-  --text: #e8e8ec;
-  --text-dim: #8b93a7;
+  /* Colors are custom properties set at startup from the chosen theme (theme.ts); the ones
+     below are derived from them. */
+  --overlay: color-mix(in srgb, var(--overlay-base) 70%, transparent);
+  --overlay-strong: color-mix(in srgb, var(--overlay-base) 92%, transparent);
+  --popup-shadow: 0 4px 14px color-mix(in srgb, var(--shadow) 40%, transparent);
 }
 
 html,

@@ -25,6 +25,10 @@ Detail and rationale per area (read only the relevant section when touching it):
 
 ## Where things are
 
+- Colors: all of them live in `theme.ts` (one entry per theme: CSS custom properties
+  + the Pixi roll's `RollColors`). Styles use `var(--token)`, `pianoroll.ts` reads
+  `this.colors`; never add a color literal elsewhere. A new theme = a `THEMES` entry,
+  its `ThemeId`, and the label in `SettingsView`/`i18n`.
 - Clocks: `clock.ts` (`LiveClock`, `HeldClock`, `PlaybackClock`).
 - Chord lane: `chordlane.ts`, `tensions.ts`; render check `dev/chords.html`.
 - Drum lane: `pianoroll.ts` `setDrumHits` / `layoutDrumLane`; keyboard and drum

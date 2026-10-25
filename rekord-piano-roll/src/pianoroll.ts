@@ -4,26 +4,16 @@ import { HeldClock, LiveClock, PlaybackClock, type RollClock } from "./clock";
 import { HISTORY_S } from "./recording";
 import type { NotePart } from "./settings.svelte";
 import { snapToBeats } from "./snap";
+import { lerpColor, type RollColors } from "./theme";
 
 const MIN_PITCH = 21; // A0
 const MAX_PITCH = 108; // C8
 const PIXELS_PER_SECOND = 120; // at zoom 1; see setZoom
-// Notes are shaded between these two by velocity (the model's own
-// per-pitch activation strength for that note, in [0, 1]) rather than
-// drawn in one fixed color -- so within a chord, a note that sounded
-// weaker actually reads as dimmer, not just as "a note" with no
-// indication of how hard it was played relative to its neighbors.
-const NOTE_COLOR_MIN = 0x2c3550; // quiet: closer to the guide/background grey-blue
-const NOTE_COLOR_MAX = 0xaecbff; // loud: bright, near-white blue
-// The model's parts get one palette each, all with the same velocity shading: vocal is drawn
-// in green, bass in orange, other in the default blue (see noteColors).
-const MELODY_COLOR_MIN = 0x1f3d2c;
-const MELODY_COLOR_MAX = 0x6be3a0;
-const BASS_COLOR_MIN = 0x3d2c1f;
-const BASS_COLOR_MAX = 0xff9f5b;
-const GUIDE_COLOR = 0x262b36;
-const WHITE_ROW_COLOR = 0xffffff; // tint behind white-key pitches (untuned)
-const WHITE_ROW_ALPHA = 0.08;
+// Every color comes from the theme (theme.ts, RollColors; PianoRoll.setColors). Notes are shaded
+// between a part's min and max color by velocity (the model's own per-pitch activation strength for
+// that note, in [0, 1]) rather than drawn in one fixed color -- so within a chord, a note that
+// sounded weaker actually reads as dimmer, not just as "a note" with no indication of how hard it
+// was played relative to its neighbors. Each of the model's parts has its own palette.
 
 // Beat/bar lines (rekord_core::beat_tracker, via PipelineEvent::BeatLines) come in three
 // layers of the same beats: predicted (extrapolated, no delay), provisional (the network's
@@ -34,8 +24,6 @@ const WHITE_ROW_ALPHA = 0.08;
 // committed a few seconds after that. All three layers look the same so a line firming up
 // doesn't pull the eye away from the newest notes. A bar line (downbeat) is stronger and
 // wider than a beat.
-const BEAT_LINE_COLOR = 0x5a6580;
-const BAR_LINE_COLOR = 0x9aaad8;
 const BEAT_LINE_ALPHA = 0.4;
 const BAR_LINE_WIDTH = 2;
 // A new snapshot's line within this of a line already drawn is the same beat moving to its
@@ -67,12 +55,6 @@ const CHORD_FONT_FAMILY = '"Accidentals", "Segoe UI", sans-serif'; // same stack
 const CHORD_LABEL_FONT_SIZE = 13;
 const CHORD_ROMAN_FONT_SIZE = 10;
 const CHORD_LABEL_PADDING = 6;
-const CHORD_BAND_COLOR_A = 0x1c2136;
-const CHORD_BAND_COLOR_B = 0x242b47;
-const CHORD_BOUNDARY_COLOR = 0x5a6580;
-const CHORD_TEXT_COLOR = 0xe8e8ec; // matches --text
-const CHORD_ROMAN_COLOR = 0x8b93a7; // matches --text-dim
-const CHORD_SILENCE_COLOR = 0x555f78;
 // Mirrors ChordAt::Silence's label() in pipeline.rs.
 const SILENCE_LABEL = "--";
 
@@ -81,20 +63,12 @@ const SILENCE_LABEL = "--";
 // old fixed-fraction-of-width playhead.
 const KEYBOARD_WIDTH = 34;
 const BLACK_KEY_WIDTH = KEYBOARD_WIDTH * 0.6;
-const WHITE_KEY_COLOR = 0xe8e8ec;
-const WHITE_KEY_ACTIVE_COLOR = 0x5b8cff;
-const BLACK_KEY_COLOR = 0x1a1c22;
-const BLACK_KEY_ACTIVE_COLOR = 0x86a6ff;
-const KEY_BORDER_COLOR = 0x0c0d12;
-// Backing plate behind the whole keyboard strip. Black keys are drawn
-// shorter than white keys, but the canvas background (#0c0d12) and the
-// black key fill (0x1a1c22) are both near-black -- without this, the
-// "shorter" portion has nothing lighter to show through, so it read as
-// full-length. The backing gives that gap a visible, slightly lighter
+// Behind the whole keyboard strip is a backing plate (RollColors.keyboardBacking). Black keys are
+// drawn shorter than white keys, but the canvas background and the black key fill are both
+// near-black in the dark theme -- without it, the "shorter" portion has nothing lighter to show
+// through, so it read as full-length. The backing gives that gap a visible, slightly lighter
 // color, same as a real keyboard's frame between/behind the keys.
-const KEYBOARD_BACKING_COLOR = 0x2a2e3a;
 // "C4"-style octave labels on the C keys; hidden when the rows are too short for the minimum size.
-const OCTAVE_LABEL_COLOR = 0x3a3f4d;
 const OCTAVE_LABEL_BOTTOM_PADDING = 1;
 const OCTAVE_LABEL_MAX_FONT_SIZE = 9; // "C4" must fit the 13.6px gap right of the black keys
 const OCTAVE_LABEL_MIN_FONT_SIZE = 7;
@@ -122,12 +96,12 @@ export interface DrumHitsEvent {
 }
 
 // Top to bottom, like pitch: the high parts above the kick.
-const DRUM_ROWS: { drum: DrumKind; label: string; color: number }[] = [
-  { drum: "cymbal", label: "CY", color: 0xc9a7ff },
-  { drum: "hi_hat", label: "HH", color: 0x7fe0e8 },
-  { drum: "tom", label: "TM", color: 0x8be08b },
-  { drum: "snare", label: "SD", color: 0xffe27a },
-  { drum: "kick", label: "BD", color: 0xff7d6e },
+const DRUM_ROWS: { drum: DrumKind; label: string }[] = [
+  { drum: "cymbal", label: "CY" },
+  { drum: "hi_hat", label: "HH" },
+  { drum: "tom", label: "TM" },
+  { drum: "snare", label: "SD" },
+  { drum: "kick", label: "BD" },
 ];
 const DRUM_ROW_HEIGHT = 12;
 // Room under the rows for the scrollbar (which is drawn along the canvas bottom).
@@ -138,9 +112,6 @@ const DRUM_LANE_HEIGHT = DRUM_ROWS.length * DRUM_ROW_HEIGHT + DRUM_BOTTOM_GUTTER
 export const DRUMS_ONLY_ROLL_HEIGHT = 34 + DRUM_LANE_HEIGHT; // CHORD_LANE_HEIGHT + lane
 const DRUM_HIT_WIDTH = 4;
 const DRUM_HIT_MIN_ALPHA = 0.35;
-const DRUM_ROW_LINE_COLOR = 0x262b36;
-const DRUM_LANE_COLOR = 0x10121a;
-const DRUM_LABEL_COLOR = 0x8b93a7; // matches --text-dim
 const DRUM_LABEL_FONT_SIZE = 9;
 // Layers in the order they decide a stretch of time: a later one corrects the earlier ones.
 const DRUM_LAYER_ORDER: DrumLayerId[] = ["instant", "settled", "confirmed"];
@@ -158,9 +129,6 @@ const SCROLLBAR_HEIGHT = 10;
 const SCROLLBAR_BOTTOM_PADDING = 4; // gap between the scrollbar and the bottom edge
 const SCROLLBAR_HIT_HEIGHT = 24; // clickable strip above the bottom edge, wider than what's drawn
 const SCROLLBAR_MIN_THUMB_PX = 24;
-const SCROLLBAR_TRACK_COLOR = 0x1a1c22;
-const SCROLLBAR_THUMB_COLOR = 0x5a6580;
-const SCROLLBAR_THUMB_ACTIVE_COLOR = 0x9aaad8;
 // A press that moves less than this (px) and is released within CLICK_MAX_MS is a click -- it sets
 // the playback position -- not a drag that scrolls.
 const CLICK_SLOP_PX = 4;
@@ -171,12 +139,10 @@ const AUTOSCROLL_MAX_PX_PER_S = 2500;
 const CLICK_MAX_MS = 500;
 // The playback position marker: a line the full height of the roll, with a small flag on the chord
 // lane.
-const MARKER_COLOR = 0xffd166;
 const MARKER_LINE_WIDTH = 2;
 const MARKER_FLAG_SIZE = 6;
 // The range selected by dragging (debug builds export it): a translucent band the full height
 // of the roll with an edge line at each end. Anything shorter than this is a stray drag.
-const SELECTION_COLOR = 0x8fb0ff;
 const SELECTION_FILL_ALPHA = 0.16;
 const SELECTION_EDGE_ALPHA = 0.9;
 const SELECTION_EDGE_WIDTH = 2;
@@ -184,23 +150,11 @@ const SELECTION_MIN_S = 0.05;
 /** How close (px) a press must be to a selection edge to drag it. */
 const SELECTION_GRAB_PX = 6;
 // The playback cursor while it travels along the roll (before it reaches the keyboard edge).
-const CURSOR_COLOR = 0xffffff;
 const CURSOR_LINE_WIDTH = 2;
 const CURSOR_LINE_ALPHA = 0.85;
 
 function isBlackKey(pitch: number): boolean {
   return [1, 3, 6, 8, 10].includes(pitch % 12);
-}
-
-/** Linearly blends two 0xRRGGBB colors by `t` in [0, 1]. */
-function lerpColor(from: number, to: number, t: number): number {
-  const clamped = Math.min(1, Math.max(0, t));
-  const channel = (shift: number) => {
-    const a = (from >> shift) & 0xff;
-    const b = (to >> shift) & 0xff;
-    return Math.round(a + (b - a) * clamped);
-  };
-  return (channel(16) << 16) | (channel(8) << 8) | channel(0);
 }
 
 // Which output part of the note model a note came from (rekord_core's Part).
@@ -237,17 +191,6 @@ const OPEN_NOTE_LAG_S = 0.15;
 // Bottom to top: when notes of different parts overlap at the same pitch, the vocal is drawn
 // over the bass over the rest.
 const PART_DRAW_ORDER: NotePart[] = ["other", "bass", "vocal"];
-
-function noteColors(note: ConfirmedNote): [number, number] {
-  switch (note.part) {
-    case "vocal":
-      return [MELODY_COLOR_MIN, MELODY_COLOR_MAX];
-    case "bass":
-      return [BASS_COLOR_MIN, BASS_COLOR_MAX];
-    case "other":
-      return [NOTE_COLOR_MIN, NOTE_COLOR_MAX];
-  }
-}
 
 export interface BeatLine {
   t: number;
@@ -326,6 +269,7 @@ interface DrumSprite {
  * can scroll and click; during playback, the position of the audio being heard. */
 export class PianoRoll {
   private app: Application;
+  private colors: RollColors;
   // One layer per part inside the note layer, so a part can be hidden as a whole and
   // overlapping notes stack in a fixed order (see PART_DRAW_ORDER).
   private partLayers = {} as Record<NotePart, Container>;
@@ -410,6 +354,7 @@ export class PianoRoll {
   private tickDisplayS: number | null = null;
   private markerS: number | null = null;
   private markerLayer = new Container();
+  // Lines and bands are 1x1 white rects scaled and tinted (setColors), so a theme change is a tint.
   private markerLine = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
   private markerFlag = new Graphics();
   // The dragged range of audio time, until a click elsewhere or a new session clears it.
@@ -424,12 +369,12 @@ export class PianoRoll {
   private spaceHeld = false;
   private removeKeyListeners: (() => void) | null = null;
   private selectionLayer = new Container();
-  private selectionFill = new Graphics().rect(0, 0, 1, 1).fill({ color: SELECTION_COLOR });
+  private selectionFill = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
   private selectionEdges = [0, 1].map(() =>
-    new Graphics().rect(0, 0, 1, 1).fill({ color: SELECTION_COLOR }),
+    new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff }),
   );
   private cursorLayer = new Container();
-  private cursorLine = new Graphics().rect(0, 0, 1, 1).fill({ color: CURSOR_COLOR });
+  private cursorLine = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
   /** The user clicked the roll at audio time `t` (stopped or playing, not while capturing). */
   onSeekRequest: ((t: number) => void) | null = null;
   /** The user right-clicked inside the selection at client position (x, y); true if that was
@@ -443,26 +388,27 @@ export class PianoRoll {
   /** Called every frame while the roll is not live, with the time at the playhead. */
   onPlayheadTime: ((t: number) => void) | null = null;
 
-  private constructor(app: Application, noteLayer: Container) {
+  private constructor(app: Application, noteLayer: Container, colors: RollColors) {
     this.app = app;
     this.noteLayer = noteLayer;
+    this.colors = colors;
     for (const part of PART_DRAW_ORDER) {
       this.partLayers[part] = new Container();
       noteLayer.addChild(this.partLayers[part]);
     }
   }
 
-  static async create(container: HTMLElement): Promise<PianoRoll> {
+  static async create(container: HTMLElement, colors: RollColors): Promise<PianoRoll> {
     const app = new Application();
     await app.init({
-      background: "#0c0d12",
+      background: colors.background,
       resizeTo: container,
       antialias: true,
     });
     container.appendChild(app.canvas);
 
     const noteLayer = new Container();
-    const roll = new PianoRoll(app, noteLayer);
+    const roll = new PianoRoll(app, noteLayer, colors);
     const keyboardLayer = roll.keyboardLayer;
     app.stage.addChild(roll.guides);
     app.stage.addChild(roll.drumBackdrop);
@@ -478,10 +424,9 @@ export class PianoRoll {
     roll.selectionLayer.visible = false;
     app.stage.addChild(roll.markerLayer);
     roll.markerLayer.addChild(roll.markerLine, roll.markerFlag);
-    roll.markerLine.tint = MARKER_COLOR;
     roll.markerFlag
       .poly([-MARKER_FLAG_SIZE, 0, MARKER_FLAG_SIZE, 0, 0, MARKER_FLAG_SIZE * 1.2])
-      .fill({ color: MARKER_COLOR });
+      .fill({ color: 0xffffff });
     roll.markerLayer.visible = false;
     app.stage.addChild(roll.cursorLayer);
     roll.cursorLayer.addChild(roll.cursorLine);
@@ -509,9 +454,43 @@ export class PianoRoll {
     app.renderer.on("resize", () => roll.layout());
     requestAnimationFrame(() => app.resize());
 
+    roll.applyTints();
     roll.attachScrollInput(app.canvas);
     app.ticker.add(() => roll.onTick());
     return roll;
+  }
+
+  /** Switches the theme: repaints everything already drawn (what is drawn later reads
+   * `this.colors` as it is made). */
+  setColors(colors: RollColors): void {
+    if (this.colors === colors) return;
+    this.colors = colors;
+    this.app.renderer.background.color = colors.background;
+    this.applyTints();
+    for (const sprite of this.chordSegments) {
+      sprite.fresh = true;
+      this.styleChordText(sprite);
+    }
+    this.retintChordBands();
+    for (const text of this.drumLabels) text.style.fill = colors.drumLabel;
+    for (const text of this.octaveLabels.values()) text.style.fill = colors.octaveLabel;
+    // The geometry drawn with a color: guides, keys, drum lane, scrollbar, notes.
+    this.layout();
+  }
+
+  /** The tints of the parts that are plain white rects (markers, selection, cursor, drum hits,
+   * chord boundaries, chord ghosts). */
+  private applyTints(): void {
+    const c = this.colors;
+    this.markerLine.tint = c.marker;
+    this.markerFlag.tint = c.marker;
+    this.selectionFill.tint = c.selection;
+    for (const edge of this.selectionEdges) edge.tint = c.selection;
+    this.cursorLine.tint = c.cursor;
+    for (const layer of DRUM_LAYER_ORDER) {
+      for (const s of this.drumSprites[layer]) s.graphic.tint = c.drums[DRUM_ROWS[s.row].drum];
+    }
+    for (const sprite of this.chordSegments) sprite.boundary.tint = c.chordBoundary;
   }
 
   /** Lets a stopped roll be scrolled back through its history: the wheel/trackpad (down = later,
@@ -848,13 +827,13 @@ export class PianoRoll {
       const y = this.pitchToY(pitch) - guideRowHeight / 2;
       this.guides.rect(0, y, noteAreaWidth, guideRowHeight);
     }
-    this.guides.fill({ color: WHITE_ROW_COLOR, alpha: WHITE_ROW_ALPHA });
+    this.guides.fill({ color: this.colors.whiteRow, alpha: this.colors.whiteRowAlpha });
     for (let pitch = MIN_PITCH; pitch <= MAX_PITCH; pitch += 1) {
       if (pitch % 12 !== 0) continue; // one guide line per C
       const y = this.pitchToY(pitch);
       this.guides.moveTo(0, y).lineTo(noteAreaWidth, y);
     }
-    this.guides.stroke({ width: 1, color: GUIDE_COLOR });
+    this.guides.stroke({ width: 1, color: this.colors.guide });
     this.guides.visible = this.pianoVisible;
     this.noteLayer.visible = this.pianoVisible;
     this.keyboardLayer.visible = this.pianoVisible;
@@ -863,14 +842,14 @@ export class PianoRoll {
     this.scrollbarTrack
       .clear()
       .rect(0, 0, noteAreaWidth, SCROLLBAR_HEIGHT)
-      .fill({ color: SCROLLBAR_TRACK_COLOR, alpha: 0.85 });
+      .fill({ color: this.colors.scrollbarTrack, alpha: 0.85 });
     this.scrollbarLayer.y = height - SCROLLBAR_HEIGHT - SCROLLBAR_BOTTOM_PADDING;
     this.drawnThumb.w = -1; // thumb height follows the layer; redraw it next tick
 
     this.keyboardBacking
       .clear()
       .rect(0, 0, KEYBOARD_WIDTH, this.pianoBottom())
-      .fill({ color: KEYBOARD_BACKING_COLOR });
+      .fill({ color: this.colors.keyboardBacking });
     this.keyboardBacking.x = noteAreaWidth;
     this.keyboardBacking.y = 0;
 
@@ -923,7 +902,7 @@ export class PianoRoll {
           fontFamily: CHORD_FONT_FAMILY,
           fontWeight: "600",
           fontSize: DRUM_LABEL_FONT_SIZE,
-          fill: DRUM_LABEL_COLOR,
+          fill: this.colors.drumLabel,
         },
       });
       text.anchor.set(0.5, 0.5);
@@ -944,15 +923,15 @@ export class PianoRoll {
     this.drumBackdrop
       .clear()
       .rect(0, top, noteAreaWidth, height - top)
-      .fill({ color: DRUM_LANE_COLOR });
+      .fill({ color: this.colors.drumLane });
     for (let i = 0; i <= DRUM_ROWS.length; i++) {
       this.drumBackdrop.moveTo(0, top + i * rowH).lineTo(noteAreaWidth, top + i * rowH);
     }
-    this.drumBackdrop.stroke({ width: 1, color: DRUM_ROW_LINE_COLOR });
+    this.drumBackdrop.stroke({ width: 1, color: this.colors.drumRowLine });
     this.drumStripBacking
       .clear()
       .rect(noteAreaWidth, top, KEYBOARD_WIDTH, height - top)
-      .fill({ color: KEYBOARD_BACKING_COLOR });
+      .fill({ color: this.colors.keyboardBacking });
     this.drumLabels.forEach((text, i) => {
       text.x = noteAreaWidth + KEYBOARD_WIDTH / 2;
       text.y = top + (i + 0.5) * rowH;
@@ -1001,7 +980,7 @@ export class PianoRoll {
       const row = DRUM_ROWS.findIndex((r) => r.drum === hit.drum);
       if (row < 0) continue;
       const graphic = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
-      graphic.tint = DRUM_ROWS[row].color;
+      graphic.tint = this.colors.drums[hit.drum];
       graphic.alpha = DRUM_HIT_MIN_ALPHA + (1 - DRUM_HIT_MIN_ALPHA) * Math.min(1, hit.strength);
       graphic.visible = false; // positioned by the next tick
       this.drumHitLayer.addChild(graphic);
@@ -1062,7 +1041,7 @@ export class PianoRoll {
       // Scientific pitch notation: MIDI 60 is C4.
       const text = new Text({
         text: `C${pitch / 12 - 1}`,
-        style: { fontFamily: CHORD_FONT_FAMILY, fontWeight: "600", fill: OCTAVE_LABEL_COLOR },
+        style: { fontFamily: CHORD_FONT_FAMILY, fontWeight: "600", fill: this.colors.octaveLabel },
       });
       text.anchor.set(1, 1);
       keyboardLayer.addChild(text);
@@ -1085,15 +1064,16 @@ export class PianoRoll {
     key.graphic.y = top;
     const h = bottom - top;
     const g = key.graphic.clear();
+    const c = this.colors;
     if (!key.isBlack) {
       g.rect(0, 0, KEYBOARD_WIDTH, h).fill({
-        color: key.active ? WHITE_KEY_ACTIVE_COLOR : WHITE_KEY_COLOR,
+        color: key.active ? c.whiteKeyActive : c.whiteKey,
       });
       // A line only toward a neighboring white key (E|F, B|C); next to a black key the white key
       // continues and the line is drawn in the black key's row instead.
       if (!isBlackKey(pitch + 1)) g.rect(0, 0, KEYBOARD_WIDTH, line);
       if (!isBlackKey(pitch - 1)) g.rect(0, h - line, KEYBOARD_WIDTH, line);
-      g.fill({ color: KEY_BORDER_COLOR });
+      g.fill({ color: c.keyBorder });
       return;
     }
     // Like a real piano, the white keys continue beside the black key: the part of this row right
@@ -1102,13 +1082,12 @@ export class PianoRoll {
     const mid = snap(h / 2 - line / 2);
     const gapX = BLACK_KEY_WIDTH;
     const gapW = KEYBOARD_WIDTH - BLACK_KEY_WIDTH;
-    const whiteColor = (p: number) =>
-      this.keys.get(p)?.active ? WHITE_KEY_ACTIVE_COLOR : WHITE_KEY_COLOR;
+    const whiteColor = (p: number) => (this.keys.get(p)?.active ? c.whiteKeyActive : c.whiteKey);
     g.rect(gapX, 0, gapW, mid).fill({ color: whiteColor(pitch + 1) });
     g.rect(gapX, mid + line, gapW, h - mid - line).fill({ color: whiteColor(pitch - 1) });
-    g.rect(gapX, mid, gapW, line).fill({ color: KEY_BORDER_COLOR });
+    g.rect(gapX, mid, gapW, line).fill({ color: c.keyBorder });
     g.rect(0, 0, BLACK_KEY_WIDTH, h).fill({
-      color: key.active ? BLACK_KEY_ACTIVE_COLOR : BLACK_KEY_COLOR,
+      color: key.active ? c.blackKeyActive : c.blackKey,
     });
   }
 
@@ -1272,8 +1251,8 @@ export class PianoRoll {
   private drawNote(graphic: Graphics, note: ConfirmedNote): void {
     const noteHeightPx = this.noteHeightPx();
     const widthPx = Math.max(2, (note.end_s - note.start_s) * this.pixelsPerSecond);
-    const [colorMin, colorMax] = noteColors(note);
-    const color = lerpColor(colorMin, colorMax, note.velocity);
+    const { min, max } = this.colors.parts[note.part];
+    const color = lerpColor(min, max, note.velocity);
     graphic.clear().roundRect(0, 0, widthPx, noteHeightPx, 2).fill({ color });
   }
 
@@ -1324,9 +1303,9 @@ export class PianoRoll {
 
   private makeChordSprite(seg: LaneSegment, alpha: number): ChordSprite {
     const band = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
-    const boundary = new Graphics().rect(0, 0, 1, 1).fill({ color: CHORD_BOUNDARY_COLOR });
+    const boundary = new Graphics().rect(0, 0, 1, 1).fill({ color: 0xffffff });
+    boundary.tint = this.colors.chordBoundary;
     const label = seg.chord.label;
-    const isSilence = label === SILENCE_LABEL;
     const shown = this.chordText(seg.chord);
     const labelText = new Text({
       text: shown.label,
@@ -1334,7 +1313,6 @@ export class PianoRoll {
         fontFamily: CHORD_FONT_FAMILY,
         fontSize: CHORD_LABEL_FONT_SIZE,
         fontWeight: "600",
-        fill: isSilence ? CHORD_SILENCE_COLOR : CHORD_TEXT_COLOR,
       },
     });
     const romanText = new Text({
@@ -1342,11 +1320,10 @@ export class PianoRoll {
       style: {
         fontFamily: CHORD_FONT_FAMILY,
         fontSize: CHORD_ROMAN_FONT_SIZE,
-        fill: CHORD_ROMAN_COLOR,
       },
     });
     this.chordLayer.addChild(band, boundary, labelText, romanText);
-    return {
+    const sprite: ChordSprite = {
       label,
       chord: seg.chord,
       startS: seg.startS,
@@ -1356,8 +1333,8 @@ export class PianoRoll {
       alpha,
       targetAlpha: 1,
       fadeTau: CHORD_FADE_IN_TAU_S,
-      tint: CHORD_BAND_COLOR_A,
-      targetTint: CHORD_BAND_COLOR_A,
+      tint: this.colors.chordBandA,
+      targetTint: this.colors.chordBandA,
       dying: false,
       fresh: true,
       band,
@@ -1365,6 +1342,30 @@ export class PianoRoll {
       labelText,
       romanText,
     };
+    this.styleChordText(sprite);
+    return sprite;
+  }
+
+  /** The label and roman numeral colors (the label dims for silence). */
+  private styleChordText(sprite: ChordSprite): void {
+    const isSilence = sprite.label === SILENCE_LABEL;
+    sprite.labelText.style.fill = isSilence ? this.colors.chordSilence : this.colors.chordText;
+    sprite.romanText.style.fill = this.colors.chordRoman;
+  }
+
+  /** Bands alternate in tint along the lane; what a correction changed is recolored, softly (a
+   * `fresh` band takes its tint at once). */
+  private retintChordBands(): void {
+    let tint = this.colors.chordBandB;
+    for (const sprite of this.chordSegments) {
+      if (sprite.dying) continue;
+      tint = tint === this.colors.chordBandA ? this.colors.chordBandB : this.colors.chordBandA;
+      sprite.targetTint = tint;
+      if (sprite.fresh) {
+        sprite.tint = tint; // a new band starts in its color; only a recolor of an existing one eases
+        sprite.fresh = false;
+      }
+    }
   }
 
   /** Sets how chords are written (the user's notation) and redraws the ones on the roll. */
@@ -1414,17 +1415,7 @@ export class PianoRoll {
       this.chordSegments.push(this.makeChordSprite(segs[index], kind === "head" ? 1 : 0));
     }
     this.chordSegments.sort((x, y) => x.startS - y.startS);
-    // Bands alternate in tint along the lane; what a correction changed is recolored, softly.
-    let tint = CHORD_BAND_COLOR_B;
-    for (const sprite of this.chordSegments) {
-      if (sprite.dying) continue;
-      tint = tint === CHORD_BAND_COLOR_A ? CHORD_BAND_COLOR_B : CHORD_BAND_COLOR_A;
-      sprite.targetTint = tint;
-      if (sprite.fresh) {
-        sprite.tint = tint; // a new band starts in its color; only a recolor of an existing one eases
-        sprite.fresh = false;
-      }
-    }
+    this.retintChordBands();
   }
 
   /** Positions every chord for the current displayS(), same as onTick does for notes, and prunes
@@ -1563,7 +1554,7 @@ export class PianoRoll {
       b.graphic.x = x;
       b.graphic.scale.set(width, height);
       b.graphic.alpha = b.alpha * (1 + b.bar * 0.4);
-      b.graphic.tint = lerpColor(BEAT_LINE_COLOR, BAR_LINE_COLOR, b.bar);
+      b.graphic.tint = lerpColor(this.colors.beatLine, this.colors.barLine, b.bar);
       kept.push(b);
     }
     this.beatLines = kept;
@@ -1714,7 +1705,9 @@ export class PianoRoll {
       this.scrollbarThumb
         .clear()
         .roundRect(0, 1, this.thumbW, SCROLLBAR_HEIGHT - 2, (SCROLLBAR_HEIGHT - 2) / 2)
-        .fill({ color: active ? SCROLLBAR_THUMB_ACTIVE_COLOR : SCROLLBAR_THUMB_COLOR });
+        .fill({
+          color: active ? this.colors.scrollbarThumbActive : this.colors.scrollbarThumb,
+        });
     }
     this.scrollbarThumb.x = this.thumbX;
   }

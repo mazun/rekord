@@ -43,13 +43,13 @@
     border: none;
     border-radius: 50%;
     /* A faint disc in both states, so it reads as a button. */
-    background: rgba(255, 255, 255, 0.08);
-    color: #e5484d;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--danger);
     cursor: pointer;
   }
 
   .capture-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.14);
+    background: color-mix(in srgb, var(--text) 14%, transparent);
   }
 
   .capture-btn:disabled {

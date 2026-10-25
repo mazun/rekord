@@ -4,6 +4,7 @@
 // garbled stored value just falls back to the shipped default.
 
 import { isNotationChoice, NOTATION_QUALITIES, type Notation } from "./chordnotation";
+import { DEFAULT_THEME, isThemeId, type ThemeId } from "./theme";
 
 // A new key: the old "chord.modelSize" held the Harmonica sizes ("mix", "large", ...), whose names
 // now mean something else (Okarina L is not Harmonica large).
@@ -53,6 +54,14 @@ function loadNotation(): Notation {
     // garbled: defaults
   }
   return notation;
+}
+
+// The color theme (src/theme.ts).
+const THEME_STORAGE_KEY = "chord.theme";
+
+function loadTheme(): ThemeId {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  return isThemeId(stored) ? stored : DEFAULT_THEME;
 }
 
 // Playback mix (volumes are 0..1 slider positions; the backend squares them): the recorded audio,
@@ -142,6 +151,7 @@ export const settings = $state({
   drumsVisible: localStorage.getItem(DRUMS_VISIBLE_STORAGE_KEY) !== "false",
   accidental: loadAccidental(),
   notation: loadNotation(),
+  theme: loadTheme(),
   volumeOriginal: loadVolume(VOLUME_ORIGINAL_STORAGE_KEY, DEFAULT_VOLUME_ORIGINAL),
   volumeNotes: loadVolume(VOLUME_NOTES_STORAGE_KEY, DEFAULT_VOLUME_NOTES),
   volumeDrums: loadVolume(VOLUME_DRUMS_STORAGE_KEY, DEFAULT_VOLUME_DRUMS),
@@ -171,6 +181,10 @@ export function saveFutureFrames(): void {
 
 export function saveAccidental(): void {
   localStorage.setItem(ACCIDENTAL_STORAGE_KEY, settings.accidental);
+}
+
+export function saveTheme(): void {
+  localStorage.setItem(THEME_STORAGE_KEY, settings.theme);
 }
 
 export function saveNotation(): void {

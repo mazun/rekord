@@ -1,6 +1,11 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
+import { settings } from "./settings.svelte";
+import { applyTheme } from "./theme";
 import { checkForUpdate } from "./updater.svelte";
+
+// Before the first paint: the page's colors are all custom properties set from the theme.
+applyTheme(settings.theme);
 
 // Mounted straight into <body> (no wrapper element) so the DOM tree --
 // and therefore styles.css's html/body/.app layout rules -- stays exactly

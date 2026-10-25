@@ -62,7 +62,7 @@
     background: var(--surface-raised);
     border: 1px solid var(--border);
     border-radius: 6px;
-    box-shadow: 0 4px 16px rgb(0 0 0 / 40%);
+    box-shadow: var(--popup-shadow);
   }
 
   .detail {
@@ -98,7 +98,8 @@
   }
 
   button.primary {
-    background: #2f5fa8;
-    border-color: #2f5fa8;
+    color: var(--notice-text);
+    background: var(--notice);
+    border-color: var(--notice);
   }
 </style>

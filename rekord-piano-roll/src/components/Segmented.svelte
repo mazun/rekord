@@ -38,7 +38,7 @@
   .segmented {
     display: flex;
     width: fit-content;
-    border: 1px solid #3a3f4d;
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     overflow: hidden;
   }
@@ -53,11 +53,11 @@
   }
 
   label + label {
-    border-left: 1px solid #3a3f4d;
+    border-left: 1px solid var(--border-strong);
   }
 
   label.selected {
-    background: #3d4a66;
+    background: var(--selected);
   }
 
   label.disabled {

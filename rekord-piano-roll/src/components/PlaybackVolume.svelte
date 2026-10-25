@@ -210,7 +210,7 @@
     padding: 0.3rem 0.6rem;
     border-radius: 6px;
     /* Same backdrop as the legend's part buttons beside it. */
-    background: rgba(20, 22, 28, 0.7);
+    background: var(--overlay);
   }
 
   .speaker-btn:hover,
@@ -240,10 +240,10 @@
     min-width: 0;
     margin: 0;
     padding: 0.6rem 0.8rem;
-    border: 1px solid #3a3f4d;
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
     background: var(--surface-raised);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--popup-shadow);
   }
 
   /* [mute] [name ........ waves] over the slider. */
@@ -262,12 +262,12 @@
     flex-direction: column;
     gap: 0.5rem;
     padding-top: 0.5rem;
-    border-top: 1px solid #3a3f4d;
+    border-top: 1px solid var(--border-strong);
   }
 
   .drums {
     padding-top: 0.5rem;
-    border-top: 1px solid #3a3f4d;
+    border-top: 1px solid var(--border-strong);
   }
 
   .name {
@@ -282,17 +282,16 @@
     border-radius: 2px;
   }
 
-  /* Mirrors the legend's colors in PianoRollView.svelte. */
   .swatch.vocal {
-    background: #6be3a0;
+    background: var(--part-vocal);
   }
 
   .swatch.bass {
-    background: #ff9f5b;
+    background: var(--part-bass);
   }
 
   .swatch.other {
-    background: #aecbff;
+    background: var(--part-other);
   }
 
   .mute-btn {
@@ -312,7 +311,7 @@
   }
 
   .mute-btn.on {
-    color: #e5484d;
+    color: var(--danger);
   }
 
   .waves {
@@ -339,7 +338,7 @@
   }
 
   .wave-btn:has(input:focus-visible) {
-    outline: 2px solid #8fb0ff;
+    outline: 2px solid var(--accent-soft);
   }
 
   .wave-btn svg {
@@ -353,15 +352,15 @@
   }
 
   .wave-btn.selected {
-    background: #313747;
-    color: #8fb0ff;
+    background: var(--surface-hover);
+    color: var(--accent-soft);
     opacity: 1;
   }
 
   input[type="range"] {
     width: 100%;
     margin: 0;
-    accent-color: #5b8cff;
+    accent-color: var(--accent);
   }
 
   /* After the plain .name/.waves/input rules above, which they out-rank. */

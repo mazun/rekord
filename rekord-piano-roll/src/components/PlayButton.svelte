@@ -61,23 +61,23 @@
     border: none;
     border-radius: 6px;
     /* Same backdrop as the legend's buttons. */
-    background: rgba(20, 22, 28, 0.7);
+    background: var(--overlay);
     color: var(--text);
     cursor: pointer;
   }
 
   .play-btn:hover:not(:disabled) {
-    color: #fff;
+    color: var(--text);
   }
 
   /* Right of the play button (0.6rem + its 2.3rem + a gap). */
   .repeat-btn {
     left: 3.3rem;
-    color: var(--muted, #8a8f9c);
+    color: var(--text-dim);
   }
 
   .repeat-btn.on {
-    color: #5ab0ff;
+    color: var(--play);
   }
 
   .play-btn:disabled {

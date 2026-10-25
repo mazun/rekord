@@ -17,6 +17,7 @@
     stopCapture,
   } from "../pipeline.svelte";
   import { PARTS, saveRollZoom, settings, zoomScale } from "../settings.svelte";
+  import { applyTheme, THEMES } from "../theme";
   import {
     connectTransport,
     setPlaybackPartVisible,
@@ -54,6 +55,15 @@
   }
 
   $effect(applyNotation);
+
+  // The page's colors follow the theme setting; the roll's are handed to it.
+  function applyThemeColors() {
+    const { roll: colors } = THEMES[settings.theme];
+    applyTheme(settings.theme);
+    roll?.setColors(colors);
+  }
+
+  $effect(applyThemeColors);
 
   const ZOOM_STEP = 0.2;
   const ZOOM_SNAP = 0.08; // the slider sticks to the centre (1x) within this distance
@@ -114,7 +124,7 @@
     let unlisten: (() => void) | null = null;
     let unlistenTransport: (() => void) | null = null;
     (async () => {
-      const created = await PianoRoll.create(container);
+      const created = await PianoRoll.create(container, THEMES[settings.theme].roll);
       if (disposed) {
         created.destroy();
         return;
@@ -383,7 +393,7 @@
     margin: 0;
     padding: 0 0.6rem;
     border: 0;
-    background: rgba(20, 22, 28, 0.92);
+    background: var(--overlay-strong);
     color: var(--text-dim);
     font-size: 0.85rem;
     user-select: none;
@@ -403,7 +413,7 @@
   }
 
   .zoom .step:hover {
-    background: #313747;
+    background: var(--surface-hover);
     color: var(--text);
   }
 
@@ -424,7 +434,7 @@
   .zoom input[type="range"]::-webkit-slider-runnable-track {
     height: 4px;
     border-radius: 2px;
-    background: #aecbff55;
+    background: color-mix(in srgb, var(--part-other) 33%, transparent);
   }
 
   .zoom input[type="range"]::-webkit-slider-thumb {
@@ -433,7 +443,7 @@
     margin-top: -5px;
     border: none;
     border-radius: 50%;
-    background: #aecbff;
+    background: var(--part-other);
     appearance: none;
   }
 
@@ -444,7 +454,7 @@
     padding: 0.3rem 0.6rem;
     border-radius: 6px;
     border: none;
-    background: rgba(20, 22, 28, 0.7);
+    background: var(--overlay);
     color: var(--text-dim);
     font: inherit;
     font-size: 0.85rem;
@@ -453,7 +463,7 @@
   }
 
   .roles-toggle:hover {
-    background: rgba(20, 22, 28, 0.7);
+    background: var(--overlay);
   }
 
   /* Off reads via dimming alone (no separate checkbox): dim means that part is hidden. */
@@ -466,10 +476,10 @@
     position: fixed;
     z-index: 10;
     padding: 0.25rem;
-    border: 1px solid #3a3f4d;
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
     background: var(--surface-raised);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--popup-shadow);
   }
 
   .context-menu button {
@@ -486,7 +496,7 @@
   }
 
   .context-menu button:hover:not(:disabled) {
-    background: #313747;
+    background: var(--surface-hover);
   }
 
   .legend-swatch {
@@ -495,17 +505,15 @@
     border-radius: 2px;
   }
 
-  /* Mirrors MELODY_COLOR_MAX/BASS_COLOR_MAX/NOTE_COLOR_MAX in pianoroll.ts (vocal uses the
-     "melody" green). */
   .legend-swatch.vocal {
-    background: #6be3a0;
+    background: var(--part-vocal);
   }
 
   .legend-swatch.bass {
-    background: #ff9f5b;
+    background: var(--part-bass);
   }
 
   .legend-swatch.other {
-    background: #aecbff;
+    background: var(--part-other);
   }
 </style>
