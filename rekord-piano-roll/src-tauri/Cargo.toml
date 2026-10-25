@@ -1,6 +1,6 @@
 [package]
 name = "rekord-piano-roll"
-version = "0.1.1"
+version = "0.1.2"
 description = "Re:Kord - real-time chord and note recognition (piano-roll UI)"
 license = "MIT"
 authors = ["@y_mazun"]
