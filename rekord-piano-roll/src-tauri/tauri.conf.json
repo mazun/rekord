@@ -16,10 +16,11 @@
         "create": false,
         "title": "Re:Kord",
         "width": 800,
-        "height": 600,
+        "height": 632,
         "minWidth": 800,
-        "minHeight": 600,
-        "resizable": true
+        "minHeight": 632,
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {

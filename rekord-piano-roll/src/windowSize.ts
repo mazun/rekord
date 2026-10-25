@@ -26,7 +26,8 @@ export function isRollShown(): boolean {
 // window was at before it was hidden, falling back to the
 // tauri.conf.json defaults only on the very first collapse.
 const DEFAULT_EXPANDED_WIDTH = 800;
-const DEFAULT_EXPANDED_HEIGHT = 600;
+// The 32px of it is the custom title bar (TitleBar.svelte), which the OS no longer draws outside.
+const DEFAULT_EXPANDED_HEIGHT = 632;
 let widthBeforeCollapse: number | null = null;
 let heightBeforeCollapse: number | null = null;
 let widthBeforeSettings: number | null = null;

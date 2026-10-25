@@ -28,7 +28,7 @@
   }
 </script>
 
-<div class="key-row">
+<div class="key-row" data-tauri-drag-region>
   <button
     class="auto-btn"
     class:active={auto}
@@ -64,7 +64,9 @@
     grid-template-columns: 1fr 13rem 1fr;
     align-items: center;
     column-gap: 0.5rem;
-    padding-top: 0.3rem;
+    /* Lives in the title bar, which it fills so the gaps around it still drag the window. */
+    flex: 1;
+    min-width: 0;
   }
 
   #key-label {

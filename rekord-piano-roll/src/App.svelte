@@ -2,13 +2,12 @@
   import AppNotices from "./components/AppNotices.svelte";
   import ChordDisplay from "./components/ChordDisplay.svelte";
   import DrumToggle from "./components/DrumToggle.svelte";
-  import KeyPicker from "./components/KeyPicker.svelte";
   import PianoRollView from "./components/PianoRollView.svelte";
   import PianorollToggle from "./components/PianorollToggle.svelte";
   import RecordButton from "./components/RecordButton.svelte";
   import SettingsView from "./components/SettingsView.svelte";
   import TensionGrid from "./components/TensionGrid.svelte";
-  import Toolbar from "./components/Toolbar.svelte";
+  import TitleBar from "./components/TitleBar.svelte";
   import { pipeline, startCapture, stopCapture } from "./pipeline.svelte";
   import { stopPlayback } from "./transport.svelte";
   import { enterSettingsWindowSize, leaveSettingsWindowSize } from "./windowSize";
@@ -48,11 +47,11 @@
 </script>
 
 <main class="app">
+  <TitleBar
+    settingsOpen={view === "settings"}
+    onToggleSettings={() => (view === "main" ? openSettings() : closeSettings())}
+  />
   <div id="main-view" class:hidden={view !== "main"}>
-    <div class="key-toolbar-row">
-      <Toolbar onOpenSettings={openSettings} />
-      <KeyPicker />
-    </div>
     <div class="chord-row">
       <div class="chord-group">
         <RecordButton />
@@ -69,14 +68,6 @@
 </main>
 
 <style>
-  /* No more standalone top bar -- the settings button is pinned
-     (Toolbar.svelte, position:absolute) to this row's right edge,
-     vertically centered on whatever height the key label gives the row,
-     the same way PianorollToggle.svelte pins itself to .chord-row. */
-  .key-toolbar-row {
-    position: relative;
-  }
-
   /* The piano-roll toggle is pinned to the row's right edge, out of flow; the
      side padding (mirrored on the left to keep the group centered) reserves
      room for it so the collapsed window doesn't draw it over the tension grid. */
