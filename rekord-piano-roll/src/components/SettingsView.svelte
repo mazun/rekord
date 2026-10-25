@@ -166,6 +166,8 @@
       options={[
         { value: "dark", label: t("settings.themeDark") },
         { value: "light", label: t("settings.themeLight") },
+        { value: "sky", label: t("settings.themeSky") },
+        { value: "rose", label: t("settings.themeRose") },
       ] as { value: ThemeId; label: string }[]}
       value={settings.theme}
       onchange={(v) => {
